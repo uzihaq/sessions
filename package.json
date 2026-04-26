@@ -1,0 +1,14 @@
+{
+  "name": "pretty-pty",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PTY-first runtime for Pretty. See README.md.",
+  "scripts": {
+    "dev": "concurrently -k -n prettyd,vite -c cyan,magenta \"npm --prefix prettyd run dev\" \"npm --prefix frontend run dev\"",
+    "build": "npm --prefix frontend run build && npm --prefix prettyd run build",
+    "install:all": "npm --prefix prettyd install && npm --prefix frontend install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
