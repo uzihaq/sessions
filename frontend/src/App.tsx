@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Sidebar } from './components/Sidebar';
-import { TerminalPane } from './components/Terminal';
+import { SessionView } from './components/SessionView';
 import { EmptyState } from './components/EmptyState';
 import { NewSessionDialog } from './components/NewSessionDialog';
 import { useSessions } from './store/sessions';
@@ -14,7 +14,7 @@ export function App(): JSX.Element {
       <Sidebar />
       <main className="app-main">
         {activeId ? (
-          <TerminalPane key={activeId} sessionId={activeId} />
+          <SessionView key={activeId} sessionId={activeId} />
         ) : (
           <EmptyState onNew={() => setEmptyDialogOpen(true)} />
         )}

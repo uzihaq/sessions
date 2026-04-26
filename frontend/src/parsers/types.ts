@@ -15,7 +15,7 @@ import type { Block } from '../lib/parser';
 import type {
   SidebarChecklistItem,
   FileTouchKind
-} from '../components/StatusSidebar';
+} from '../types/sidebar';
 
 export interface WorkingState {
   /** True if the tool is actively working right now. */

@@ -17,7 +17,7 @@ import type { ToolParser, WorkingState, SidebarFindings } from './types';
 import type {
   SidebarChecklistItem,
   FileTouchKind
-} from '../components/StatusSidebar';
+} from '../types/sidebar';
 
 const POLL_FAST = 200;
 const POLL_SLOW = 3000;

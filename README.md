@@ -16,10 +16,38 @@ The terminal stream is the source of truth. Pretty cards/sidebar are
 ## Phase status
 
 - [x] **Phase 1** — PTY daemon prototype (node-pty + ws + xterm.js, no cards yet)
-- [ ] Phase 2 — persistence (session IDs, seq numbers, replay, recovery)
-- [ ] Phase 3 — Pretty parser layer (Claude/Codex parsers feed cards/sidebar)
+- [x] **Phase 2** — persistence (session IDs, seq numbers, replay, recovery)
+- [x] **Phase 3** — Pretty parser layer (Claude/Codex parsers feed cards/sidebar)
 - [ ] Phase 4 — launchd production mode (`com.uzair.prettyd.plist`)
 - [ ] Phase 5 — remove tmux (archive `~/pretty-tmux/`)
+
+### Phase 3 notes
+
+The xterm `SerializeAddon` is the per-session ANSI transcript — bounded by
+xterm's scrollback (5000 lines), naturally consistent with reconnect/replay
+because the terminal is the source of truth. `usePrettyParser` reads the
+serialized snapshot on a 200ms throttle, runs `parsers/detect.ts` (cached
+per session, re-detected when the cached parser's signal disappears) and
+exposes structured `Block[]` + `SidebarFindings` to the React tree.
+
+The Pretty pane is **derived UI only**:
+
+- `SessionView` renders a Terminal / Split / Pretty toggle (default Split,
+  Terminal-only on phones). xterm stays mounted in every mode so a parser
+  hiccup never takes the raw terminal away.
+- Block components (`PrettyView.tsx`) and `StatusSidebar` are intentionally
+  minimal — they consume the `Block` / `SidebarFindings` types from
+  `parsers/types.ts` but don't pull in the full pretty-tmux markdown / diff
+  / copy-button stack. That's a Phase 3+ polish task.
+
+Verify locally:
+
+```sh
+cd frontend
+npm run typecheck     # parsers no longer excluded; full strict TS
+npm run test:parsers  # esbuild-bundled parser fixtures
+npm run build         # vite production build
+```
 
 ## Dev
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Terminal } from 'xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import 'xterm/css/xterm.css';
 import { wsUrl } from '../api/prettyd';
 import { readLastSeq, writeLastSeq, clearLastSeq } from '../lib/seqStorage';
@@ -13,6 +14,12 @@ interface UseTerminalResult {
   status: Status;
   exitInfo: { code: number | null; signal: string | null } | null;
   resumedFromSeq: number | null;
+  // Phase 3 hooks: getSnapshot returns the live xterm buffer with ANSI
+  // codes preserved (via @xterm/addon-serialize). writeTick increments on
+  // every PTY chunk applied to the terminal so consumers can debounce a
+  // re-parse without subscribing to xterm's internal events.
+  getSnapshotRef: { current: () => string };
+  writeTick: number;
 }
 
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
@@ -28,7 +35,9 @@ export function useTerminal(sessionId: string | null): UseTerminalResult {
   const [status, setStatus] = useState<Status>('connecting');
   const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null);
   const [resumedFromSeq, setResumedFromSeq] = useState<number | null>(null);
+  const [writeTick, setWriteTick] = useState(0);
   const containerElRef = useRef<HTMLDivElement | null>(null);
+  const getSnapshotRef = useRef<() => string>(() => '');
 
   useEffect(() => {
     if (!sessionId) return;
@@ -39,6 +48,11 @@ export function useTerminal(sessionId: string | null): UseTerminalResult {
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: 13,
+      // Larger scrollback than the xterm default (1000) so the Pretty
+      // parser sees enough history to render full Claude/Codex turns
+      // even after long bursts of output. SerializeAddon's snapshot is
+      // bounded by this — that's our "bounded transcript buffer".
+      scrollback: 5000,
       theme: {
         background: '#0a0a0a',
         foreground: '#e6e6e6'
@@ -46,9 +60,15 @@ export function useTerminal(sessionId: string | null): UseTerminalResult {
       allowProposedApi: true
     });
     const fit = new FitAddon();
+    const serialize = new SerializeAddon();
     term.loadAddon(fit);
+    term.loadAddon(serialize);
     term.open(container);
     fit.fit();
+
+    // Re-installable on every effect run; the ref is read by the consumer
+    // (usePrettyParser) inside its own debounce, never directly during render.
+    getSnapshotRef.current = () => serialize.serialize();
 
     setExitInfo(null);
     setResumedFromSeq(null);
@@ -103,7 +123,7 @@ export function useTerminal(sessionId: string | null): UseTerminalResult {
           return;
         }
         if (msg.type === 'output') {
-          term.write(msg.data);
+          term.write(msg.data, () => setWriteTick((n) => n + 1));
           lastSeq = msg.seq;
           writeLastSeq(sessionId, msg.seq);
           return;
@@ -199,5 +219,5 @@ export function useTerminal(sessionId: string | null): UseTerminalResult {
     containerElRef.current = el;
   }, []);
 
-  return { containerRef, status, exitInfo, resumedFromSeq };
+  return { containerRef, status, exitInfo, resumedFromSeq, getSnapshotRef, writeTick };
 }
