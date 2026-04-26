@@ -1,48 +1,79 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { getSession, resize, writeInput } from './sessions.js';
-import type { ClientMsg, ServerMsg } from './types.js';
+import { getSession, resize, writeInput, type OutputEvent } from './sessions.js';
+import { PROTOCOL_VERSION, type ClientMsg, type ServerMsg } from './types.js';
 
 const wss = new WebSocketServer({ noServer: true });
 
-function sendJson(ws: WebSocket, msg: ServerMsg): void {
-  ws.send(JSON.stringify(msg));
+function send(ws: WebSocket, msg: ServerMsg): void {
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const sessionId = url.searchParams.get('sessionId');
   if (!sessionId) {
-    sendJson(ws, { type: 'error', message: 'missing sessionId' });
+    send(ws, { type: 'error', message: 'missing sessionId' });
     ws.close(1008, 'missing sessionId');
     return;
   }
   const session = getSession(sessionId);
   if (!session) {
-    sendJson(ws, { type: 'error', message: `unknown session ${sessionId}` });
+    send(ws, { type: 'error', message: `unknown session ${sessionId}` });
     ws.close(1008, 'unknown session');
     return;
   }
 
-  sendJson(ws, { type: 'hello', session: session.info });
+  // Resume point. 0 (or absent) means "give me everything you still have".
+  const lastSeqParam = url.searchParams.get('lastSeq');
+  const lastSeq = lastSeqParam ? Math.max(0, Number(lastSeqParam) | 0) : 0;
+  const replay = session.log.since(lastSeq);
 
-  // Phase 1: stream PTY output as raw text frames so xterm.js can write
-  // them straight in. JSON is reserved for control messages (hello/exit).
-  // Phase 2 will replace this with a sequenced framed protocol.
-  const onData = (data: string): void => {
-    if (ws.readyState === ws.OPEN) ws.send(data);
+  send(ws, {
+    type: 'hello',
+    protocol: PROTOCOL_VERSION,
+    session: session.info,
+    currentSeq: replay.current,
+    resumedFromSeq: lastSeqParam ? lastSeq : null
+  });
+
+  if (replay.gap) {
+    send(ws, {
+      type: 'gap',
+      oldestAvailableSeq: replay.oldest,
+      currentSeq: replay.current
+    });
+  }
+  for (const ev of replay.events) {
+    send(ws, { type: 'output', seq: ev.seq, data: ev.data });
+  }
+
+  // If the session already exited before this client connected, push the
+  // exit event after the replay so the client lands in the same terminal
+  // state as if it had been there the whole time, then close the socket.
+  if (session.exited) {
+    send(ws, {
+      type: 'exit',
+      code: session.exitCode,
+      signal: session.exitSignal,
+      seq: session.exitSeq ?? replay.current
+    });
+    ws.close(1000, 'pty exited');
+    return;
+  }
+
+  const onOutput = (ev: OutputEvent): void => {
+    send(ws, { type: 'output', seq: ev.seq, data: ev.data });
   };
-  const onExit = ({ code, signal }: { code: number | null; signal: string | null }): void => {
-    sendJson(ws, { type: 'exit', code, signal });
+  const onExit = (info: { code: number | null; signal: string | null; seq: number }): void => {
+    send(ws, { type: 'exit', code: info.code, signal: info.signal, seq: info.seq });
     ws.close(1000, 'pty exited');
   };
-  session.emitter.on('data', onData);
+  session.emitter.on('output', onOutput);
   session.emitter.on('exit', onExit);
 
   ws.on('message', (raw, isBinary) => {
-    // Input is text-only in Phase 1 (xterm.js onData → string).
-    // Control frames are JSON; data frames are raw input as plain text.
     if (isBinary) {
       writeInput(sessionId, (raw as Buffer).toString('utf8'));
       return;
@@ -52,7 +83,6 @@ wss.on('connection', (ws, req) => {
     try {
       parsed = JSON.parse(text) as ClientMsg;
     } catch {
-      // Not JSON → treat as raw input passthrough.
       writeInput(sessionId, text);
       return;
     }
@@ -64,7 +94,7 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    session.emitter.off('data', onData);
+    session.emitter.off('output', onOutput);
     session.emitter.off('exit', onExit);
   });
 });

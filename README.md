@@ -31,8 +31,16 @@ The terminal stream is the source of truth. Pretty cards/sidebar are
 npm run dev
 ```
 
-Then open http://localhost:5173. Vite proxies `/api` and `/ws` to `prettyd`
+Then open http://localhost:5273. Vite proxies `/api` and `/ws` to `prettyd`
 on port 8787.
+
+Ports are chosen to coexist with the legacy `pretty-tmux` install
+(`:3001` relay, `:5173` vite) until Phase 5.
+
+| service        | pretty-tmux | pretty-PTY |
+| -------------- | ----------- | ---------- |
+| backend daemon | 3001 relay  | 8787 prettyd |
+| frontend (vite)| 5173        | 5273       |
 
 ## Origin
 

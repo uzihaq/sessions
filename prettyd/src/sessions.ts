@@ -2,16 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { spawn, type IPty } from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { config } from './config.js';
+import { EventLog, type OutputEvent } from './eventLog.js';
 import type { CreateSessionRequest, SessionInfo } from './types.js';
 
 interface SessionInternal {
   info: SessionInfo;
   pty: IPty;
   emitter: EventEmitter;
+  log: EventLog;
   exited: boolean;
   exitCode: number | null;
   exitSignal: string | null;
+  exitSeq: number | null;
 }
+
+export type { OutputEvent };
+export type SessionHandle = SessionInternal;
 
 const sessions = new Map<string, SessionInternal>();
 
@@ -46,24 +52,35 @@ export function createSession(req: CreateSessionRequest): SessionInfo {
   };
 
   const emitter = new EventEmitter();
+  // Higher than default — subscribers + an exit listener per WS, plus we
+  // don't want noisy warnings if someone mashes "reconnect" rapidly.
+  emitter.setMaxListeners(64);
   const internal: SessionInternal = {
     info,
     pty,
     emitter,
+    log: new EventLog(),
     exited: false,
     exitCode: null,
-    exitSignal: null
+    exitSignal: null,
+    exitSeq: null
   };
   sessions.set(id, internal);
 
   pty.onData((data) => {
-    emitter.emit('data', data);
+    const ev = internal.log.push(data);
+    emitter.emit('output', ev);
   });
   pty.onExit(({ exitCode, signal }) => {
     internal.exited = true;
     internal.exitCode = exitCode;
     internal.exitSignal = typeof signal === 'number' ? String(signal) : (signal ?? null);
-    emitter.emit('exit', { code: internal.exitCode, signal: internal.exitSignal });
+    internal.exitSeq = internal.log.currentSeq();
+    emitter.emit('exit', {
+      code: internal.exitCode,
+      signal: internal.exitSignal,
+      seq: internal.exitSeq
+    });
   });
 
   return info;

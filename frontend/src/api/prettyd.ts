@@ -28,7 +28,8 @@ export async function killSession(id: string): Promise<void> {
   await json<{ ok: boolean }>(r);
 }
 
-export function wsUrl(sessionId: string): string {
+export function wsUrl(sessionId: string, lastSeq?: number): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`;
+  const base = `${proto}//${window.location.host}/ws?sessionId=${encodeURIComponent(sessionId)}`;
+  return lastSeq && lastSeq > 0 ? `${base}&lastSeq=${lastSeq}` : base;
 }

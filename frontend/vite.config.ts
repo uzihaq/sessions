@@ -10,7 +10,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: process.env.VITE_HOST ?? '127.0.0.1',
-    port: Number(process.env.VITE_PORT ?? 5173),
+    // 5273 (not 5173) so pretty-PTY can run alongside pretty-tmux,
+    // which is still on the default :5173 until Phase 5.
+    port: Number(process.env.VITE_PORT ?? 5273),
     strictPort: false,
     proxy: {
       '/api': { target: PRETTYD_HTTP, changeOrigin: true },

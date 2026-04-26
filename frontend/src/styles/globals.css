@@ -194,9 +194,18 @@ button, input, textarea {
 }
 .status-dot.status-open { background: var(--ok); }
 .status-dot.status-connecting { background: var(--warn); }
+.status-dot.status-reconnecting { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
 .status-dot.status-error { background: var(--danger); }
 .status-dot.status-closed { background: var(--fg-faint); }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
 .status-text {
+  font-family: var(--font-mono);
+}
+.status-resumed {
+  color: var(--accent);
   font-family: var(--font-mono);
 }
 .status-exit {
