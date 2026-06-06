@@ -169,7 +169,17 @@ async function cmdSnap(id, raw) {
 
 async function cmdSend(id, text) {
   if (!id || text === undefined) fail('usage: pretty send <id> <text...>');
-  await postJson(`/api/sessions/${encodeURIComponent(id)}/input`, { data: text + '\r' });
+  // Send the message body and the Enter as TWO separate PTY writes, with a
+  // beat in between. Claude Code treats a single bulk write of "text\r" as
+  // a paste, so the trailing \r lands as a newline *inside* the multiline
+  // input box and the message never submits (it just stacks up). Writing
+  // the text, pausing, then sending a lone \r makes Claude see the Enter as
+  // a discrete keystroke → submit. Harmless for non-Claude PTYs (a shell
+  // submits on \r either way).
+  const url = `/api/sessions/${encodeURIComponent(id)}/input`;
+  await postJson(url, { data: text });
+  await new Promise((r) => setTimeout(r, 150));
+  await postJson(url, { data: '\r' });
 }
 
 const KEY_BYTES = {
