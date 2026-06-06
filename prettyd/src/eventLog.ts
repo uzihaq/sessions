@@ -26,9 +26,18 @@ export class EventLog {
   }
 
   push(data: string): OutputEvent {
-    const ev: OutputEvent = { seq: this.nextSeq++, data, ts: Date.now() };
+    return this.pushAt(this.nextSeq, data);
+  }
+
+  // Append with a caller-supplied seq number. prettyd's mirror uses this
+  // so it inherits the runner's monotonic seq sequence verbatim — that
+  // way `since(N)` semantics line up across the prettyd/runner boundary
+  // even after a prettyd restart.
+  pushAt(seq: number, data: string): OutputEvent {
+    const ev: OutputEvent = { seq, data, ts: Date.now() };
     this.events.push(ev);
     this.bytes += Buffer.byteLength(data, 'utf8');
+    if (seq >= this.nextSeq) this.nextSeq = seq + 1;
     while (this.bytes > this.capBytes && this.events.length > 1) {
       const dropped = this.events.shift()!;
       this.bytes -= Buffer.byteLength(dropped.data, 'utf8');

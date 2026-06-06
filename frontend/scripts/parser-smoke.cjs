@@ -94,6 +94,34 @@ const fixtures = [
     expectIncludes: ['command']
   },
   {
+    // Regression for the duplicate-banner ghost bug: Claude Code redraws
+    // its banner on every viewport change. Without dedup the parser
+    // emits N banners + (N-1) session_divider blocks for the same
+    // (version, model, cwd).
+    name: 'duplicate banner blocks collapse to one',
+    raw: [
+      ' ▐▛███▜▌  Claude Code v2.1.123',
+      '  ▝▜█▛▘   Opus 4.7',
+      '   ▘▘     ~/proj',
+      '',
+      '❯ first prompt',
+      '',
+      '⏺ first answer',
+      '',
+      ' ▐▛███▜▌  Claude Code v2.1.123',
+      '  ▝▜█▛▘   Opus 4.7',
+      '   ▘▘     ~/proj',
+      '',
+      ' ▐▛███▜▌  Claude Code v2.1.123',
+      '  ▝▜█▛▘   Opus 4.7',
+      '   ▘▘     ~/proj',
+      ''
+    ].join('\n'),
+    expectParser: 'claude-code',
+    expectTypes: ['banner', 'user_input', 'claude_message']
+  },
+
+  {
     name: 'plain shell falls through to terminal parser',
     raw: '$ ls\nREADME.md  package.json\n$ ',
     expectParser: 'terminal'

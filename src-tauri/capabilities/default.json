@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions granted to the main window AND to popped-out per-session windows. The session-* glob matches the labels that open_session_window sets in lib.rs.",
+  "windows": [
+    "main",
+    "session-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "notification:default",
+    "autostart:default"
+  ]
+}

@@ -2,15 +2,48 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- interactive-widget=resizes-content: iOS 16.4+ shrinks the
+         layout viewport when the on-screen keyboard opens, instead of
+         leaving the keyboard floating over the page. Combined with our
+         flex-column app-shell + position:sticky mobile-nav, this is
+         what keeps the bottom navbar visible above the keyboard
+         instead of getting hidden behind it. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Pretty PTY</title>
     <meta name="description" content="A PTY-first runtime for Pretty — Claude from anywhere, on a real terminal stream." />
-    <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <!-- These tell iOS / Android Chrome to launch full-screen without
+         browser chrome when the user opens the app from the home
+         screen. Pair with manifest.display="standalone". -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Pretty PTY" />
+    <script>
+      // Register the service worker on every host EXCEPT the loopback
+      // dev address. On localhost / 127.0.0.1 the SW would cache the
+      // unhashed vite dev modules and break HMR; we keep dev fast by
+      // skipping registration there. On a Tailscale IP (100.x.y.z) or
+      // a real domain, registration runs and the app shell is cached.
+      //
+      // No `beforeinstallprompt` handling — installation is intention-
+      // ally manual via Chrome's "Install app" / "Add to Home Screen"
+      // menu, per design.
+      if ('serviceWorker' in navigator) {
+        var host = location.hostname;
+        var isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+        if (!isLoopback) {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker
+              .register('/sw.js', { scope: '/' })
+              .catch(function () { /* registration failures are non-fatal */ });
+          });
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

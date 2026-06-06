@@ -1,7 +1,8 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { getSession, resize, writeInput, type OutputEvent } from './sessions.js';
+import { getSession, writeInput, resize, type OutputEvent } from './sessions.js';
+import type { ClaudeSessionEvent } from './sessionFileWatcher.js';
 import { PROTOCOL_VERSION, type ClientMsg, type ServerMsg } from './types.js';
 
 const wss = new WebSocketServer({ noServer: true });
@@ -29,13 +30,44 @@ wss.on('connection', (ws, req) => {
   const lastSeqParam = url.searchParams.get('lastSeq');
   const lastSeq = lastSeqParam ? Math.max(0, Number(lastSeqParam) | 0) : 0;
   const replay = session.log.since(lastSeq);
+  // Claude event resume point. Client passes the index it already
+  // has, server skips events at indices < this. Without this, every
+  // WS reconnect (phone lock, tab switch, etc.) replayed the full
+  // 5000-event ring — for a long session that's tens of MB on the
+  // wire and the same amount of React reducer work, all for events
+  // the client already had. Default 0 keeps the original behavior
+  // for callers that don't pass the param.
+  const claudeSinceParam = url.searchParams.get('claudeEventsSince');
+  const claudeEventsSince = claudeSinceParam
+    ? Math.max(0, Number(claudeSinceParam) | 0)
+    : 0;
+
+  // Compute the claudeEvent replay window BEFORE sending hello — the
+  // client uses claudeReplayStart to set its local counter so future
+  // reconnect ?claudeEventsSince= calls align with the server index.
+  //
+  // On fresh connect (claudeEventsSince=0): cap initial replay at the
+  // TAIL (last INITIAL_REPLAY_CAP events). Long sessions accumulate
+  // thousands of events; the RemoteView renders ~50 anyway, and the
+  // initial replay was the dominant cost of opening Pretty on a long
+  // session (~15-20 MB and hundreds of ms of React work). Older
+  // history is reachable via the HTTP /events endpoint on demand.
+  //
+  // On reconnect (claudeEventsSince>0): ship only the deltas.
+  const INITIAL_REPLAY_CAP = 300;
+  const claudeEventsAtHello = session.claudeEventLog.length;
+  const claudeReplayStart = claudeEventsSince > 0
+    ? Math.min(claudeEventsSince, claudeEventsAtHello)
+    : Math.max(0, claudeEventsAtHello - INITIAL_REPLAY_CAP);
 
   send(ws, {
     type: 'hello',
     protocol: PROTOCOL_VERSION,
     session: session.info,
     currentSeq: replay.current,
-    resumedFromSeq: lastSeqParam ? lastSeq : null
+    resumedFromSeq: lastSeqParam ? lastSeq : null,
+    claudeEventsCount: claudeEventsAtHello,
+    claudeReplayStart
   });
 
   if (replay.gap) {
@@ -47,6 +79,13 @@ wss.on('connection', (ws, req) => {
   }
   for (const ev of replay.events) {
     send(ws, { type: 'output', seq: ev.seq, data: ev.data });
+  }
+
+  // Replay the windowed slice computed above (initial-tail OR
+  // since-deltas). Sent after raw-byte replay so the client updates
+  // its terminal first, then layers structured events on top.
+  for (let i = claudeReplayStart; i < claudeEventsAtHello; i++) {
+    send(ws, { type: 'claudeEvent', event: session.claudeEventLog[i]! });
   }
 
   // If the session already exited before this client connected, push the
@@ -70,8 +109,12 @@ wss.on('connection', (ws, req) => {
     send(ws, { type: 'exit', code: info.code, signal: info.signal, seq: info.seq });
     ws.close(1000, 'pty exited');
   };
+  const onClaudeEvent = (ev: ClaudeSessionEvent): void => {
+    send(ws, { type: 'claudeEvent', event: ev });
+  };
   session.emitter.on('output', onOutput);
   session.emitter.on('exit', onExit);
+  session.emitter.on('claudeEvent', onClaudeEvent);
 
   ws.on('message', (raw, isBinary) => {
     if (isBinary) {
@@ -89,13 +132,25 @@ wss.on('connection', (ws, req) => {
     if (parsed.type === 'input') {
       writeInput(sessionId, parsed.data);
     } else if (parsed.type === 'resize') {
-      resize(sessionId, parsed.cols, parsed.rows);
+      // Last-resize-wins: the most recently active client's viewport
+      // dictates the PTY size. The TUI (Claude / Codex / etc.) redraws
+      // at the new size automatically. If two clients are active at
+      // different sizes they'll fight, but the user explicitly chose
+      // this trade — previously the PTY stayed locked to its create-
+      // time size and every client had to CSS-zoom xterm visually,
+      // which felt cramped on big screens. Reasonable bounds clamp
+      // applied so a misbehaving client can't shrink the PTY to
+      // unusable dimensions.
+      const cols = Math.max(40, Math.min(500, parsed.cols | 0));
+      const rows = Math.max(10, Math.min(200, parsed.rows | 0));
+      resize(sessionId, cols, rows);
     }
   });
 
   ws.on('close', () => {
     session.emitter.off('output', onOutput);
     session.emitter.off('exit', onExit);
+    session.emitter.off('claudeEvent', onClaudeEvent);
   });
 });
 

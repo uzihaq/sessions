@@ -5,10 +5,14 @@
   "description": "PTY-first runtime for Pretty. See README.md.",
   "scripts": {
     "dev": "concurrently -k -n prettyd,vite -c cyan,magenta \"npm --prefix prettyd run dev\" \"npm --prefix frontend run dev\"",
+    "tauri:dev": "cd src-tauri && cargo tauri dev",
+    "tauri:build": "cd src-tauri && cargo tauri build",
+    "ship": "bash scripts/ship.sh",
     "build": "npm --prefix frontend run build && npm --prefix prettyd run build",
     "install:all": "npm --prefix prettyd install && npm --prefix frontend install"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
     "concurrently": "^9.1.0"
   }
 }

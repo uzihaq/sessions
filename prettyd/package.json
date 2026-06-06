@@ -5,6 +5,9 @@
   "description": "Pretty PTY daemon — owns node-pty sessions, exposes them over HTTP + WS.",
   "type": "module",
   "main": "dist/server.js",
+  "bin": {
+    "pretty": "bin/pretty.cjs"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
@@ -13,6 +16,8 @@
     "postinstall": "node scripts/fix-spawn-helper.cjs"
   },
   "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"
   },

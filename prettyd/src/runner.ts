@@ -1,0 +1,332 @@
+// Long-lived per-session runner process. Owns one PTY, a 4MB event log,
+// an xterm-headless mirror of the buffer, and a Unix socket. Detached
+// from the prettyd parent so it survives when prettyd exits — sessions
+// outlive `tsx watch` reloads, hand-restarts, even prettyd crashes.
+//
+// Spawned by prettyd via:
+//   spawn(node, [runner.js], {
+//     env: { RUNNER_ID, RUNNER_CWD, RUNNER_COLS, RUNNER_ROWS,
+//            RUNNER_CMD, RUNNER_ARGS_JSON },
+//     detached: true, stdio: ['ignore','ignore','ignore'] });
+//
+// On startup the runner:
+//   1. Spawns the PTY
+//   2. Writes <state-dir>/<id>.json (metadata) + opens <state-dir>/<id>.sock
+//   3. Mirrors PTY output to xterm-headless + the EventLog
+//   4. Accepts client connections (typically just prettyd) over the socket
+//   5. On PTY exit, holds the socket open so reconnecting clients see the
+//      final state, then exits 30s after the last client disconnects.
+//
+// On clean shutdown (KILL frame, or PTY exit + idle timeout), removes
+// both files and exits.
+
+import { spawn, type IPty } from 'node-pty';
+// @xterm/headless ships a CJS `main` and an .mjs `module` whose ESM
+// shape doesn't expose `Terminal` as a named export under tsx/node20.
+// createRequire bypasses the ESM facade and pulls the CJS module that
+// works everywhere.
+import { createRequire } from 'node:module';
+const xtermRequire = createRequire(import.meta.url);
+const { Terminal } = xtermRequire('@xterm/headless') as typeof import('@xterm/headless');
+const { SerializeAddon } = xtermRequire('@xterm/addon-serialize') as typeof import('@xterm/addon-serialize');
+import { createServer, type Server, type Socket } from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { EventLog, type OutputEvent } from './eventLog.js';
+import { PersistentLog } from './persistentLog.js';
+import {
+  FrameParser, FrameType, encodeFrame, encodeOutput,
+  type RunnerHello, type RunnerExit
+} from './runnerProtocol.js';
+
+const RUNNER_ID = process.env.RUNNER_ID;
+if (!RUNNER_ID) {
+  console.error('runner: RUNNER_ID env var required');
+  process.exit(2);
+}
+const STATE_DIR = process.env.RUNNER_STATE_DIR
+  ?? path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'runners');
+const SOCK_PATH = path.join(STATE_DIR, RUNNER_ID + '.sock');
+const META_PATH = path.join(STATE_DIR, RUNNER_ID + '.json');
+const EVENTS_PATH = path.join(STATE_DIR, RUNNER_ID + '.events');
+
+const cmd = process.env.RUNNER_CMD ?? '/bin/bash';
+const args: string[] = process.env.RUNNER_ARGS_JSON ? JSON.parse(process.env.RUNNER_ARGS_JSON) : [];
+const cwd = process.env.RUNNER_CWD ?? os.homedir();
+const cols = Number(process.env.RUNNER_COLS ?? 300);
+const rows = Number(process.env.RUNNER_ROWS ?? 50);
+
+fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+// Stale socket from a previous crash → unlink before bind.
+try { fs.unlinkSync(SOCK_PATH); } catch { /* not present */ }
+
+const env: Record<string, string> = {
+  ...(process.env as Record<string, string>),
+  TERM: 'xterm-256color',
+  COLORTERM: 'truecolor'
+};
+// Don't leak our control vars into the child's env.
+delete env.RUNNER_ID;
+delete env.RUNNER_CMD;
+delete env.RUNNER_ARGS_JSON;
+delete env.RUNNER_CWD;
+delete env.RUNNER_COLS;
+delete env.RUNNER_ROWS;
+delete env.RUNNER_STATE_DIR;
+
+const pty: IPty = spawn(cmd, args, { name: 'xterm-256color', cols, rows, cwd, env });
+const log = new EventLog();
+const term = new Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
+const serialize = new SerializeAddon();
+term.loadAddon(serialize);
+
+// Persistent on-disk mirror so a Mac reboot (which kills the runner
+// process) doesn't lose the buffer history. On startup we replay any
+// existing records into both the EventLog and xterm-headless — the
+// PTY itself is fresh (Claude/Codex/whatever just started), but the
+// user sees the same scrollback they had before the reboot. They can
+// `/resume` inside Claude to continue the actual conversation.
+const persistent = PersistentLog.open(EVENTS_PATH);
+const restored = PersistentLog.restoreFrom(EVENTS_PATH);
+for (const ev of restored) {
+  log.pushAt(ev.seq, ev.data);
+  term.write(ev.data);
+}
+if (restored.length > 0) {
+  // Make it visually obvious the buffer was replayed.
+  const banner = `\r\n\x1b[2m[pretty-pty: replayed ${restored.length} events from disk · ${new Date().toISOString()}]\x1b[0m\r\n`;
+  log.push(banner);
+  term.write(banner);
+  // Don't persist the banner — it's purely a UX artifact for this
+  // restore. If we did, every restore would add another banner on top.
+}
+
+interface SessionMeta {
+  id: string;
+  cmd: string;
+  args: string[];
+  cwd: string;
+  cols: number;
+  rows: number;
+  createdAt: number;
+  pid: number;
+  sockPath: string;
+}
+const meta: SessionMeta = {
+  id: RUNNER_ID,
+  cmd,
+  args,
+  cwd,
+  cols,
+  rows,
+  createdAt: Date.now(),
+  pid: pty.pid,
+  sockPath: SOCK_PATH
+};
+fs.writeFileSync(META_PATH, JSON.stringify(meta, null, 2), { mode: 0o600 });
+
+let exited = false;
+let exitInfo: RunnerExit | null = null;
+let recentBytes = 0;
+// True iff the session has ended for good (PTY died via KILL frame, or
+// the program inside the PTY exited on its own). Drives whether
+// cleanupAndExit() drops the persistent event log. Stays false for
+// SIGTERM-from-launchd shutdowns so the next run can replay history.
+let sessionEnded = false;
+
+const clients = new Set<Socket>();
+
+function broadcastFrame(buf: Buffer): void {
+  for (const c of clients) {
+    if (!c.destroyed) {
+      try { c.write(buf); } catch { /* client gone */ }
+    }
+  }
+}
+
+pty.onData((data) => {
+  const ev = log.push(data);
+  recentBytes += Buffer.byteLength(data, 'utf8');
+  term.write(data);
+  // Persist BEFORE broadcasting so a client that sees seq N is guaranteed
+  // to find seq N on disk if they reconnect after a runner crash.
+  try { persistent.append(ev.seq, ev.data); }
+  catch (err) { console.error('persistent.append failed:', (err as Error).message); }
+  broadcastFrame(encodeOutput(ev.seq, ev.data));
+});
+
+pty.onExit(({ exitCode, signal }) => {
+  exited = true;
+  sessionEnded = true; // PTY is gone for good — drop persistent log on cleanup.
+  exitInfo = {
+    code: exitCode,
+    signal: typeof signal === 'number' ? String(signal) : (signal ?? null),
+    seq: log.currentSeq()
+  };
+  broadcastFrame(encodeFrame(FrameType.EXIT, JSON.stringify(exitInfo)));
+  // Stay alive briefly so reconnecting clients can see the exit. The
+  // idle-disconnect timer below will trigger eventual shutdown.
+  scheduleIdleShutdown();
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Activity decay (mirrors prettyd's old in-process behavior so the metadata
+// file's "working" flag is accurate when an outside reader peeks at it).
+
+setInterval(() => {
+  recentBytes = Math.floor(recentBytes / 2);
+}, 800).unref();
+
+// ────────────────────────────────────────────────────────────────────────
+// Unix socket: one accept loop, multiple clients OK (though typically
+// prettyd is the only caller). Each client gets HELLO + replay stream
+// from REPLAY_REQ if asked, otherwise just live frames going forward.
+
+const helloPayload = (): Buffer => {
+  const h: RunnerHello = {
+    id: RUNNER_ID,
+    cmd, args, cwd, cols: pty.cols, rows: pty.rows,
+    createdAt: meta.createdAt,
+    pid: pty.pid,
+    currentSeq: log.currentSeq()
+  };
+  return encodeFrame(FrameType.HELLO, JSON.stringify(h));
+};
+
+const server: Server = createServer((sock) => {
+  clients.add(sock);
+  const parser = new FrameParser();
+  sock.on('data', (chunk) => {
+    try {
+      parser.push(chunk, (type, payload) => onClientFrame(sock, type, payload));
+    } catch (err) {
+      sock.destroy();
+    }
+  });
+  sock.on('close', () => {
+    clients.delete(sock);
+    if (exited && clients.size === 0) scheduleIdleShutdown();
+  });
+  sock.on('error', () => { /* ignore — close handler runs */ });
+
+  // Greet the client. They can ask for replay via REPLAY_REQ if they want it.
+  sock.write(helloPayload());
+  if (exited && exitInfo) {
+    sock.write(encodeFrame(FrameType.EXIT, JSON.stringify(exitInfo)));
+  }
+});
+
+server.listen(SOCK_PATH, () => {
+  try { fs.chmodSync(SOCK_PATH, 0o600); } catch { /* not fatal */ }
+});
+
+function onClientFrame(sock: Socket, type: FrameType, payload: Buffer): void {
+  switch (type) {
+    case FrameType.INPUT: {
+      if (!exited) pty.write(payload.toString('utf8'));
+      return;
+    }
+    case FrameType.RESIZE: {
+      try {
+        const { cols: c, rows: r } = JSON.parse(payload.toString('utf8'));
+        if (typeof c === 'number' && typeof r === 'number') {
+          if (!exited) pty.resize(c, r);
+          term.resize(c, r);
+          meta.cols = c;
+          meta.rows = r;
+        }
+      } catch { /* malformed — ignore */ }
+      return;
+    }
+    case FrameType.SNAPSHOT_REQ: {
+      // Include 1000 rows of scrollback (plus the visible viewport).
+      // The Pretty parser needs to see Claude's "● " message-start
+      // markers to anchor blocks; on a long-running session those have
+      // scrolled off-screen, so a viewport-only snapshot leaves the
+      // parser with no anchors and it emits 0-2 trivial blocks.
+      // 1000 is a balance: enough that recent messages (Claude turns
+      // are typically 20-100 rows, tool outputs up to 500) stay
+      // anchored, but small enough that the snapshot stays under
+      // ~200KB and the Pretty view doesn't grow tens of thousands of
+      // pixels tall.
+      const snap = serialize.serialize({ scrollback: 1000 });
+      sock.write(encodeFrame(FrameType.SNAPSHOT_RES, snap));
+      return;
+    }
+    case FrameType.REPLAY_REQ: {
+      if (payload.length < 4) return;
+      const after = payload.readUInt32BE(0);
+      const replay = log.since(after);
+      for (const ev of replay.events) {
+        sock.write(encodeOutput(ev.seq, ev.data));
+      }
+      sock.write(encodeFrame(FrameType.REPLAY_DONE));
+      return;
+    }
+    case FrameType.KILL: {
+      try { pty.kill(); } catch { /* already dead */ }
+      return;
+    }
+    default:
+      // Unknown frame — drop silently. Forward-compatibility headroom.
+      return;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Shutdown.
+
+let idleTimer: NodeJS.Timeout | null = null;
+const IDLE_SHUTDOWN_MS = 30_000;
+
+function scheduleIdleShutdown(): void {
+  if (!exited) return;
+  if (idleTimer !== null) return;
+  if (clients.size > 0) return;
+  idleTimer = setTimeout(() => {
+    cleanupAndExit(0);
+  }, IDLE_SHUTDOWN_MS);
+  idleTimer.unref();
+}
+
+// Two flavors of exit:
+//   • sessionEnded === true — the PTY died (user `pretty kill`, Ctrl-D,
+//     program exited). Drop the event log. The session is gone forever.
+//   • sessionEnded === false — the OS is shutting us down (Mac reboot,
+//     `launchctl bootout`, SIGTERM from a system housekeeping job). We
+//     expect to be brought back up; the event log MUST survive so the
+//     next run can replay it. Keep the .events file, drop everything
+//     else (sock, meta, stdio log) — those will be re-created on the
+//     next start.
+function cleanupAndExit(code: number): void {
+  try { server.close(); } catch { /* ignore */ }
+  try { fs.unlinkSync(SOCK_PATH); } catch { /* ignore */ }
+  try { fs.unlinkSync(META_PATH); } catch { /* ignore */ }
+  if (sessionEnded) {
+    try { persistent.unlink(); } catch { /* ignore */ }
+  } else {
+    try { persistent.close(); } catch { /* ignore */ }
+  }
+  process.exit(code);
+}
+
+// SIGTERM is what `launchctl bootout` sends during system shutdown /
+// reboot. We DON'T kill the PTY here — that would trigger pty.onExit,
+// flip sessionEnded=true, and cause cleanupAndExit to unlink the
+// persistent event log. We want the events file to survive shutdown so
+// the next runner instance can replay it. The PTY child will die when
+// the runner exits anyway (master fd closes → SIGHUP to child).
+//
+// SIGINT is what tsx-watch sends on hot reload — runners must survive
+// that, so we ignore it. SIGHUP fires when the parent dies; we're
+// detached so we ignore it too.
+//
+// `pretty kill` does NOT come through here — it sends a KILL frame on
+// the socket, which calls pty.kill() inside the runner. pty.onExit then
+// fires (sessionEnded=true) and cleanupAndExit drops the events file.
+process.on('SIGINT', () => { /* deliberately ignored */ });
+process.on('SIGTERM', () => {
+  cleanupAndExit(0);
+});
+process.on('SIGHUP', () => { /* parent died — keep running, we're detached */ });

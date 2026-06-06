@@ -18,6 +18,7 @@ The terminal stream is the source of truth. Pretty cards/sidebar are
 - [x] **Phase 1** — PTY daemon prototype (node-pty + ws + xterm.js, no cards yet)
 - [x] **Phase 2** — persistence (session IDs, seq numbers, replay, recovery)
 - [x] **Phase 3** — Pretty parser layer (Claude/Codex parsers feed cards/sidebar)
+- [x] **Phase 3.1** — parser/snapshot smoke harness, soft-wrap parity check
 - [ ] Phase 4 — launchd production mode (`com.uzair.prettyd.plist`)
 - [ ] Phase 5 — remove tmux (archive `~/pretty-tmux/`)
 
@@ -44,10 +45,40 @@ Verify locally:
 
 ```sh
 cd frontend
-npm run typecheck     # parsers no longer excluded; full strict TS
-npm run test:parsers  # esbuild-bundled parser fixtures
-npm run build         # vite production build
+npm run typecheck      # parsers no longer excluded; full strict TS
+npm run test:parsers   # esbuild-bundled parser fixtures
+npm run test:serialize # parser fed real xterm SerializeAddon snapshots
+npm run build          # vite production build
 ```
+
+### Phase 3.1 notes
+
+`scripts/serialize-smoke.cjs` runs Claude-shaped transcripts through a real
+`@xterm/headless` Terminal + `@xterm/addon-serialize`, then feeds the
+serialized snapshot to `detectTool` / `parser.parse`. It complements
+`parser-smoke.cjs`, which uses hand-crafted ANSI fixtures: this one proves
+the parser handles the *exact shape* `useTerminal` produces (`\r\n` line
+endings, trailing cursor-positioning CSI, soft-wrapped lines joined with
+no separator, chunked PTY-style writes).
+
+**Soft-wrap parity with `tmux capture-pane -J`:** investigated and confirmed
+no mitigation is needed. SerializeAddon's row separator is `""` (empty) when
+a row was naturally wrapped to the next, and `\r\n` when there was a real
+newline — the same join behavior `capture-pane -J` produces. The
+`soft-wrapped long claude_message` case in `serialize-smoke.cjs` enforces
+this: a long line wrapped across multiple rows in a 40-col terminal must
+come back as one `claude_message` block with no interior `\n`. The parser is
+also already robust to `\r` in line endings via the `.trimEnd()` calls in
+`parseClaudeMessage` and friends.
+
+**Markdown rendering for `claude_message`:** intentionally not added in 3.1.
+Claude Code already renders markdown to ANSI (bold via SGR, code colors via
+256-color escapes, etc.) before writing to the PTY, so the existing Anser
+path in `PrettyView`'s `AnsiText` already produces the styled output Claude
+intended. Layering a markdown pass on top would risk double-rendering and
+requires a new dependency (`marked` is not installed). Re-evaluate once we
+have a real corpus of `claude_message` content where literal `**` / fenced
+blocks survive into the snapshot.
 
 ## Dev
 
