@@ -4,30 +4,39 @@
 // user message, assistant message, tool call, tool result, system
 // notice, etc. — with stable UUIDs and structured content.
 //
-// This watcher locates the JSONL for a running prettyd session (by
-// matching encoded cwd + most-recent mtime), tails new lines, parses
-// them, and emits the events for downstream consumers. Way more
-// reliable than scraping the rendered TUI — every parsing bug we hit
-// in lib/parser.ts ("Wraysbury misparsed as Bash tool", "❯ picker
-// option as user_input", "API error not rendered", "blank line ends
-// user message") simply doesn't exist with JSONL — the role, content,
-// and error fields are explicit.
+// This watcher locates the JSONL for a running prettyd session, tails
+// new lines, parses them, and emits the events for downstream
+// consumers. Way more reliable than scraping the rendered TUI — every
+// parsing bug we hit in lib/parser.ts ("Wraysbury misparsed as Bash
+// tool", "❯ picker option as user_input", "API error not rendered")
+// simply doesn't exist with JSONL — role, content and error fields are
+// explicit.
 //
-// Read-only: we only consume events; input dispatch still goes
-// through the PTY (which is the only writable side).
+// Read-only: we only consume events; input dispatch still goes through
+// the PTY (which is the only writable side).
+//
+// Robustness (the hard-won part): the file we want is not static for a
+// session's lifetime. Claude rotates/replaces the JSONL (resume, clear,
+// compaction), the file may appear seconds after spawn, or the user may
+// have resumed a pre-existing conversation so our pinned id never
+// becomes a filename at all. The previous version attached once, gave
+// up after 30s if the file wasn't there, and closed forever on the
+// first `rename` — which silently froze the Pretty view for any session
+// that rotated or whose file appeared late. This version keeps
+// re-resolving (poll backstop + dir watch), re-attaches across
+// rotations, and de-dupes by event uuid so re-reads never double-emit.
 
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import { resolveJsonlPath, projectDirFor } from './jsonlResolver.js';
 
 // Anthropic's persisted event format. Conservatively typed — we only
 // pluck out the fields downstream actually uses; everything else is
 // passed through as opaque.
 export interface ClaudeSessionEvent {
   type: string;            // 'user' | 'assistant' | 'system' | 'permission-mode' | ...
-  uuid?: string;           // stable message id
+  uuid?: string;           // stable message id (used for de-dup)
   parentUuid?: string | null;
   timestamp?: string;      // ISO 8601
   sessionId?: string;      // Claude's session id (NOT prettyd's)
@@ -43,108 +52,97 @@ export interface ClaudeSessionEvent {
   [key: string]: unknown;
 }
 
-// Convert a cwd path like /Users/uzair/Projects/rail-me into Claude's
-// directory-name encoding: "-Users-uzair-Projects-rail-me". Every '/'
-// becomes '-'.
-function encodeCwd(cwd: string): string {
-  return cwd.replace(/\//g, '-');
-}
-
-function projectDirFor(cwd: string): string {
-  return path.join(os.homedir(), '.claude', 'projects', encodeCwd(cwd));
-}
-
 interface WatcherOptions {
   cwd: string;
-  // Claude session UUID we explicitly passed via `--session-id <uuid>`
-  // (or `--resume <uuid>`) at spawn. The JSONL filename IS this uuid
-  // plus ".jsonl". REQUIRED — without it there's no way to identify
-  // the right file. Non-Claude sessions shouldn't be instantiating
-  // this watcher in the first place.
+  // Claude session UUID we pinned via `--session-id <uuid>` (fresh) or
+  // `--resume <uuid>` (resume) at spawn. Normally the JSONL filename,
+  // but resolution falls back gracefully when it isn't (see
+  // jsonlResolver.resolveJsonlPath). May be undefined.
   claudeSessionId?: string;
-  // Delay before first lookup attempt — Claude takes ~1s to write its
-  // initial JSONL after spawn. Default 1500ms.
+  // Delay before the first resolution attempt — Claude takes ~1s to
+  // write its initial JSONL after spawn. Default 800ms.
   initialDelayMs?: number;
-  // How often to retry locating the JSONL if it's not there yet.
+  // Backstop poll interval for re-resolution + tail. Default 2000ms.
+  // fs.watch gives low-latency updates; this guarantees liveness even
+  // when fs.watch misses an event (it does, across rotations).
   pollIntervalMs?: number;
-  // Max wait before giving up the initial location search.
-  maxWaitMs?: number;
 }
 
-// Public: watch a session's JSONL and emit each parsed event.
-// Caller listens on 'event' (one per JSONL line) and on 'error' (rare).
-// Returns an EventEmitter + close() that detaches everything.
-//
-// The watcher tails the file from byte 0 on first attach (caller can
-// filter historical vs live events by checking the event's timestamp
-// against now), and uses fs.watch + fs.stat for new-data detection.
-// chokidar would also work but is a heavier dep — fs.watch on a
-// single file is fine for our scale.
 export interface SessionFileWatcher {
   readonly emitter: EventEmitter;
   readonly path: () => string | null;
   close(): void;
 }
 
+// Cap on the de-dup set so a very long conversation doesn't grow it
+// without bound. Trimmed back to TRIM_TO (insertion order preserved by
+// Set) when exceeded.
+const EMIT_CAP = 60_000;
+const EMIT_TRIM_TO = 40_000;
+
 export async function watchSessionFile(opts: WatcherOptions): Promise<SessionFileWatcher> {
   const emitter = new EventEmitter();
   emitter.setMaxListeners(64);
+
+  const projectDir = projectDirFor(opts.cwd);
+  const initialDelayMs = opts.initialDelayMs ?? 800;
+  const pollIntervalMs = opts.pollIntervalMs ?? 2000;
+
   let closed = false;
   let currentPath: string | null = null;
-  let watcher: fs.FSWatcher | null = null;
+  let currentIno: number | null = null;
   let readOffset = 0;
   let lineBuffer = '';
   let readingInFlight = false;
   let pendingRead = false;
-  const initialDelayMs = opts.initialDelayMs ?? 1500;
-  const pollIntervalMs = opts.pollIntervalMs ?? 1000;
-  const maxWaitMs = opts.maxWaitMs ?? 30_000;
 
-  const attachFile = (filePath: string): void => {
-    currentPath = filePath;
-    readOffset = 0;
-    lineBuffer = '';
-    // Initial read of whatever's already there.
-    void readAppended();
-    // fs.watch fires 'change' on appends. We re-read from readOffset.
-    try {
-      watcher = fs.watch(filePath, { persistent: false }, (eventType) => {
-        if (closed) return;
-        if (eventType === 'rename') {
-          // File was renamed/removed — Claude rotated. We could try
-          // to re-locate but for now just close. The caller can
-          // re-establish on next session create if needed.
-          close();
-          return;
-        }
-        void readAppended();
-      });
-    } catch (err) {
-      emitter.emit('error', err);
-    }
+  let dirWatcher: fs.FSWatcher | null = null;
+  let fileWatcher: fs.FSWatcher | null = null;
+  let pollTimer: NodeJS.Timeout | null = null;
+  let tickScheduled = false;
+  let unresolvedNotified = false;
+
+  // uuids already emitted — makes re-reads (rotation, truncation,
+  // switching back to a file) idempotent so claudeEventLog never
+  // double-counts.
+  const emitted = new Set<string>();
+  const trimEmitted = (): void => {
+    if (emitted.size <= EMIT_CAP) return;
+    const keep = Array.from(emitted).slice(emitted.size - EMIT_TRIM_TO);
+    emitted.clear();
+    for (const u of keep) emitted.add(u);
   };
 
-  // Coalesce overlapping reads: if we're already reading, queue one
-  // more and bail. After the in-flight read finishes, drain pending.
-  const readAppended = async (): Promise<void> => {
+  const detachFileWatcher = (): void => {
+    try { fileWatcher?.close(); } catch { /* ignore */ }
+    fileWatcher = null;
+  };
+
+  // Tail currentPath from readOffset, emitting each new JSONL line.
+  // Handles append (same inode, size grew), atomic replace (inode
+  // changed → re-read from 0), truncation (size shrank → re-read from
+  // 0), and disappearance (stat fails → drop currentPath so the next
+  // tick re-resolves). Coalesces overlapping calls.
+  const readFrom = async (): Promise<void> => {
     if (closed || !currentPath) return;
-    if (readingInFlight) {
-      pendingRead = true;
-      return;
-    }
+    if (readingInFlight) { pendingRead = true; return; }
     readingInFlight = true;
     try {
       let st: fs.Stats;
       try {
         st = await fsp.stat(currentPath);
       } catch {
+        // File vanished (rotation). Drop it; tick() re-resolves.
+        detachFileWatcher();
+        currentPath = null; currentIno = null; readOffset = 0; lineBuffer = '';
         return;
       }
-      if (st.size < readOffset) {
-        // File was truncated/replaced. Restart from 0.
+      if ((currentIno !== null && st.ino !== currentIno) || st.size < readOffset) {
+        // Replaced or truncated — start over (de-dup guards re-emit).
         readOffset = 0;
         lineBuffer = '';
       }
+      currentIno = st.ino;
       if (st.size <= readOffset) return;
       const buf = Buffer.alloc(st.size - readOffset);
       const fh = await fsp.open(currentPath, 'r');
@@ -166,63 +164,112 @@ export async function watchSessionFile(opts: WatcherOptions): Promise<SessionFil
         } catch {
           continue; // ignore malformed lines
         }
+        const uuid = typeof parsed.uuid === 'string' ? parsed.uuid : null;
+        if (uuid) {
+          if (emitted.has(uuid)) continue;
+          emitted.add(uuid);
+          trimEmitted();
+        }
         emitter.emit('event', parsed);
       }
     } finally {
       readingInFlight = false;
       if (pendingRead && !closed) {
         pendingRead = false;
-        void readAppended();
+        void readFrom();
       }
     }
+  };
+
+  const attachFile = (p: string): void => {
+    if (currentPath === p) return;
+    detachFileWatcher();
+    currentPath = p;
+    currentIno = null;
+    readOffset = 0;
+    lineBuffer = '';
+    try {
+      fileWatcher = fs.watch(p, { persistent: false }, (eventType) => {
+        if (closed) return;
+        if (eventType === 'rename') {
+          // Renamed/removed/replaced — detach and let tick() re-resolve.
+          detachFileWatcher();
+          scheduleTick();
+          return;
+        }
+        void readFrom();
+      });
+    } catch {
+      // Couldn't attach a file watcher; the poll backstop still tails it.
+    }
+    void readFrom();
+  };
+
+  const ensureDirWatch = (): void => {
+    if (dirWatcher || closed) return;
+    try {
+      dirWatcher = fs.watch(projectDir, { persistent: false }, () => {
+        if (closed) return;
+        scheduleTick();
+      });
+    } catch {
+      // Project dir doesn't exist yet — poll will retry and attach later.
+    }
+  };
+
+  // Core loop step: keep the dir watch alive, decide which file to
+  // follow (with stickiness so we never drop a working file just because
+  // the dir momentarily looks ambiguous), then tail it.
+  const tick = async (): Promise<void> => {
+    if (closed) return;
+    ensureDirWatch();
+    const res = resolveJsonlPath(projectDir, opts.claudeSessionId);
+    if (res.path) {
+      if (currentPath === null) {
+        attachFile(res.path);
+      } else if (currentPath !== res.path && res.reason === 'exact') {
+        // The authoritative pinned file appeared (or changed) — prefer
+        // it over whatever we fell back to.
+        attachFile(res.path);
+      }
+      // else: stay on the file we're already following.
+    } else if (currentPath === null && !unresolvedNotified) {
+      // Genuinely can't identify the conversation (e.g. pinned id absent
+      // and multiple JSONLs in the folder). Surface once; staying empty
+      // is the correct failure mode — better than the wrong conversation.
+      unresolvedNotified = true;
+      emitter.emit(
+        'error',
+        new Error(`unresolved JSONL for ${opts.claudeSessionId ?? '(no id)'} in ${projectDir}: ${res.reason}`)
+      );
+    }
+    await readFrom();
+  };
+
+  const scheduleTick = (): void => {
+    if (tickScheduled || closed) return;
+    tickScheduled = true;
+    setTimeout(() => {
+      tickScheduled = false;
+      void tick();
+    }, 100);
   };
 
   const close = (): void => {
     if (closed) return;
     closed = true;
-    try { watcher?.close(); } catch { /* ignore */ }
-    watcher = null;
+    try { dirWatcher?.close(); } catch { /* ignore */ }
+    dirWatcher = null;
+    detachFileWatcher();
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   };
 
-  // Find the JSONL by exact session-id match. Claude takes ~1s to
-  // create the file after spawn; we poll until the deadline.
-  //
-  // Deliberately NO mtime/birthtime fallback. The old "newest .jsonl
-  // in this project dir" heuristic was a leftover from before we
-  // started passing --session-id deterministically for every Claude
-  // session we launch. It had no correct case and at least one
-  // actively wrong case: two Claudes open in the same folder (common
-  // — users start multiple sessions in /Users/<n>/Projects) → the
-  // fallback locks onto whichever was most recently active, which is
-  // by definition the OTHER session. Both prettyd tabs end up tailing
-  // the same JSONL, both Pretty panes show the same conversation,
-  // and the user has no way to tell.
-  //
-  // The right failure mode if Claude never writes its JSONL is "Pretty
-  // pane stays empty" — not "Pretty pane shows an unrelated random
-  // conversation."
-  void (async () => {
-    await new Promise((r) => setTimeout(r, initialDelayMs));
-    if (!opts.claudeSessionId) {
-      // No session id passed — non-Claude session or pre-deterministic-id
-      // legacy caller. Nothing to attach to; bail out quietly.
-      return;
-    }
-    const knownPath = path.join(projectDirFor(opts.cwd), `${opts.claudeSessionId}.jsonl`);
-    const deadline = Date.now() + maxWaitMs;
-    while (!closed && Date.now() < deadline) {
-      try {
-        await fsp.stat(knownPath);
-        attachFile(knownPath);
-        return;
-      } catch {
-        await new Promise((r) => setTimeout(r, pollIntervalMs));
-      }
-    }
-    if (!closed) {
-      emitter.emit('error', new Error(`no .jsonl found for session ${opts.claudeSessionId} in ${projectDirFor(opts.cwd)}`));
-    }
-  })();
+  // Kick off: first attempt after the initial delay, then the poll
+  // backstop. Never gives up — a session whose JSONL appears minutes
+  // later (or rotates) still gets picked up.
+  setTimeout(() => { if (!closed) void tick(); }, initialDelayMs);
+  pollTimer = setInterval(() => { if (!closed) void tick(); }, pollIntervalMs);
+  pollTimer.unref();
 
   return {
     emitter,
