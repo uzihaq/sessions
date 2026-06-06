@@ -12,6 +12,7 @@ import { classifyTool } from './types.js';
 import { bootstrapRunner, bootoutRunner, cleanupOrphanPlists } from './launchd.js';
 import type { CreateSessionRequest, SessionInfo } from './types.js';
 import { watchSessionFile, type SessionFileWatcher, type ClaudeSessionEvent } from './sessionFileWatcher.js';
+import { claudeWorkingFromSnapshot } from './claudeActivity.js';
 
 // Same trick runner.ts uses to bypass @xterm/headless's broken ESM facade.
 const xtermRequire = createRequire(import.meta.url);
@@ -70,7 +71,25 @@ setInterval(() => {
   for (const s of sessions.values()) {
     if (s.exited) continue;
     s.recentBytes = Math.floor(s.recentBytes / 2);
-    s.info.working = s.recentBytes >= WORKING_BYTES_THRESHOLD;
+    const byteWorking = s.recentBytes >= WORKING_BYTES_THRESHOLD;
+    // Byte-rate lies for Claude Code: a custom statusline (e.g. the
+    // user's `/goal active (3d)◎`) repaints continuously while idle, so
+    // the PTY never goes quiet and `working` would be pinned true. JSONL
+    // append-rate lies the other way (silent for minutes mid-turn). The
+    // honest signal is Claude's own "· esc to interrupt" footer, which we
+    // read off the headless mirror we already feed for snapshots. Fall
+    // back to byte-rate only if the mirror serialize hiccups, and for
+    // non-Claude sessions (bash spam, `cat huge.txt`, codex) where there
+    // is no such footer.
+    if (s.info.tool === 'claude-code') {
+      try {
+        s.info.working = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
+      } catch {
+        s.info.working = byteWorking;
+      }
+    } else {
+      s.info.working = byteWorking;
+    }
   }
 }, WORKING_DECAY_MS).unref();
 

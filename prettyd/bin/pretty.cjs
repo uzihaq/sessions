@@ -347,13 +347,19 @@ async function cmdWait(args) {
     if (args[i] === '--idle' && args[i + 1]) idleMs = parseDuration(args[i + 1]);
     if (args[i] === '--timeout' && args[i + 1]) timeoutMs = parseDuration(args[i + 1]);
   }
-  // Poll /api/sessions and read the session's `lastDataAt` field. When
-  // (now - lastDataAt) >= idleMs, the session has been quiet long enough.
-  // Polling at idle/4 keeps the resolution reasonable without hammering
-  // the daemon. We also bail if the session vanishes (killed during
-  // wait) or if the overall timeout elapses.
+  // "Done with its turn" detection. For Claude Code sessions we key off
+  // the `working` flag, which the daemon derives from Claude's own
+  // "esc to interrupt" / live spinner footer — NOT byte rate. This is the
+  // honest signal: a custom statusline (e.g. `/goal active (3d)◎`)
+  // repaints forever and keeps `lastDataAt` fresh, so the old
+  // lastDataAt-based wait would never return for an idle Claude session.
+  // We return once `working` has stayed false for idleMs continuously.
+  //
+  // Non-Claude sessions (bash, codex, …) have no such footer, so we fall
+  // back to the byte-rate lastDataAt heuristic.
   const start = Date.now();
   const pollInterval = Math.max(100, Math.min(idleMs / 4, 500));
+  let notWorkingSince = null; // claude path: when `working` last went false
   while (true) {
     const { sessions } = await getJson('/api/sessions');
     const s = sessions.find((x) => x.id === id);
@@ -364,7 +370,14 @@ async function cmdWait(args) {
       else process.stdout.write('gone\n');
       return;
     }
-    const idleFor = Date.now() - (s.lastDataAt || s.createdAt);
+    let idleFor;
+    if (s.tool === 'claude-code') {
+      if (s.working) notWorkingSince = null;
+      else if (notWorkingSince === null) notWorkingSince = Date.now();
+      idleFor = notWorkingSince === null ? 0 : Date.now() - notWorkingSince;
+    } else {
+      idleFor = Date.now() - (s.lastDataAt || s.createdAt);
+    }
     if (idleFor >= idleMs) {
       const result = { ok: true, reason: 'idle', idleMs: idleFor, working: s.working };
       if (wantJson) process.stdout.write(JSON.stringify(result) + '\n');
