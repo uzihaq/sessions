@@ -215,7 +215,11 @@ const TOOL_PRESETS = {
   },
   codex: {
     cmd: '/opt/homebrew/bin/codex',
-    args: ['--full-auto']
+    // codex >=0.137 removed `--full-auto` (parse error -> instant exit).
+    // This is the no-prompts equivalent: sandboxed to the workspace,
+    // never blocks on an approval prompt (matches the skip-perms
+    // workflow; a stalled prompt is unusable from a phone/agent loop).
+    args: ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
   },
   shell: {
     cmd: undefined, // prettyd default = $SHELL

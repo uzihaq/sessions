@@ -70,9 +70,12 @@ function resolveCommand(
     return { cmd: 'claude', args };
   }
   if (tool === 'codex') {
+    // codex >=0.137 removed `--full-auto` (parse error -> instant exit).
+    // Skip-perms maps to the no-prompts equivalent: workspace-sandboxed,
+    // never blocks on an approval prompt.
     return {
       cmd: 'codex',
-      args: skipPerms ? ['--full-auto'] : []
+      args: skipPerms ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'] : []
     };
   }
   // shell — let prettyd default to $SHELL
