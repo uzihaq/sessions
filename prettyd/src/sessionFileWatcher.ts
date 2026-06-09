@@ -29,6 +29,7 @@
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as fsp from 'node:fs/promises';
+import { StringDecoder } from 'node:string_decoder';
 import { resolveJsonlPath, projectDirFor } from './jsonlResolver.js';
 
 // Anthropic's persisted event format. Conservatively typed — we only
@@ -93,6 +94,10 @@ export async function watchSessionFile(opts: WatcherOptions): Promise<SessionFil
   let currentIno: number | null = null;
   let readOffset = 0;
   let lineBuffer = '';
+  // Decode bytes through a StringDecoder so a multibyte UTF-8 char split
+  // across two reads (the stat lands mid-codepoint) isn't corrupted into
+  // U+FFFD — it holds the partial bytes until the next read completes them.
+  let decoder = new StringDecoder('utf8');
   let readingInFlight = false;
   let pendingRead = false;
 
@@ -135,12 +140,14 @@ export async function watchSessionFile(opts: WatcherOptions): Promise<SessionFil
         // File vanished (rotation). Drop it; tick() re-resolves.
         detachFileWatcher();
         currentPath = null; currentIno = null; readOffset = 0; lineBuffer = '';
+        decoder = new StringDecoder('utf8');
         return;
       }
       if ((currentIno !== null && st.ino !== currentIno) || st.size < readOffset) {
         // Replaced or truncated — start over (de-dup guards re-emit).
         readOffset = 0;
         lineBuffer = '';
+        decoder = new StringDecoder('utf8');
       }
       currentIno = st.ino;
       if (st.size <= readOffset) return;
@@ -152,7 +159,7 @@ export async function watchSessionFile(opts: WatcherOptions): Promise<SessionFil
         await fh.close();
       }
       readOffset = st.size;
-      lineBuffer += buf.toString('utf8');
+      lineBuffer += decoder.write(buf);
       let nl: number;
       while ((nl = lineBuffer.indexOf('\n')) !== -1) {
         const line = lineBuffer.slice(0, nl);
@@ -188,6 +195,7 @@ export async function watchSessionFile(opts: WatcherOptions): Promise<SessionFil
     currentIno = null;
     readOffset = 0;
     lineBuffer = '';
+    decoder = new StringDecoder('utf8');
     try {
       fileWatcher = fs.watch(p, { persistent: false }, (eventType) => {
         if (closed) return;

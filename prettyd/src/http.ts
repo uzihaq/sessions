@@ -189,21 +189,25 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
       return;
     }
     const log = sess.claudeEventLog;
-    const total = log.length;
+    const base = sess.claudeEventBase;        // absolute index of log[0]
+    const len = log.length;
+    const total = base + len;                 // absolute count ever seen
     const sinceRaw = url.searchParams.get('since');
     const tailRaw = url.searchParams.get('tail');
+    // Local array offset. `since` is an ABSOLUTE index (matches nextIndex
+    // and the WS counter) → map through base. `tail` caps the result to the
+    // last N. With both, take the max so the response is at most N events
+    // AND only those after `since` — the bandwidth cap still holds on an
+    // incremental poll (the old code silently ignored tail when since was
+    // present, defeating the cap).
     let start = 0;
     if (sinceRaw != null) {
       const n = Number(sinceRaw);
-      if (Number.isFinite(n) && n >= 0) start = Math.min(n, total);
+      if (Number.isFinite(n) && n >= 0) start = Math.max(0, Math.min(n - base, len));
     }
     if (tailRaw != null) {
       const n = Number(tailRaw);
-      if (Number.isFinite(n) && n > 0) {
-        const tailStart = Math.max(0, total - Math.floor(n));
-        // tail wins over since if both passed — caller asked for "last n"
-        if (sinceRaw == null) start = tailStart;
-      }
+      if (Number.isFinite(n) && n > 0) start = Math.max(start, Math.max(0, len - Math.floor(n)));
     }
     const events = start === 0 ? log : log.slice(start);
     send(res, 200, { events, nextIndex: total, totalCount: total });

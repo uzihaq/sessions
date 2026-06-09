@@ -50,6 +50,11 @@ interface SessionInternal {
   // connections replay everything Claude has emitted since this
   // prettyd started, same shape as how OutputEvent replay works.
   claudeEventLog: ClaudeSessionEvent[];
+  // Number of events evicted from the FRONT of claudeEventLog by the
+  // 5000-cap trim. claudeEventLog[i] has absolute index claudeEventBase+i.
+  // WS ?claudeEventsSince= / HTTP ?since= are absolute indices, so without
+  // this offset a reconnect after a trim would silently skip events.
+  claudeEventBase: number;
 }
 
 export type { OutputEvent };
@@ -188,7 +193,25 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
   // include a sane PATH so the actual PTY command (e.g. `claude`) can be
   // found by node-pty's spawn — without this, brew-installed binaries
   // fall off the path under launchd.
+  // launchd's minimal env also drops things sessions genuinely need that
+  // the old in-process node-pty path inherited for free: the ssh-agent
+  // socket (so `git push` over ssh works inside a session), proxy / CA
+  // settings on corporate networks, and any Anthropic auth/base-url
+  // overrides. Forward them when present; the explicit vars and req.env
+  // below still win.
+  const PASSTHROUGH_ENV = [
+    'SSH_AUTH_SOCK', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+    'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+    'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+    'NODE_EXTRA_CA_CERTS', 'GIT_SSH_COMMAND'
+  ];
+  const passthrough: Record<string, string> = {};
+  for (const k of PASSTHROUGH_ENV) {
+    const v = process.env[k];
+    if (typeof v === 'string' && v.length > 0) passthrough[k] = v;
+  }
   const launchdEnv: Record<string, string> = {
+    ...passthrough,
     HOME: process.env.HOME || os.homedir(),
     USER: process.env.USER || '',
     PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
@@ -302,7 +325,8 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
     exitSeq: null,
     recentBytes: 0,
     fileWatcher: null,
-    claudeEventLog: []
+    claudeEventLog: [],
+    claudeEventBase: 0
   };
   sessions.set(hello.id, internal);
 
@@ -333,9 +357,13 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
         watcher.emitter.on('event', (ev: ClaudeSessionEvent) => {
           internal.claudeEventLog.push(ev);
           // Bound the log so a long-running session doesn't grow
-          // unbounded. 5000 events ≈ several days of typical use.
+          // unbounded. 5000 events ≈ several days of typical use. Track
+          // how many we drop from the front so absolute indices (used by
+          // WS replay + HTTP /events?since=) stay correct across the trim.
           if (internal.claudeEventLog.length > 5000) {
-            internal.claudeEventLog.splice(0, internal.claudeEventLog.length - 5000);
+            const removed = internal.claudeEventLog.length - 5000;
+            internal.claudeEventLog.splice(0, removed);
+            internal.claudeEventBase += removed;
           }
           // Surface Claude's own session titles. The TUI writes two
           // event types into the JSONL:
@@ -368,7 +396,11 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
     try { mirrorTerm.write(ev.data); } catch { /* mirror write failed — non-fatal */ }
     internal.recentBytes += Buffer.byteLength(ev.data, 'utf8');
     internal.info.lastDataAt = Date.now();
-    internal.info.working = internal.recentBytes >= WORKING_BYTES_THRESHOLD;
+    // NB: do NOT set info.working here. The 800ms interval owns it — for
+    // claude-code it reads the "esc to interrupt" footer, not byte rate.
+    // Setting it from byte rate on every frame would re-pin idle Claude
+    // sessions to working:true between ticks (the statusline-repaint
+    // false positive the footer check exists to kill).
     emitter.emit('output', { seq: ev.seq, data: ev.data, ts: internal.info.lastDataAt } satisfies OutputEvent);
   });
   client.on('exit', (e) => {
@@ -404,17 +436,30 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
     if (!internal.exited) {
       sessions.delete(hello.id);
       try { mirrorTerm.dispose(); } catch { /* ignore */ }
+      // Close the JSONL watcher too — otherwise a crash-disconnect (no
+      // EXIT frame) leaks its dir watcher, file watcher, and 2s poll
+      // interval, and they keep appending to the orphaned event log.
+      try { internal.fileWatcher?.close(); } catch { /* ignore */ }
     }
   });
 
-  // Backfill from the runner's existing buffer.
+  // Backfill from the runner's existing buffer. Don't wait forever: a
+  // runner that dies (or whose socket drops) mid-replay must not hang
+  // registerRunner — discoverRunners() awaits this before server.listen(),
+  // so a single wedged socket would otherwise stop prettyd from ever
+  // binding its port. Resolve on REPLAY_DONE, on disconnect, or after a
+  // timeout; the disconnect handler above already cleans up a dead one.
   client.requestReplay(0);
   await new Promise<void>((resolve) => {
-    const onDone = (): void => {
-      client.off('replayDone', onDone);
+    const finish = (): void => {
+      client.off('replayDone', finish);
+      client.off('disconnect', finish);
+      clearTimeout(timer);
       resolve();
     };
-    client.on('replayDone', onDone);
+    const timer = setTimeout(finish, 10_000);
+    client.on('replayDone', finish);
+    client.on('disconnect', finish);
   });
 
   return internal;
@@ -491,6 +536,12 @@ export function resize(id: string, cols: number, rows: number): boolean {
   const s = sessions.get(id);
   if (!s || s.exited) return false;
   s.client.resize(cols, rows);
+  // Keep the prettyd-side mirror in lockstep with the PTY. snapshot(),
+  // the claude "working" footer detector, and the multi-choice picker
+  // detector all read this mirror; if it stays at the create-time size
+  // while the TUI redraws for a new width, cursor-positioning writes are
+  // interpreted at the wrong column and the mirror paints garbage.
+  try { s.mirrorTerm.resize(cols, rows); } catch { /* ignore */ }
   s.info.cols = cols;
   s.info.rows = rows;
   return true;

@@ -54,11 +54,18 @@ wss.on('connection', (ws, req) => {
   // history is reachable via the HTTP /events endpoint on demand.
   //
   // On reconnect (claudeEventsSince>0): ship only the deltas.
+  // Indices are ABSOLUTE (claudeEventBase + array index) so they survive
+  // the 5000-cap front-trim. Map the client's absolute resume point into a
+  // local array offset; clamp to 0 if the client is older than what we
+  // still retain (it just gets the oldest-available onward, no duplicates).
   const INITIAL_REPLAY_CAP = 300;
-  const claudeEventsAtHello = session.claudeEventLog.length;
-  const claudeReplayStart = claudeEventsSince > 0
-    ? Math.min(claudeEventsSince, claudeEventsAtHello)
-    : Math.max(0, claudeEventsAtHello - INITIAL_REPLAY_CAP);
+  const base = session.claudeEventBase;
+  const len = session.claudeEventLog.length;
+  const claudeEventsCount = base + len; // absolute total ever seen
+  const localStart = claudeEventsSince > 0
+    ? Math.max(0, Math.min(claudeEventsSince - base, len))
+    : Math.max(0, len - INITIAL_REPLAY_CAP);
+  const claudeReplayStart = base + localStart; // absolute, for the client's counter
 
   send(ws, {
     type: 'hello',
@@ -66,7 +73,7 @@ wss.on('connection', (ws, req) => {
     session: session.info,
     currentSeq: replay.current,
     resumedFromSeq: lastSeqParam ? lastSeq : null,
-    claudeEventsCount: claudeEventsAtHello,
+    claudeEventsCount,
     claudeReplayStart
   });
 
@@ -84,7 +91,7 @@ wss.on('connection', (ws, req) => {
   // Replay the windowed slice computed above (initial-tail OR
   // since-deltas). Sent after raw-byte replay so the client updates
   // its terminal first, then layers structured events on top.
-  for (let i = claudeReplayStart; i < claudeEventsAtHello; i++) {
+  for (let i = localStart; i < len; i++) {
     send(ws, { type: 'claudeEvent', event: session.claudeEventLog[i]! });
   }
 

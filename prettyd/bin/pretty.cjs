@@ -29,6 +29,7 @@ const http = require('node:http');
 const https = require('node:https');
 const path = require('node:path');
 const url = require('node:url');
+const { randomUUID } = require('node:crypto');
 
 const argv = process.argv.slice(2);
 
@@ -266,6 +267,17 @@ async function cmdNew(args) {
     // Any leftover positional args become extra args to the tool.
     if (args.length > 0) {
       body.args = (body.args || []).concat(args);
+    }
+    // Pin a Claude session id so prettyd's JSONL watcher can locate the
+    // conversation file (it's the ONLY locator — no mtime fallback). The
+    // New Session dialog already does this; without it `pretty new --tool
+    // claude` sessions get an empty Pretty view, no titles, and may boot
+    // into Claude's resume picker. Skip if the caller already pinned one.
+    if (toolVal.toLowerCase() === 'claude') {
+      const a = body.args || (body.args = []);
+      if (!a.some((x) => x === '--session-id' || x === '--resume')) {
+        a.push('--session-id', randomUUID());
+      }
     }
   } else {
     const cmdVal = pluck('--cmd');
