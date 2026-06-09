@@ -37,6 +37,14 @@ interface UseTerminalResult {
 
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
 
+// Cap the in-memory claudeEvents array. The server's ring caps at 5000;
+// without a matching client cap a days-long tab kept open accumulates tens
+// of MB (tool_results carry full command/file output) and RemoteView's
+// eventsToMessages re-walks the whole array on every batch. Keep the most
+// recent N — the client counter (claudeEventsSeen) stays absolute, so
+// reconnect resume is unaffected.
+const CLAUDE_EVENT_CAP = 5000;
+
 // Phase 2: xterm.js mounted into a div, bound to a prettyd session over WS.
 // Every output frame carries a seq#; we persist the latest in localStorage
 // so a phone-lock-induced disconnect can resume from where we left off.
@@ -314,7 +322,12 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
               claudeFlushScheduled = false;
               const batch = pendingClaudeEvents.slice();
               pendingClaudeEvents.length = 0;
-              setClaudeEvents((prev) => [...prev, ...batch]);
+              setClaudeEvents((prev) => {
+                const merged = [...prev, ...batch];
+                return merged.length > CLAUDE_EVENT_CAP
+                  ? merged.slice(-CLAUDE_EVENT_CAP)
+                  : merged;
+              });
             });
           }
           return;
@@ -328,7 +341,13 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
 
       sock.onclose = () => {
         if (sock !== ws) return;
-        if (disposed || ptyExited) {
+        // Effect torn down (unmount, or re-mount for a mountTerminal /
+        // server / session change): the REPLACEMENT effect owns `status`
+        // now. Setting it here would race the new socket's onopen and can
+        // stick the UI on 'closed' — disabling the input box — while the
+        // new WS is actually live. Leave status to the new effect.
+        if (disposed) return;
+        if (ptyExited) {
           setStatus('closed');
           return;
         }

@@ -6,7 +6,8 @@ import { useServers } from '../lib/servers';
 // (lib/parser.ts, parsers/, hooks/usePrettyParser.ts) is gone; nobody
 // passes `blocks` anymore. The reconciler effect below short-circuits
 // to a no-op when blocks is empty/undefined, and the JSONL-event path
-// (eventConfirmedUserContents) handles all live pending → sent flips.
+// (eventUserContentCounts + per-message confirmBaseline) handles all live
+// pending → sent flips.
 //
 // Kept rather than ripped because removing it touches ~200 lines of
 // already-tested reconciler logic — leaving it dead is lower risk.
@@ -90,6 +91,12 @@ export interface DispatchMessage {
   // by Claude's queue but not yet processed. Shown faded; replaced by
   // the real user_input event once Claude picks it off the queue.
   queued?: boolean;
+  // For pending user sends: the number of JSONL occurrences of this exact
+  // content that ALREADY existed when we sent it. The send is confirmed
+  // only once the occurrence count EXCEEDS this baseline — so a re-send of
+  // text already in history (from a prior turn, the terminal, or another
+  // client) isn't falsely confirmed by the old occurrence.
+  confirmBaseline?: number;
 }
 
 const STORAGE_PREFIX = 'pretty-pty:dispatch:';
@@ -178,11 +185,14 @@ interface Args {
   // confirm within PENDING_TIMEOUT_MS are still marked failed by the
   // 2s timeout interval.
   blocks?: Block[];
-  // Content strings (trimmed) of user messages confirmed by the JSONL
-  // event stream. Pending entries whose content matches one of these
-  // get flipped to 'sent' so they don't tombstone as 'failed' after
-  // PENDING_TIMEOUT_MS just because the parser wasn't watching.
-  eventConfirmedUserContents?: ReadonlySet<string>;
+  // Occurrence COUNT, per trimmed content, of user messages in the JSONL
+  // event stream. Pending entries get flipped to 'sent' only when the
+  // JSONL has more occurrences of their content than we've already matched
+  // to a sent entry — so re-sending text that already appears in history
+  // isn't falsely confirmed by the old occurrence (a count, not a set, is
+  // required to distinguish "this exact send landed" from "this text has
+  // appeared before").
+  eventUserContentCounts?: ReadonlyMap<string, number>;
   send: (data: string) => void;
 }
 
@@ -209,7 +219,7 @@ export interface DispatchAPI {
   resetLog: () => void;
 }
 
-export function useDispatch({ sessionId, blocks = [], eventConfirmedUserContents, send }: Args): DispatchAPI {
+export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, send }: Args): DispatchAPI {
   const activeServerId = useServers((s) => s.activeId);
   const [messages, setMessages] = useState<DispatchMessage[]>(() =>
     readStored(activeServerId, sessionId)
@@ -450,17 +460,21 @@ export function useDispatch({ sessionId, blocks = [], eventConfirmedUserContents
         }
       }
 
-      // JSONL-event confirmation — flip pendings whose content matches
-      // an event-derived user message to 'sent'. This is the JSONL
-      // equivalent of the block-match path above; without it, pendings
-      // tombstone as 'failed' even when they actually landed (just
-      // confirmed by JSONL instead of the parser).
-      if (eventConfirmedUserContents && eventConfirmedUserContents.size > 0) {
+      // JSONL-event confirmation (baseline-aware). A send is confirmed only
+      // when the JSONL occurrence count for its content EXCEEDS the baseline
+      // captured when we sent it (how many occurrences already existed).
+      // This is what stops a re-send of text that's already in history —
+      // from a prior turn, the terminal, or another client — from being
+      // falsely confirmed by the OLD occurrence while the new bytes were
+      // dropped. Distinct re-sends get successive baselines (N, N+1, …) so
+      // they confirm against successive new occurrences.
+      if (eventUserContentCounts && eventUserContentCounts.size > 0) {
         for (let i = 0; i < next.length; i++) {
           const m = next[i]!;
           if (m.role !== 'user') continue;
           if (m.status !== 'pending' && m.status !== 'failed') continue;
-          if (eventConfirmedUserContents.has(m.content.trim())) {
+          const have = eventUserContentCounts.get(m.content.trim()) ?? 0;
+          if (have > (m.confirmBaseline ?? 0)) {
             next[i] = { ...m, status: 'sent', confirmedAt: now };
             changed = true;
           }
@@ -487,7 +501,7 @@ export function useDispatch({ sessionId, blocks = [], eventConfirmedUserContents
 
       return changed ? next : prev;
     });
-  }, [blocks, eventConfirmedUserContents]);
+  }, [blocks, eventUserContentCounts]);
 
   // Re-check pending timeouts every 2s even when blocks haven't changed
   // — otherwise a message dispatched while the parser is offline could
@@ -521,6 +535,13 @@ export function useDispatch({ sessionId, blocks = [], eventConfirmedUserContents
   const messagesRef = useRef(messages);
   useEffect(() => {
     messagesRef.current = messages;
+  });
+
+  // Latest JSONL occurrence counts, so recordSent can snapshot the
+  // confirmation baseline at send time without re-running on every change.
+  const eventCountsRef = useRef(eventUserContentCounts);
+  useEffect(() => {
+    eventCountsRef.current = eventUserContentCounts;
   });
 
   // Closed-loop dispatch — every pending message owns a small queue of
@@ -607,13 +628,25 @@ export function useDispatch({ sessionId, blocks = [], eventConfirmedUserContents
         p.map((m) => (m.id === targetId ? { ...m, createdAt: now } : m))
       );
     } else {
+      // Snapshot the confirmation baseline: how many JSONL occurrences of
+      // this exact content already exist, plus any unconfirmed sends of the
+      // same content still queued ahead of this one (so identical re-sends
+      // confirm against successive new occurrences, not the same one).
+      const trimmed = content.trim();
+      const jsonlCount = eventCountsRef.current?.get(trimmed) ?? 0;
+      const queuedAhead = prev.filter(
+        (m) => m.role === 'user'
+          && (m.status === 'pending' || m.status === 'failed')
+          && m.content.trim() === trimmed
+      ).length;
       targetId = `user-${now}-${Math.random().toString(36).slice(2, 8)}`;
       const msg: DispatchMessage = {
         id: targetId,
         role: 'user',
         content,
         status: 'pending',
-        createdAt: now
+        createdAt: now,
+        confirmBaseline: jsonlCount + queuedAhead
       };
       setMessages((p) => [...p, msg]);
     }

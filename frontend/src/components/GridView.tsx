@@ -107,6 +107,12 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
   // making it impossible to read older messages.
   const stickRef = useRef(true);
   const activeServerId = useServers((s) => s.activeId);
+  // Last event count we rendered. The /events endpoint returns nextIndex
+  // (absolute total); when it's unchanged since the previous 2s poll there
+  // are no new events, so we skip eventsToMessages + setMessages + the
+  // markdown re-render entirely. With N idle cells tiled this turns a
+  // steady N×(parse+render) every 2s into ~zero React work.
+  const lastNextIndexRef = useRef(-1);
 
   // Refresh the cell's chat preview every 2s from Claude's JSONL
   // event log (cached server-side by the file watcher). Same data
@@ -117,6 +123,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
   // ("Wraysbury misparsed as Bash", picker items leaking, etc.).
   useEffect(() => {
     let alive = true;
+    lastNextIndexRef.current = -1; // force a render on (re)subscribe
     const tick = async (): Promise<void> => {
       try {
         // Only fetch the tail — a single cell shows max 10 messages
@@ -126,6 +133,9 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
         // sink. tail=40 covers any reasonable rendered window.
         const result = await fetchClaudeEvents(session.id, { tail: 40 });
         if (!alive || result === null) return;
+        // Nothing new since last poll → skip the parse + re-render.
+        if (result.nextIndex === lastNextIndexRef.current) return;
+        lastNextIndexRef.current = result.nextIndex;
         const msgs = eventsToMessages(result.events);
         setMessages(msgs.slice(-10));
       } catch { /* transient — try again next tick */ }

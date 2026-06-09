@@ -50,34 +50,40 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
   // stable across renders when its contents don't change so useDispatch's
   // effect doesn't re-run unnecessarily.
   const eventMessages = useMemo(() => eventsToMessages(claudeEvents), [claudeEvents]);
-  const eventConfirmedUserContents = useMemo(() => {
-    return new Set(
-      eventMessages.filter((m) => m.role === 'user').map((m) => m.content.trim())
-    );
+  // Occurrence COUNT per trimmed user content in the JSONL — a count, not
+  // a set, so useDispatch can tell a genuinely-new re-send ("continue"
+  // again) from a historical duplicate and not false-confirm it.
+  const eventUserContentCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const m of eventMessages) {
+      if (m.role !== 'user') continue;
+      const c = m.content.trim();
+      counts.set(c, (counts.get(c) ?? 0) + 1);
+    }
+    return counts;
   }, [eventMessages]);
 
   const { messages: dispatchMessages, recordSent, retry, remove, resetLog } = useDispatch({
     sessionId,
-    eventConfirmedUserContents,
+    eventUserContentCounts,
     send
   });
 
-  // JSONL events are the authoritative chat record. We merge in only
-  // the dispatch log's still-pending (or failed) user entries — those
-  // are messages we just sent that haven't shown up in JSONL yet.
-  // Pending entries whose content already appears in the event stream
-  // are dropped here (and the dispatch hook flips them to 'sent' too,
-  // so they don't tombstone as 'failed' later).
+  // JSONL events are the authoritative chat record. Merge in only the
+  // dispatch log's still-unconfirmed (pending/failed) user entries — sends
+  // that haven't shown up in the JSONL yet. useDispatch flips an entry to
+  // 'sent' (dropping it from this merge) as soon as a matching JSONL
+  // occurrence appears; it's count-aware, so a re-send of text that's
+  // already in history stays visibly pending until ITS bytes actually land
+  // (the old content-set filter hid it immediately — making a dropped
+  // re-send look delivered).
   const messages = useMemo<DispatchMessage[]>(() => {
     if (eventMessages.length === 0) return dispatchMessages;
-    const pendingTail = dispatchMessages.filter(
+    const stillPending = dispatchMessages.filter(
       (m) => m.role === 'user' && (m.status === 'pending' || m.status === 'failed')
     );
-    const stillPending = pendingTail.filter(
-      (m) => !eventConfirmedUserContents.has(m.content.trim())
-    );
     return [...eventMessages, ...stillPending];
-  }, [eventMessages, dispatchMessages, eventConfirmedUserContents]);
+  }, [eventMessages, dispatchMessages]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const initialPos = useMemo(
     () => readScrollPosition(sessionId, 'remote'),

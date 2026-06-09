@@ -160,7 +160,14 @@ export function App(): JSX.Element {
     const prev = prevWorkingRef.current;
     const next = new Map<string, boolean>();
     for (const s of sessions) {
-      const isWorking = s.id === activeId ? activeStatus.isWorking : s.working;
+      // Use the daemon's `working` flag for EVERY session, including the
+      // active one. It's now the honest footer-derived signal, and using
+      // it uniformly avoids a phantom "done": on a tab switch, activeStatus
+      // still holds the PREVIOUS session's value for one commit (the child
+      // pushes the new one a render later), which used to record the new
+      // tab as working=true and then fire a spurious "done" when it
+      // corrected.
+      const isWorking = s.working;
       next.set(s.id, isWorking);
       if (prev && prev.get(s.id) === true && isWorking === false) {
         const label = (s.cwd?.split('/').filter(Boolean).pop()) || s.cmd || s.id.slice(0, 8);
@@ -168,7 +175,7 @@ export function App(): JSX.Element {
       }
     }
     prevWorkingRef.current = next;
-  }, [sessions, activeId, activeStatus.isWorking]);
+  }, [sessions]);
 
   // Single-session pop-out window: skip every chrome element except
   // SessionView itself. The session id comes from the URL.

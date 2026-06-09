@@ -60,6 +60,16 @@ function writeStoredView(mode: ViewMode): void {
 // is always one click away.
 export function SessionView({ sessionId, onStatusChange, isActive = false }: Props): JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredView);
+  const session = useSessions((s) => s.sessions.find((x) => x.id === sessionId)) ?? null;
+
+  // Only Claude Code sessions have a Pretty/Remote source (the JSONL
+  // event stream). codex / shell have no conversation log, so the Remote
+  // view would be a permanently-empty Claude-branded pane — force Terminal
+  // for them and hide the Pretty toggle. Assume Claude until the session
+  // loads so a claude session doesn't flicker through Terminal on first
+  // paint.
+  const supportsPretty = !session || session.tool === 'claude-code';
+  const effectiveView: ViewMode = supportsPretty ? viewMode : 'terminal';
 
   // Sticky "have we ever needed xterm for this session?" Once true,
   // stays true so toggling Pretty↔Terminal doesn't tear down xterm.
@@ -69,11 +79,10 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
   // trees when the user lives in Pretty view.
   const [hasMountedTerminal, setHasMountedTerminal] = useState(viewMode === 'terminal');
   useEffect(() => {
-    if (viewMode === 'terminal' && !hasMountedTerminal) setHasMountedTerminal(true);
-  }, [viewMode, hasMountedTerminal]);
+    if (effectiveView === 'terminal' && !hasMountedTerminal) setHasMountedTerminal(true);
+  }, [effectiveView, hasMountedTerminal]);
 
   const term = useTerminal(sessionId, hasMountedTerminal);
-  const session = useSessions((s) => s.sessions.find((x) => x.id === sessionId)) ?? null;
   const sidebar = useSessionSidebar({
     session,
     claudeEvents: term.claudeEvents,
@@ -103,7 +112,7 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
   const lastPickerSeenRef = useRef(false);
   useEffect(() => {
     if (!isActive) return;
-    if (viewMode !== 'remote') return;
+    if (effectiveView !== 'remote') return;
     let alive = true;
     const tick = async (): Promise<void> => {
       try {
@@ -121,7 +130,7 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
     void tick();
     const id = window.setInterval(() => { void tick(); }, 2000);
     return () => { alive = false; window.clearInterval(id); };
-  }, [sessionId, isActive, viewMode]);
+  }, [sessionId, isActive, effectiveView]);
 
   // Push the active-session status up to App so the tab strip and mobile
   // nav reflect it.
@@ -142,7 +151,7 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
   ]);
 
   return (
-    <div className={`session-view view-${viewMode}`}>
+    <div className={`session-view view-${effectiveView}`}>
       <div className="session-toolbar">
         <span className={`status-dot status-${term.status}`} />
         <span className="status-text">{term.status}</span>
@@ -161,19 +170,21 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
         <div className="view-toggle" role="tablist" aria-label="view mode">
           <button
             type="button"
-            className={`view-toggle-btn${viewMode === 'terminal' ? ' is-active' : ''}`}
+            className={`view-toggle-btn${effectiveView === 'terminal' ? ' is-active' : ''}`}
             onClick={() => setViewMode('terminal')}
           >
             Terminal
           </button>
-          <button
-            type="button"
-            className={`view-toggle-btn${viewMode === 'remote' ? ' is-active' : ''}`}
-            onClick={() => setViewMode('remote')}
-            title="Chat-style abstraction with its own message log"
-          >
-            Pretty
-          </button>
+          {supportsPretty ? (
+            <button
+              type="button"
+              className={`view-toggle-btn${effectiveView === 'remote' ? ' is-active' : ''}`}
+              onClick={() => setViewMode('remote')}
+              title="Chat-style abstraction with its own message log"
+            >
+              Pretty
+            </button>
+          ) : null}
         </div>
       </div>
 
