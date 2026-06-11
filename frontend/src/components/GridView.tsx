@@ -26,9 +26,9 @@ interface Props {
   // gets its own × button in the header — without it the user has no
   // way to close a session from grid view.
   onClose?: (id: string) => void | Promise<void>;
-  // Reserved for future "expand" affordance (e.g. dbl-click cell). Grid
-  // currently doesn't auto-switch to tabs view on cell click — the user
-  // explicitly wants to monitor + type from grid without flipping modes.
+  // Expand to single-session (tabs) view. Wired to the ⤢ button AND
+  // double-click on the cell. Single click only focuses for typing —
+  // the user monitors + types from grid without flipping modes.
   onExpand?: (id: string) => void;
 }
 
@@ -265,6 +265,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
       ref={cellRef}
       tabIndex={0}
       onClick={focusCell}
+      onDoubleClick={onExpand}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       onKeyDown={onKeyDown}

@@ -19,6 +19,12 @@ export interface SessionInfo {
   // a bash log spam, or a `cat large.txt` all read as "working".
   working: boolean;
   lastDataAt: number; // ms epoch
+  // When the user last sent a real message in this session (ms epoch),
+  // derived from the Claude JSONL stream — actual typed input only, not
+  // tool_results or system-inserted pseudo-messages. null for non-Claude
+  // sessions or before the first user message is seen. Lets `pretty ls`
+  // (and the UI) surface staleness so old sessions can be culled.
+  lastUserMessageAt: number | null;
   // Set when the PTY exits. Sessions stick around for 30s after EXIT
   // so the UI / `pretty ls --include-exited` can show what happened.
   exited: boolean;

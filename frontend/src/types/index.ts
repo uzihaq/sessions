@@ -18,6 +18,9 @@ export interface SessionInfo {
   tool: SessionTool;
   working: boolean;
   lastDataAt: number;
+  // When the user last sent a real message (ms epoch, from the Claude
+  // JSONL) — null for non-Claude sessions or before the first message.
+  lastUserMessageAt: number | null;
   exited: boolean;
   exitCode: number | null;
   exitSignal: string | null;

@@ -116,6 +116,36 @@ setInterval(() => {
 // or `--resume <uuid>` (set when resuming a specific session). The
 // uuid IS the JSONL filename, so the watcher can lock onto the right
 // file deterministically.
+// True when a JSONL user event carries text the human actually typed —
+// not tool_result loop feedback, and not the system-inserted pseudo
+// messages Claude writes for its own bookkeeping (<command-name>,
+// <system-reminder>, compact/continue banners, interrupt sentinels).
+// Used to maintain SessionInfo.lastUserMessageAt.
+function isRealUserMessage(ev: ClaudeSessionEvent): boolean {
+  if (ev.type !== 'user' || ev.message?.role !== 'user') return false;
+  const c = ev.message.content;
+  let text: string | null = null;
+  if (typeof c === 'string') {
+    text = c;
+  } else if (Array.isArray(c)) {
+    const blocks = c as Array<{ type?: string; text?: string }>;
+    if (blocks.length === 0) return false;
+    if (blocks.every((b) => b?.type === 'tool_result')) return false;
+    const t = blocks.find((b) => b?.type === 'text' && typeof b.text === 'string');
+    // No text block but e.g. an image attachment still counts as the user
+    // acting; require SOME non-tool_result block, which we already have.
+    text = t?.text ?? '';
+  } else {
+    return false;
+  }
+  const tt = (text ?? '').trimStart();
+  if (tt.startsWith('<')) return false; // <command-name>/<system-reminder>/…
+  if (tt.startsWith('Caveat:')) return false;
+  if (tt.startsWith('This session is being continued')) return false;
+  if (tt.startsWith('[Request interrupted')) return false;
+  return true;
+}
+
 function extractClaudeSessionId(args: string[]): string | undefined {
   for (let i = 0; i < args.length - 1; i++) {
     const flag = args[i];
@@ -309,6 +339,7 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
       tool: classifyTool(hello.cmd),
       working: false,
       lastDataAt: Date.now(),
+      lastUserMessageAt: null,
       exited: false,
       exitCode: null,
       exitSignal: null,
@@ -373,6 +404,17 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
           // frontend tab strip can match the official label without
           // shipping the whole event log. custom-title wins over
           // ai-title because /rename is explicit user intent.
+          // Track when the user last actually typed something — the
+          // staleness signal `pretty ls` surfaces so old sessions can be
+          // culled. Timestamps come from the event itself (the watcher
+          // replays history from byte 0 on attach, so Date.now() would
+          // stamp every historical message as "just now").
+          if (isRealUserMessage(ev) && typeof ev.timestamp === 'string') {
+            const ts = Date.parse(ev.timestamp);
+            if (Number.isFinite(ts) && ts > (internal.info.lastUserMessageAt ?? 0)) {
+              internal.info.lastUserMessageAt = ts;
+            }
+          }
           const t = (ev as { type?: string }).type;
           if (t === 'custom-title') {
             const v = (ev as { customTitle?: string }).customTitle;
@@ -499,6 +541,25 @@ export async function discoverRunners(): Promise<void> {
       }
     }
     if (!connected) {
+      // Connect failed 3×. That is NOT proof the session is dead: under a
+      // rapid prettyd restart (tsx-watch saves back-to-back) with dozens of
+      // runners reconnecting, a perfectly healthy runner can lose this race
+      // — and reaping it here SIGTERMs a live session (this destroyed 4
+      // real sessions on 2026-06-11). Only clean up when the session's
+      // process is provably gone; otherwise leave every file in place and
+      // let the next discovery pass pick it up.
+      let alivePid: number | null = null;
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as { pid?: number };
+        if (typeof meta.pid === 'number' && meta.pid > 0) {
+          process.kill(meta.pid, 0); // throws if the process is gone
+          alivePid = meta.pid;
+        }
+      } catch { /* unreadable meta or dead pid → reap below */ }
+      if (alivePid !== null) {
+        console.error(`[discover] runner ${id} unreachable but pid ${alivePid} alive — leaving it alone`);
+        continue;
+      }
       // Genuinely dead after retries. Clean up so future starts don't
       // chase the same orphan.
       try { fs.unlinkSync(sockPath); } catch { /* ignore */ }

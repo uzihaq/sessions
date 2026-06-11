@@ -150,6 +150,10 @@ async function cmdLs(args) {
     ['CWD', (s) => s.cwd.replace(process.env.HOME || '', '~')],
     ['STATE', stateOf],
     ['AGE', (s) => ageOf(s.createdAt)],
+    // When the human last typed a real message (from the Claude JSONL).
+    // '-' for non-Claude sessions or before the first message. The
+    // staleness signal: a session idle for days here is a cull candidate.
+    ['LAST-USER', (s) => (s.lastUserMessageAt ? ageOf(s.lastUserMessageAt) : '-')],
     ['PID', (s) => String(s.pid)]
   ];
   const rows = [cols.map(([h]) => h), ...sessions.map((s) => cols.map(([, fn]) => fn(s)))];
@@ -297,10 +301,22 @@ async function cmdNew(args) {
   }
 }
 
-async function cmdKill(id) {
-  if (!id) fail('usage: pretty kill <id>');
-  const ok = await del(`/api/sessions/${encodeURIComponent(id)}`);
-  if (!ok) fail(`unknown session: ${id}`, 1);
+async function cmdKill(ids) {
+  if (!ids || ids.length === 0) fail('usage: pretty kill <id> [<id>...]');
+  // Accept several ids so stale sessions can be culled in one command
+  // (`pretty kill a1b2 c3d4 …`). Each kill is reported individually;
+  // exit 1 if any id was unknown.
+  let anyFailed = false;
+  for (const id of ids) {
+    const ok = await del(`/api/sessions/${encodeURIComponent(id)}`);
+    if (ok) {
+      process.stdout.write(`killed ${id}\n`);
+    } else {
+      process.stderr.write(`unknown session: ${id}\n`);
+      anyFailed = true;
+    }
+  }
+  if (anyFailed) process.exit(1);
 }
 
 // Parse 2s, 500ms, 1m, etc. into milliseconds. Bare numbers are seconds.
@@ -486,7 +502,7 @@ function help() {
     '                              pretty new --tool claude --cwd ~/foo',
     '                              pretty new --tool codex --no-skip-perms',
     '                           or supply --cmd / a positional command directly.',
-    '  kill <id>                terminate the session',
+    '  kill <id> [<id>...]      terminate one or more sessions',
     '  attach <id>              raw two-way stream (Ctrl+Q to detach)',
     '',
     'Global flags:',
@@ -506,7 +522,7 @@ function help() {
       return cmdSend(argv[0], argv.slice(1).join(' '));
     case 'keys': return cmdKeys(argv[0], argv[1]);
     case 'new':  return cmdNew(argv);
-    case 'kill': return cmdKill(argv[0]);
+    case 'kill': return cmdKill(argv);
     case 'tail': return cmdTail(argv);
     case 'wait': return cmdWait(argv);
     case 'attach': return cmdAttach(argv[0]);

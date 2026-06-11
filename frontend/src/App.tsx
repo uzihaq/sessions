@@ -267,8 +267,7 @@ export function App(): JSX.Element {
           // full claudeEvents replay, full message-list re-render. For
           // long sessions that was 3+ seconds. Keeping all views mounted
           // means switching is just `display: flex` ↔ `display: none` —
-          // instant. Trade: N concurrent WS + N parsers running. Fine
-          // for typical use (<20 sessions).
+          // instant. Trade: N concurrent WS + N parsers running.
           sessions.map((s) => (
             <div
               key={s.id}

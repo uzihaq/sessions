@@ -50,6 +50,7 @@ function readCache(): { sessions: SessionInfo[]; activeId: string | null } {
           // working or even still alive.
           working: false,
           lastDataAt: c.createdAt,
+          lastUserMessageAt: null,
           exited: false,
           exitCode: null,
           exitSignal: null,
