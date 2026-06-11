@@ -75,7 +75,14 @@ export const PROTOCOL_VERSION = 2;
 export type ClientMsg =
   | { type: 'input'; data: string; sessionId?: string }
   | { type: 'resize'; cols: number; rows: number; sessionId?: string }
-  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number }
+  // outputReplay=false suppresses raw PTY bytes entirely for this attach
+  // (no replay, no live output frames). Used by clients that only render
+  // the structured claudeEvent stream (Pretty view): replaying a 4MB
+  // output ring × dozens of sessions through one socket on page load is
+  // hundreds of MB the client immediately discards — and input frames
+  // queue behind it ("can't type"). Terminal views attach with output on
+  // (default) and a snapshot-prefill lastSeq, so their replay is tiny.
+  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean }
   | { type: 'detach'; sessionId: string };
 
 // Server → client WS messages.

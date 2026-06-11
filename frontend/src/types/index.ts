@@ -84,7 +84,11 @@ export type ServerMsg =
 // connection per window, every attached session's traffic tagged with
 // sessionId (tmux-style — N sessions, 1 socket).
 export type MuxClientMsg =
-  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number }
+  // outputReplay=false suppresses raw PTY bytes (replay AND live) for
+  // this attach — Pretty-only sessions don't consume them, and replaying
+  // every session's 4MB ring through one socket on page load wedges the
+  // browser for minutes.
+  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean }
   | { type: 'detach'; sessionId: string }
   | { type: 'input'; data: string; sessionId: string }
   | { type: 'resize'; cols: number; rows: number; sessionId: string };

@@ -24,7 +24,9 @@ export interface SessionHandlers {
   onStatus: (status: MuxStatus) => void;
   // Called on (re)connect to build the attach frame — returns where this
   // session's client-side state is, so the server replays only deltas.
-  getResume: () => { lastSeq: number; claudeEventsSince: number };
+  // outputReplay=false means "no raw PTY bytes at all" (no terminal is
+  // mounted for this session; only claudeEvents are consumed).
+  getResume: () => { lastSeq: number; claudeEventsSince: number; outputReplay: boolean };
 }
 
 export interface SessionChannel {
@@ -90,6 +92,7 @@ class MuxManager {
     const msg: MuxClientMsg = { type: 'attach', sessionId };
     if (r.lastSeq > 0) msg.lastSeq = r.lastSeq;
     if (r.claudeEventsSince > 0) msg.claudeEventsSince = r.claudeEventsSince;
+    if (!r.outputReplay) msg.outputReplay = false;
     this.send(msg);
   }
 

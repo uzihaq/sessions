@@ -341,7 +341,18 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         channel = attachSession(wsMuxUrl(), sessionId, {
           onMessage,
           onStatus,
-          getResume: () => ({ lastSeq, claudeEventsSince: claudeEventsSeen })
+          // No terminal mounted → skip raw PTY bytes entirely. Pretty
+          // view only consumes claudeEvents; replaying every session's
+          // output ring through the shared socket on page load was
+          // ~230MB at 56 sessions and wedged the page (input queued
+          // behind it). When the user opens Terminal view, mountTerminal
+          // flips → this effect re-runs → fresh attach with prefill +
+          // output enabled.
+          getResume: () => ({
+            lastSeq,
+            claudeEventsSince: claudeEventsSeen,
+            outputReplay: term !== null
+          })
         });
       };
       void prefillThenAttach();

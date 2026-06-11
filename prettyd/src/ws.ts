@@ -20,9 +20,19 @@ function send(ws: WebSocket, msg: ServerMsg): void {
 function attachSessionStream(
   ws: WebSocket,
   session: SessionHandle,
-  opts: { lastSeq: number; claudeEventsSince: number; tagSessionId?: string; onExited?: () => void }
+  opts: {
+    lastSeq: number;
+    claudeEventsSince: number;
+    tagSessionId?: string;
+    onExited?: () => void;
+    // When false, raw PTY bytes are suppressed for this attach — no
+    // replay AND no live output frames. Structured claudeEvents, exit,
+    // and hello still flow. See the attach message in types.ts.
+    includeOutput?: boolean;
+  }
 ): (() => void) | null {
   const tag = opts.tagSessionId !== undefined ? { sessionId: opts.tagSessionId } : {};
+  const includeOutput = opts.includeOutput !== false;
   const replay = session.log.since(opts.lastSeq);
 
   // Claude-event replay window. Indices are ABSOLUTE (claudeEventBase +
@@ -51,11 +61,13 @@ function attachSessionStream(
     ...tag
   });
 
-  if (replay.gap) {
-    send(ws, { type: 'gap', oldestAvailableSeq: replay.oldest, currentSeq: replay.current, ...tag });
-  }
-  for (const ev of replay.events) {
-    send(ws, { type: 'output', seq: ev.seq, data: ev.data, ...tag });
+  if (includeOutput) {
+    if (replay.gap) {
+      send(ws, { type: 'gap', oldestAvailableSeq: replay.oldest, currentSeq: replay.current, ...tag });
+    }
+    for (const ev of replay.events) {
+      send(ws, { type: 'output', seq: ev.seq, data: ev.data, ...tag });
+    }
   }
   for (let i = localStart; i < len; i++) {
     send(ws, { type: 'claudeEvent', event: session.claudeEventLog[i]!, ...tag });
@@ -84,12 +96,12 @@ function attachSessionStream(
   const onClaudeEvent = (ev: ClaudeSessionEvent): void => {
     send(ws, { type: 'claudeEvent', event: ev, ...tag });
   };
-  session.emitter.on('output', onOutput);
+  if (includeOutput) session.emitter.on('output', onOutput);
   session.emitter.on('exit', onExit);
   session.emitter.on('claudeEvent', onClaudeEvent);
 
   return () => {
-    session.emitter.off('output', onOutput);
+    if (includeOutput) session.emitter.off('output', onOutput);
     session.emitter.off('exit', onExit);
     session.emitter.off('claudeEvent', onClaudeEvent);
   };
@@ -135,6 +147,7 @@ function handleMuxConnection(ws: WebSocket): void {
         lastSeq: Math.max(0, (parsed.lastSeq ?? 0) | 0),
         claudeEventsSince: Math.max(0, (parsed.claudeEventsSince ?? 0) | 0),
         tagSessionId: id,
+        includeOutput: parsed.outputReplay !== false,
         // On PTY exit only this session detaches — the socket stays up
         // for every other attached session.
         onExited: () => detach(id)
