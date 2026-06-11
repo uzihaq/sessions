@@ -64,13 +64,25 @@ export interface CreateSessionRequest {
 export const PROTOCOL_VERSION = 2;
 
 // Client → server WS messages.
+//
+// Two connection modes share these:
+//   • single-session (`/ws?sessionId=…`) — input/resize apply to the
+//     URL's session; sessionId on the message is ignored. Used by the
+//     CLI (`pretty attach` / `tail -f`) and older clients.
+//   • multiplexed (`/ws?mux=1`) — ONE socket carries every session the
+//     client attaches (tmux-style: N sessions, 1 connection). attach/
+//     detach manage subscriptions; input/resize MUST carry sessionId.
 export type ClientMsg =
-  | { type: 'input'; data: string }
-  | { type: 'resize'; cols: number; rows: number };
+  | { type: 'input'; data: string; sessionId?: string }
+  | { type: 'resize'; cols: number; rows: number; sessionId?: string }
+  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number }
+  | { type: 'detach'; sessionId: string };
 
 // Server → client WS messages.
 // Phase 2: every output chunk carries a monotonic seq#. Clients persist
 // the last seen seq and reconnect with ?lastSeq=N to resume.
+// In mux mode every message carries `sessionId` so the client can route
+// it to the right terminal; absent in single-session mode.
 export type ServerMsg =
   | {
       type: 'hello';
@@ -87,11 +99,12 @@ export type ServerMsg =
       // initial replay to the tail; the client should treat its local
       // claudeEvents counter as starting at this value, not 0.
       claudeReplayStart: number;
+      sessionId?: string;
     }
-  | { type: 'output'; seq: number; data: string }
-  | { type: 'gap'; oldestAvailableSeq: number; currentSeq: number }
-  | { type: 'exit'; code: number | null; signal: string | null; seq: number }
-  | { type: 'error'; message: string }
+  | { type: 'output'; seq: number; data: string; sessionId?: string }
+  | { type: 'gap'; oldestAvailableSeq: number; currentSeq: number; sessionId?: string }
+  | { type: 'exit'; code: number | null; signal: string | null; seq: number; sessionId?: string }
+  | { type: 'error'; message: string; sessionId?: string }
   // Claude Code's structured session events, sourced from
   // ~/.claude/projects/<encoded-cwd>/<id>.jsonl. Frontend consumers
   // (currently Remote view) opt in to these instead of parsing the
@@ -99,4 +112,4 @@ export type ServerMsg =
   // — kept as a passthrough record because event shapes vary by
   // type ('user', 'assistant', 'system', etc.) and are decoded on
   // the frontend side.
-  | { type: 'claudeEvent'; event: Record<string, unknown> };
+  | { type: 'claudeEvent'; event: Record<string, unknown>; sessionId?: string };

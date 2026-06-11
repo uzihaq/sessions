@@ -7,27 +7,30 @@ import { isTauri } from '../lib/tauriBridge';
 // fetches/WebSockets target without any other plumbing.
 //
 // Two modes:
-//   • Browser + the default "This machine" server entry — return an
-//     empty base so calls become relative URLs ("/api/...") and the
-//     page-serving Vite handles the proxy to whatever PRETTYD_HOST
-//     it was started with. This keeps the Tailscale browser flow
-//     working: load http://<tailnet-ip>:5273/, Vite proxies to
-//     localhost:8787 on the same machine, prettyd stays loopback-only.
-//   • Tauri (no Vite proxy) OR a non-local server entry (e.g. the
-//     Mac Mini from a MacBook Tauri install) — return an absolute URL
-//     pointing at the configured host. CORS on prettyd is wildcarded
-//     so cross-origin works.
+//   • Browser + the default "This machine" server entry — talk DIRECTLY
+//     to prettyd on the same host the page was loaded from
+//     (http://<page-hostname>:<prettyd-port>). The page and prettyd live
+//     on the same machine, so whatever address reached Vite (Tailscale
+//     IP, LAN IP) also reaches prettyd. We used to return '' here and
+//     let Vite's dev proxy forward — but the proxy is a single Node
+//     process that wedges under dozens of long-lived WebSockets: it
+//     held ~73 half-dead upstream legs while the daemon had moved on,
+//     and typing went into those zombie sockets ("can't type"). CORS on
+//     prettyd is wildcarded, so the direct cross-port call just works.
+//   • Tauri OR a non-local server entry (e.g. the Mac Mini from a
+//     MacBook Tauri install) — absolute URL from the configured host.
 function httpBase(): string {
   const s = getActiveServer();
-  if (!isTauri() && isLocalServer(s)) return '';
+  if (!isTauri() && isLocalServer(s)) {
+    return `http://${window.location.hostname}:${s.port}`;
+  }
   return `http://${s.host}:${s.port}`;
 }
 
 function wsBase(): string {
   const s = getActiveServer();
   if (!isTauri() && isLocalServer(s)) {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${window.location.host}`;
+    return `ws://${window.location.hostname}:${s.port}`;
   }
   return `ws://${s.host}:${s.port}`;
 }
@@ -206,4 +209,11 @@ export function wsUrl(sessionId: string, lastSeq?: number, claudeEventsSince?: n
     params.set('claudeEventsSince', String(claudeEventsSince));
   }
   return `${wsBase()}/ws?${params.toString()}`;
+}
+
+// Multiplexed WS endpoint: ONE socket per window carrying every attached
+// session's traffic as sessionId-tagged frames (tmux-style). useTerminal
+// attaches/detaches sessions over it via lib/wsMux.
+export function wsMuxUrl(): string {
+  return `${wsBase()}/ws?mux=1`;
 }

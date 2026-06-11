@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // On a fresh Android install over cellular, this is the difference
 // between "instant tap-to-content" and "wait for the terminal lib to
 // download even though you didn't open Terminal view."
-import { wsUrl, snapshot as fetchServerSnapshot } from '../api/prettyd';
+import { wsMuxUrl, snapshot as fetchServerSnapshot } from '../api/prettyd';
+import { attachSession, type SessionChannel, type MuxStatus } from '../lib/wsMux';
 import { useServers } from '../lib/servers';
 import type { ServerMsg, ClaudeSessionEvent } from '../types';
 
@@ -35,8 +36,6 @@ interface UseTerminalResult {
   claudeEvents: ClaudeSessionEvent[];
 }
 
-const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
-
 // Cap the in-memory claudeEvents array. The server's ring caps at 5000;
 // without a matching client cap a days-long tab kept open accumulates tens
 // of MB (tool_results carry full command/file output) and RemoteView's
@@ -45,23 +44,19 @@ const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
 // reconnect resume is unaffected.
 const CLAUDE_EVENT_CAP = 5000;
 
-// Phase 2: xterm.js mounted into a div, bound to a prettyd session over WS.
-// Every output frame carries a seq#; we persist the latest in localStorage
-// so a phone-lock-induced disconnect can resume from where we left off.
+// Connection model: every session in this window shares ONE multiplexed
+// WebSocket (lib/wsMux) — frames are sessionId-tagged, tmux-style. This
+// hook attaches its session to that shared socket and receives exactly
+// the ServerMsg stream it used to read off a private socket. With 50+
+// sessions mounted, the old one-socket-per-session shape meant reconnect
+// herds on every daemon restart and proxy pile-ups that left "open"
+// sockets dead (typing went nowhere).
 //
-// On WS close that isn't a clean PTY exit, the hook reconnects with
-// exponential backoff, passing lastSeq so the server replays only the
-// chunks the terminal actually missed.
 // `mountTerminal=true` enables full xterm rendering: dynamic import,
 // term.open(container), FitAddon resize, snapshot prefill, the works.
-// When `false`, the hook still opens the WS and ingests claudeEvents
-// (so Remote view stays live) — but skips the ~250KB xterm instance,
-// its DOM tree, and the FitAddon ResizeObserver. With keep-mounted
-// SessionViews running N sessions at once, the savings stack up: a
-// phone showing only Remote view doesn't allocate N xterms in the
-// background. The flag should turn TRUE once the user has visited
-// Terminal view at least once for a given session, and STAY true
-// (xterm hibernates cheaply when CSS-hidden).
+// When `false`, the hook still attaches to the mux socket and ingests
+// claudeEvents (so Remote view stays live) — but skips the ~250KB xterm
+// instance, its DOM tree, and the FitAddon ResizeObserver.
 export function useTerminal(sessionId: string | null, mountTerminal: boolean = true): UseTerminalResult {
   const [status, setStatus] = useState<Status>('connecting');
   const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null);
@@ -71,8 +66,8 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
   const sendInputRef = useRef<(data: string) => void>(() => {});
   const scrollTerminalToBottomRef = useRef<() => void>(() => {});
   const [terminalAtBottom, setTerminalAtBottom] = useState(true);
-  // Re-mount xterm + WS whenever the active server flips. Same effect-key
-  // pattern as sessionId — no need to share buffers across servers.
+  // Re-attach whenever the active server flips. Same effect-key pattern
+  // as sessionId — no need to share buffers across servers.
   const activeServerId = useServers((s) => s.activeId);
 
   useEffect(() => {
@@ -88,7 +83,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
 
     (async () => {
       // xterm refs — null when mountTerminal=false. Every term.* call
-      // is wrapped in `if (term)` so the WS / claudeEvents path runs
+      // is wrapped in `if (term)` so the mux / claudeEvents path runs
       // identically in either mode.
       let term: import('xterm').Terminal | null = null;
       let fit: import('@xterm/addon-fit').FitAddon | null = null;
@@ -141,109 +136,75 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         }
       }
 
+      // The session's channel on the shared mux socket. Assigned by
+      // prefillThenAttach below; input before then is dropped (matches
+      // the old "socket not open yet" behavior).
+      let channel: SessionChannel | null = null;
+
       sendInputRef.current = (data: string): void => {
-        if (ws && ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data }));
-        }
+        channel?.sendInput(data);
       };
 
-    setExitInfo(null);
-    setResumedFromSeq(null);
-    // Fresh session: start from empty event list. The server's replay
-    // on connect will push every historical event back in.
-    setClaudeEvents([]);
+      setExitInfo(null);
+      setResumedFromSeq(null);
+      // Fresh session: start from empty event list. The server's replay
+      // on attach will push every historical event back in.
+      setClaudeEvents([]);
 
-    let ws: WebSocket | null = null;
-    let attempt = 0;
-    let reconnectTimer: number | null = null;
-    let ptyExited = false;
-    // Microtask-batched buffer for incoming claudeEvent messages.
-    // On a fresh WS connect the server replays the entire session
-    // history (potentially thousands of events); coalescing into a
-    // single setState avoids storming React.
-    const pendingClaudeEvents: ClaudeSessionEvent[] = [];
-    let claudeFlushScheduled = false;
-    // `disposed` lives at the outer-effect scope (declared above the
-    // async IIFE) so the cleanup function can flip it before xterm
-    // finishes loading.
-    // In-memory only. Each fresh page mount starts xterm at seq 0 (empty
-    // buffer) and asks the server to replay everything. Within this mount,
-    // transient WS reconnects (phone-lock, network blip) reuse the live
-    // value so we ask only for the deltas xterm hasn't seen. We deliberately
-    // do NOT persist this to localStorage: a previous tab's high-water-mark
-    // would tell the server "client already has up to N" while xterm is
-    // actually empty — causing the entire conversation to be skipped.
-    let lastSeq = 0;
-    // Running count of claudeEvents the client has ingested. Sent as
-    // ?claudeEventsSince on WS reconnect so the server skips the
-    // events we already have. Without this, every reconnect replayed
-    // the full 5000-event ring (~tens of MB for a long session).
-    let claudeEventsSeen = 0;
+      let ptyExited = false;
+      // Microtask-batched buffer for incoming claudeEvent messages.
+      // On a fresh attach the server replays history (potentially
+      // thousands of events); coalescing into a single setState avoids
+      // storming React.
+      const pendingClaudeEvents: ClaudeSessionEvent[] = [];
+      let claudeFlushScheduled = false;
+      // In-memory only. Each fresh page mount starts xterm at seq 0 (empty
+      // buffer) and asks the server to replay everything. Within this mount,
+      // transient reconnects (phone-lock, network blip) reuse the live value
+      // so we ask only for the deltas xterm hasn't seen. Deliberately NOT
+      // persisted to localStorage: a previous tab's high-water-mark would
+      // tell the server "client already has up to N" while xterm is
+      // actually empty — causing the entire conversation to be skipped.
+      let lastSeq = 0;
+      // Running count of claudeEvents the client has ingested. The mux
+      // manager reads it via getResume() on every (re)attach so the
+      // server skips events we already have.
+      let claudeEventsSeen = 0;
 
-    // Sizing strategy: FitAddon measures cell metrics + container dims
-    // and computes cols/rows that fill the visible terminal pane. We
-    // then forward the new size to prettyd over WS so the PTY (and the
-    // TUI inside it) redraws at the actual viewport size. Multi-client
-    // implication: every client viewport is a candidate writer to the
-    // PTY size — last-resize-wins on the server side. For a user
-    // operating one client at a time (the common case) this just works;
-    // if two clients are active at different sizes they'll fight and
-    // the last one to resize "wins" until the other client resizes.
-    //
-    // Debouncing the WS send: ResizeObserver can fire many times during
-    // a window-drag. We coalesce the sends so the PTY only receives a
-    // resize 60ms after the last container change.
-    let resizeSendTimer: number | null = null;
-    const sendResize = (cols: number, rows: number): void => {
-      if (ws && ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      }
-    };
-    const applyFit = (): void => {
-      if (!term || !fit) return;
-      try {
-        fit.fit();
-      } catch {
-        // Fit can throw if the container has zero dims (eg the pane is
-        // display:none on an inactive tab). Ignore — when the pane is
-        // visible again, the ResizeObserver fires and we try again.
-        return;
-      }
-      if (resizeSendTimer !== null) window.clearTimeout(resizeSendTimer);
-      resizeSendTimer = window.setTimeout(() => {
-        resizeSendTimer = null;
-        if (term) sendResize(term.cols, term.rows);
-      }, 60);
-    };
-
-    const onResize = (): void => {
-      requestAnimationFrame(applyFit);
-    };
-
-    const connect = (): void => {
-      if (disposed || ptyExited) return;
-      setStatus(attempt === 0 ? 'connecting' : 'reconnecting');
-      const sock = new WebSocket(wsUrl(sessionId, lastSeq, claudeEventsSeen));
-      ws = sock;
-
-      sock.onopen = () => {
-        if (sock !== ws) return;
-        attempt = 0;
-        setStatus('open');
-        term?.focus();
-        // hello (with PTY cols/rows) arrives next; that triggers the
-        // zoom recompute. No need to do anything here size-wise.
+      // Sizing strategy: FitAddon measures cell metrics + container dims
+      // and computes cols/rows that fill the visible terminal pane. We
+      // then forward the new size to prettyd so the PTY (and the TUI
+      // inside it) redraws at the actual viewport size. Last-resize-wins
+      // across clients. Debounced: ResizeObserver can fire many times
+      // during a window-drag; the PTY receives one resize 60ms after the
+      // last container change.
+      let resizeSendTimer: number | null = null;
+      const sendResize = (cols: number, rows: number): void => {
+        channel?.sendResize(cols, rows);
       };
-
-      sock.onmessage = (ev) => {
-        if (sock !== ws) return;
-        if (typeof ev.data !== 'string') return;
-        let msg: ServerMsg;
+      const applyFit = (): void => {
+        if (!term || !fit) return;
         try {
-          msg = JSON.parse(ev.data) as ServerMsg;
+          fit.fit();
         } catch {
+          // Fit can throw if the container has zero dims (eg the pane is
+          // display:none on an inactive tab). Ignore — when the pane is
+          // visible again, the ResizeObserver fires and we try again.
           return;
         }
+        if (resizeSendTimer !== null) window.clearTimeout(resizeSendTimer);
+        resizeSendTimer = window.setTimeout(() => {
+          resizeSendTimer = null;
+          if (term) sendResize(term.cols, term.rows);
+        }, 60);
+      };
+
+      const onResize = (): void => {
+        requestAnimationFrame(applyFit);
+      };
+
+      const onMessage = (msg: ServerMsg): void => {
+        if (disposed) return;
         if (msg.type === 'hello') {
           setResumedFromSeq(msg.resumedFromSeq);
           // Initialize our local claudeEvents counter to the server's
@@ -289,9 +250,14 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         if (msg.type === 'exit') {
           ptyExited = true;
           setExitInfo({ code: msg.code, signal: msg.signal });
+          setStatus('closed');
           term?.writeln(
             `\r\n\x1b[2m[session exited code=${msg.code ?? '∅'} signal=${msg.signal ?? '∅'}]\x1b[0m`
           );
+          // The server auto-detaches an exited session from the mux
+          // socket; detach locally too so the manager forgets us (and
+          // can close the socket when nothing else is attached).
+          channel?.detach();
           return;
         }
         if (msg.type === 'error') {
@@ -299,21 +265,20 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           // "unknown session <id>" means this session id doesn't exist
           // server-side anymore — typically a stale pop-out window
           // pointing at a session that's since been killed/recreated.
-          // Don't reconnect-spam forever; mark as terminally dead so
-          // the user sees ONE error message instead of a recurring
-          // wave. The exit handler below uses the same ptyExited gate.
+          // Mark terminally dead so the user sees ONE error message
+          // instead of a reconnect-spam wave.
           if (/unknown session/i.test(msg.message)) {
             ptyExited = true;
             setStatus('closed');
             setExitInfo({ code: null, signal: 'unknown-session' });
+            channel?.detach();
           }
           return;
         }
         if (msg.type === 'claudeEvent') {
-          // Batch appends via a microtask. The server ships every
-          // historical event on connect (could be thousands), and we
-          // don't want each one to schedule its own re-render. Push
-          // into a buffer ref, flush once per microtask.
+          // Batch appends via a microtask. The server ships history on
+          // attach (could be thousands of events); we don't want each
+          // one to schedule its own re-render.
           pendingClaudeEvents.push(msg.event);
           claudeEventsSeen += 1;
           if (!claudeFlushScheduled) {
@@ -334,96 +299,64 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         }
       };
 
-      sock.onerror = () => {
-        if (sock !== ws) return;
-        setStatus('error');
+      const onStatus = (s: MuxStatus): void => {
+        // Once this session has terminally ended (exit / unknown
+        // session) the shared socket's state no longer describes us.
+        if (disposed || ptyExited) return;
+        setStatus(s);
+        if (s === 'open') term?.focus();
       };
 
-      sock.onclose = () => {
-        if (sock !== ws) return;
-        // Effect torn down (unmount, or re-mount for a mountTerminal /
-        // server / session change): the REPLACEMENT effect owns `status`
-        // now. Setting it here would race the new socket's onopen and can
-        // stick the UI on 'closed' — disabling the input box — while the
-        // new WS is actually live. Leave status to the new effect.
-        if (disposed) return;
-        if (ptyExited) {
-          setStatus('closed');
-          return;
-        }
-        const delay = RECONNECT_BACKOFF_MS[Math.min(attempt, RECONNECT_BACKOFF_MS.length - 1)] ?? 8000;
-        attempt += 1;
-        setStatus('reconnecting');
-        reconnectTimer = window.setTimeout(connect, delay);
-      };
-    };
-
-    if (term) {
-      dataDisp = term.onData((d) => {
-        if (ws && ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'input', data: d }));
-        }
-      });
-      window.addEventListener('resize', onResize);
-      ro = new ResizeObserver(onResize);
-      const c = containerElRef.current;
-      if (c) ro.observe(c);
-    }
-
-    // Some browsers eagerly close WS on tab-hide and re-open on visible.
-    // We treat 'visible' as a hint to nudge a reconnect if we're in
-    // backoff — phone unlock often lands here before the timer fires.
-    const onVis = (): void => {
-      if (document.visibilityState === 'visible' && !ptyExited && !disposed) {
-        if (!ws || ws.readyState >= WebSocket.CLOSING) {
-          if (reconnectTimer !== null) {
-            window.clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-          }
-          connect();
-        }
-      }
-    };
-    document.addEventListener('visibilitychange', onVis);
-
-    // Snapshot-prefill: instead of opening the WS at seq=0 and watching
-    // xterm fill top-to-bottom over 3-5s as every frame replays one at
-    // a time, fetch the server-side serialized snapshot in ONE HTTP
-    // request and write it to xterm in a single bulk call. Then open
-    // the WS with lastSeq=<snapshot's seq> so we only receive deltas
-    // going forward. Visually: buffer is just THERE on first paint.
-    //
-    // If the snapshot fetch fails for any reason (404, network error
-    // mid-flight) we fall back to the original full-replay behavior —
-    // worst case we get the slow path that used to be the only path.
-    const prefillThenConnect = async (): Promise<void> => {
       if (term) {
-        try {
-          const snap = await fetchServerSnapshot(sessionId);
-          if (disposed) return;
-          if (snap && snap.seq > 0) {
-            term.write(snap.text);
-            lastSeq = snap.seq;
-          }
-        } catch { /* fall through to plain connect — full replay */ }
+        dataDisp = term.onData((d) => {
+          channel?.sendInput(d);
+        });
+        window.addEventListener('resize', onResize);
+        ro = new ResizeObserver(onResize);
+        const c = containerElRef.current;
+        if (c) ro.observe(c);
       }
-      if (disposed) return;
-      connect();
-    };
-    void prefillThenConnect();
 
-    // Wire up the cleanup closure now that all locals (term, ws, etc.)
-    // exist. The outer-effect cleanup invokes this if it's set.
-    runCleanup = () => {
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('resize', onResize);
-      ro?.disconnect();
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      dataDisp?.dispose();
-      scrollDisp?.dispose();
-      try { ws?.close(); } catch { /* ignore */ }
-      term?.dispose();
-    };
+      // Snapshot-prefill: instead of attaching at seq=0 and watching
+      // xterm fill top-to-bottom as every frame replays one at a time,
+      // fetch the server-side serialized snapshot in ONE HTTP request
+      // and write it to xterm in a single bulk call. Then attach with
+      // lastSeq=<snapshot's seq> so we only receive deltas going
+      // forward. Visually: buffer is just THERE on first paint.
+      //
+      // If the snapshot fetch fails for any reason (404, network error
+      // mid-flight) we fall back to the full-replay behavior.
+      const prefillThenAttach = async (): Promise<void> => {
+        if (term) {
+          try {
+            const snap = await fetchServerSnapshot(sessionId);
+            if (disposed) return;
+            if (snap && snap.seq > 0) {
+              term.write(snap.text);
+              lastSeq = snap.seq;
+            }
+          } catch { /* fall through to plain attach — full replay */ }
+        }
+        if (disposed) return;
+        channel = attachSession(wsMuxUrl(), sessionId, {
+          onMessage,
+          onStatus,
+          getResume: () => ({ lastSeq, claudeEventsSince: claudeEventsSeen })
+        });
+      };
+      void prefillThenAttach();
+
+      // Wire up the cleanup closure now that all locals exist. The
+      // outer-effect cleanup invokes this if it's set.
+      runCleanup = () => {
+        window.removeEventListener('resize', onResize);
+        ro?.disconnect();
+        if (resizeSendTimer !== null) window.clearTimeout(resizeSendTimer);
+        dataDisp?.dispose();
+        scrollDisp?.dispose();
+        channel?.detach();
+        term?.dispose();
+      };
     })();
 
     return () => {

@@ -65,18 +65,29 @@ export type ServerMsg =
       // this (not 0) as the starting point for the local counter —
       // on long sessions the server caps initial replay to the tail.
       claudeReplayStart: number;
+      // Present in mux mode: which session this message belongs to.
+      sessionId?: string;
     }
-  | { type: 'output'; seq: number; data: string }
-  | { type: 'gap'; oldestAvailableSeq: number; currentSeq: number }
-  | { type: 'exit'; code: number | null; signal: string | null; seq: number }
-  | { type: 'error'; message: string }
+  | { type: 'output'; seq: number; data: string; sessionId?: string }
+  | { type: 'gap'; oldestAvailableSeq: number; currentSeq: number; sessionId?: string }
+  | { type: 'exit'; code: number | null; signal: string | null; seq: number; sessionId?: string }
+  | { type: 'error'; message: string; sessionId?: string }
   // Claude Code's structured session events. Sourced server-side from
   // ~/.claude/projects/<encoded-cwd>/<id>.jsonl. RemoteView consumes
   // these instead of the parser-derived blocks — far more reliable
   // because the schema is the Anthropic API persistence format
   // (stable UUIDs, typed roles, structured content) rather than
   // regex-scraped TUI rendering.
-  | { type: 'claudeEvent'; event: ClaudeSessionEvent };
+  | { type: 'claudeEvent'; event: ClaudeSessionEvent; sessionId?: string };
+
+// Client → server messages on the multiplexed socket (`/ws?mux=1`): one
+// connection per window, every attached session's traffic tagged with
+// sessionId (tmux-style — N sessions, 1 socket).
+export type MuxClientMsg =
+  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number }
+  | { type: 'detach'; sessionId: string }
+  | { type: 'input'; data: string; sessionId: string }
+  | { type: 'resize'; cols: number; rows: number; sessionId: string };
 
 // Anthropic's persisted session event. Conservatively typed — we read
 // `type` and `message.*` for chat purposes; everything else is opaque.
