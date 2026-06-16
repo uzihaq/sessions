@@ -507,11 +507,27 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
   return internal;
 }
 
+// True while discoverRunners() is reattaching on startup. server.ts now
+// listens BEFORE discovery so the daemon is reachable immediately; this
+// lets /api/health report that sessions are still loading (the list can be
+// partial until discovery finishes).
+let discovering = false;
+export function isDiscovering(): boolean { return discovering; }
+
 // Scan the runners state directory and reconnect to any that are still
 // alive. Called once on prettyd startup. Stale .json + .sock pairs (where
 // connect fails) are unlinked, and orphan launchd plists (whose state
 // files are gone) are booted out so they don't auto-start next reboot.
 export async function discoverRunners(): Promise<void> {
+  discovering = true;
+  try {
+    await discoverRunnersInner();
+  } finally {
+    discovering = false;
+  }
+}
+
+async function discoverRunnersInner(): Promise<void> {
   // Boot out any launchd plists that point at runners with no state
   // files — those are leftovers from a runner that died unclean.
   cleanupOrphanPlists(STATE_DIR);

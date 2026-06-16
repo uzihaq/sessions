@@ -100,7 +100,12 @@ function uid(): number {
 export function bootstrapRunner(args: PlistArgs): boolean {
   fs.mkdirSync(LAUNCH_AGENTS_DIR, { recursive: true });
   const plistPath = plistPathFor(args.id);
-  fs.writeFileSync(plistPath, plistXml(args));
+  // 0600: the plist embeds the runner's environment, which includes
+  // ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN and proxy/CA settings. Don't
+  // rely on umask to keep those owner-only — set the mode explicitly on
+  // write, and chmod after in case the file pre-existed with a wider mode.
+  fs.writeFileSync(plistPath, plistXml(args), { mode: 0o600 });
+  try { fs.chmodSync(plistPath, 0o600); } catch { /* best effort */ }
   // bootstrap loads the plist into the gui/<uid> domain. RunAtLoad fires
   // synchronously inside this call — by the time we return, launchd has
   // started (or attempted to start) the program.

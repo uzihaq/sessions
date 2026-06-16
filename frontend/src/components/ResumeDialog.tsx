@@ -160,9 +160,6 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
   };
 
   const totalAvailable = available?.length ?? 0;
-  const hiddenByOpen = (resumable?.length ?? 0) - (available?.length ?? 0)
-    + (query.trim() ? 0 : 0); // open-as-tabs hides; query filtering doesn't count
-  // hiddenByOpen excludes query filtering — only "in another tab" gets called out.
   const openCount = resumable
     ? resumable.filter((s) => openClaudeIds.has(s.sessionId)).length
     : 0;

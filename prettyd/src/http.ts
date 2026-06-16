@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import nodePath from 'node:path';
-import { createSession, getSession, killSession, listSessions, snapshot, writeInput } from './sessions.js';
+import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering } from './sessions.js';
 import { scanResumableSessions } from './claudeSessionScanner.js';
 import { listDirectoryCandidates } from './directories.js';
 import type { CreateSessionRequest } from './types.js';
@@ -18,9 +18,19 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+// Cap JSON request bodies. Session-create and input payloads are tiny
+// (a command + args, or a keystroke); without a cap a single request can
+// buffer unbounded memory in the daemon. Uploads use a separate 25MB path.
+const MAX_JSON_BODY = 2 * 1024 * 1024;
+
 async function readJson<T>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(chunk as Buffer);
+  let total = 0;
+  for await (const chunk of req) {
+    total += (chunk as Buffer).length;
+    if (total > MAX_JSON_BODY) throw new Error('request body too large');
+    chunks.push(chunk as Buffer);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw) return {} as T;
   return JSON.parse(raw) as T;
@@ -37,7 +47,13 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   }
 
   if (path === '/api/health' && method === 'GET') {
-    send(res, 200, { ok: true, name: 'prettyd', version: '0.1.0' });
+    send(res, 200, {
+      ok: true,
+      name: 'prettyd',
+      version: '0.1.0',
+      discovering: isDiscovering(),
+      sessionsLoaded: listSessions({ includeExited: true }).length
+    });
     return;
   }
 

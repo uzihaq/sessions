@@ -30,25 +30,20 @@ const server = createServer((req, res) => {
 
 server.on('upgrade', handleUpgrade);
 
-(async () => {
-  // Reattach to any runners that survived the previous prettyd lifetime
-  // (typical case: tsx-watch hot reload on code edit). Each one is a
-  // detached child process with its own Unix socket; we reconnect, pull
-  // its current event log into the local mirror, and serve it as if it
-  // had been here all along.
-  try {
-    await discoverRunners();
-  } catch (err) {
-    console.error('runner discovery failed:', (err as Error).message);
+server.listen(config.port, config.host, () => {
+  const isLocal = config.host === '127.0.0.1' || config.host === '::1' || config.host === 'localhost';
+  console.log(`prettyd listening on http://${config.host}:${config.port}`);
+  if (!isLocal) {
+    console.log(`  warning: bound to non-local interface; prefer loopback + frontend proxy for phone use`);
   }
-  server.listen(config.port, config.host, () => {
-    const isLocal = config.host === '127.0.0.1' || config.host === '::1' || config.host === 'localhost';
-    console.log(`prettyd listening on http://${config.host}:${config.port}`);
-    if (!isLocal) {
-      console.log(`  warning: bound to non-local interface; prefer loopback + frontend proxy for phone use`);
-    }
-  });
-})();
+  // Reattach to runners that survived the previous prettyd lifetime
+  // (typical case: tsx-watch hot reload on code edit) AFTER we're already
+  // accepting connections. With many historical runners the serial reattach
+  // scan can take 40s+; doing it before listen() made the UI/CLI look hung
+  // while the daemon was actually up. The session list is briefly partial
+  // until discovery finishes (see /api/health `discovering`).
+  discoverRunners().catch((err) => console.error('runner discovery failed:', (err as Error).message));
+});
 
 const shutdown = (sig: string): void => {
   console.log(`prettyd: ${sig} received, shutting down`);

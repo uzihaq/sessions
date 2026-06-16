@@ -142,9 +142,6 @@ function normalizeForMatch(s: string): string {
 function suffixOf(s: string, n: number = SUFFIX_LEN): string {
   return normalizeForMatch(s).slice(-n);
 }
-function prefixOf(s: string, n: number = SUFFIX_LEN): string {
-  return normalizeForMatch(s).slice(0, n);
-}
 
 // Fuzzy match: does this user_input BLOCK plausibly correspond to a
 // PENDING message we sent? The exact-suffix path is the cheap fast-path

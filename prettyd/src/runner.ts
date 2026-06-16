@@ -33,7 +33,7 @@ import { createServer, type Server, type Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { EventLog, type OutputEvent } from './eventLog.js';
+import { EventLog } from './eventLog.js';
 import { PersistentLog } from './persistentLog.js';
 import {
   FrameParser, FrameType, encodeFrame, encodeOutput,

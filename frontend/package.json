@@ -8,8 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test:parsers": "node scripts/parser-smoke.cjs",
-    "test:serialize": "node scripts/serialize-smoke.cjs"
+    "test:markdown": "node scripts/markdown-smoke.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

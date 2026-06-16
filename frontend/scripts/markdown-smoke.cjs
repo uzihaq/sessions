@@ -65,6 +65,41 @@ const fixtures = [
     // anser inline-styles for truecolor.
     expectIncludesRegex: [/style="color\s*:\s*rgb\(110\s*,\s*255\s*,\s*140\)/]
   },
+  // --- Link-scheme XSS coverage (sanitizeAnchorHrefs) ---
+  {
+    name: 'javascript: link is neutralized to href="#"',
+    md: '[click me](javascript:alert(document.cookie))',
+    expectIncludes: ['href="#"', '>click me</a>'],
+    expectExcludes: ['javascript:']
+  },
+  {
+    name: 'mixed-case JavaScript: is neutralized (schemes are case-insensitive)',
+    md: '[x](JavaScript:alert(1))',
+    expectIncludes: ['href="#"'],
+    expectExcludes: ['JavaScript:alert', 'javascript:alert']
+  },
+  {
+    name: 'data: link is neutralized',
+    md: '[d](data:text/html,<script>alert(1)</script>)',
+    expectIncludes: ['href="#"'],
+    expectExcludes: ['href="data:']
+  },
+  {
+    name: 'vbscript: link is neutralized',
+    md: '[v](vbscript:msgbox(1))',
+    expectIncludes: ['href="#"'],
+    expectExcludes: ['vbscript:']
+  },
+  {
+    name: 'safe schemes pass through unchanged',
+    md: '[h](https://anthropic.com) [m](mailto:a@b.com) [rel](./docs/x.md) [hash](#sec)',
+    expectIncludes: [
+      'href="https://anthropic.com"',
+      'href="mailto:a@b.com"',
+      'href="./docs/x.md"',
+      'href="#sec"'
+    ]
+  },
   {
     name: 'nothing weird with empty input',
     md: '',
@@ -101,6 +136,15 @@ for (const fx of fixtures) {
     for (const re of fx.expectIncludesRegex ?? []) {
       if (!re.test(html)) {
         console.error(`FAIL [${fx.name}]: regex ${re} did not match:\n${html}`);
+        ok = false;
+        break;
+      }
+    }
+  }
+  if (ok) {
+    for (const banned of fx.expectExcludes ?? []) {
+      if (html.includes(banned)) {
+        console.error(`FAIL [${fx.name}]: should NOT contain '${banned}' in output:\n${html}`);
         ok = false;
         break;
       }
