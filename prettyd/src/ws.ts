@@ -29,10 +29,16 @@ function attachSessionStream(
     // replay AND no live output frames. Structured claudeEvents, exit,
     // and hello still flow. See the attach message in types.ts.
     includeOutput?: boolean;
+    // When false, the on-attach replay of Claude JSONL *history* is
+    // suppressed (hello + LIVE claudeEvents still flow). Hidden sessions
+    // attach this way so page load doesn't replay every session's
+    // conversation at once. See the attach message in types.ts.
+    includeClaudeReplay?: boolean;
   }
 ): (() => void) | null {
   const tag = opts.tagSessionId !== undefined ? { sessionId: opts.tagSessionId } : {};
   const includeOutput = opts.includeOutput !== false;
+  const includeClaudeReplay = opts.includeClaudeReplay !== false;
   const replay = session.log.since(opts.lastSeq);
 
   // Claude-event replay window. Indices are ABSOLUTE (claudeEventBase +
@@ -45,9 +51,14 @@ function attachSessionStream(
   const base = session.claudeEventBase;
   const len = session.claudeEventLog.length;
   const claudeEventsCount = base + len;
-  const localStart = opts.claudeEventsSince > 0
-    ? Math.max(0, Math.min(opts.claudeEventsSince - base, len))
-    : Math.max(0, len - INITIAL_REPLAY_CAP);
+  // When history replay is suppressed, start the window at the current end
+  // (localStart === len) so nothing historical is sent and the client's
+  // counter is reported as already caught up — live events take it forward.
+  const localStart = !includeClaudeReplay
+    ? len
+    : opts.claudeEventsSince > 0
+      ? Math.max(0, Math.min(opts.claudeEventsSince - base, len))
+      : Math.max(0, len - INITIAL_REPLAY_CAP);
   const claudeReplayStart = base + localStart;
 
   send(ws, {
@@ -148,6 +159,7 @@ function handleMuxConnection(ws: WebSocket): void {
         claudeEventsSince: Math.max(0, (parsed.claudeEventsSince ?? 0) | 0),
         tagSessionId: id,
         includeOutput: parsed.outputReplay !== false,
+        includeClaudeReplay: parsed.claudeReplay !== false,
         // On PTY exit only this session detaches — the socket stays up
         // for every other attached session.
         onExited: () => detach(id)

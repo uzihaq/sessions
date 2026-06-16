@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { useTerminal } from '../hooks/useTerminal';
 import { useSessionSidebar } from '../hooks/useSessionSidebar';
 import { RemoteView } from './RemoteView';
@@ -58,7 +58,14 @@ function writeStoredView(mode: ViewMode): void {
 // Pretty layout. The terminal stream stays the source of truth — its
 // xterm instance stays mounted across mode toggles so the raw terminal
 // is always one click away.
-export function SessionView({ sessionId, onStatusChange, isActive = false }: Props): JSX.Element {
+//
+// memo()'d: all 36 SessionViews stay mounted, and App re-renders every 3s
+// (session poll). Without memo, that parent re-render re-renders every
+// child; with it (plus stable session refs from reconcileSessions), an
+// unchanged session's view skips the poll entirely. Props are all stable
+// per session (sessionId; onStatusChange is setActiveStatus for the active
+// tab and undefined otherwise; isActive flips only on switch).
+function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props): JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredView);
   const session = useSessions((s) => s.sessions.find((x) => x.id === sessionId)) ?? null;
 
@@ -82,7 +89,7 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
     if (effectiveView === 'terminal' && !hasMountedTerminal) setHasMountedTerminal(true);
   }, [effectiveView, hasMountedTerminal]);
 
-  const term = useTerminal(sessionId, hasMountedTerminal);
+  const term = useTerminal(sessionId, hasMountedTerminal, isActive);
   const sidebar = useSessionSidebar({
     session,
     claudeEvents: term.claudeEvents,
@@ -100,6 +107,22 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
   const scrollTerminalToBottom = useCallback((): void => {
     term.scrollTerminalToBottomRef.current();
   }, [term.scrollTerminalToBottomRef]);
+
+  const focusTerminal = useCallback((): void => {
+    term.focusTerminalRef.current();
+  }, [term.focusTerminalRef]);
+
+  // Put the cursor in the terminal when this tab becomes the active,
+  // terminal-viewed session. Tab switches are a CSS display toggle (no
+  // socket reconnect → no 'open'-status focus), so without this you'd
+  // land on a visible terminal that isn't focused and have to hunt for
+  // the right pixel to click. rAF waits for the pane to be display:flex
+  // (it was display:none a frame ago) so focus() actually takes.
+  useEffect(() => {
+    if (!isActive || effectiveView !== 'terminal' || !hasMountedTerminal) return;
+    const id = requestAnimationFrame(() => focusTerminal());
+    return () => cancelAnimationFrame(id);
+  }, [isActive, effectiveView, hasMountedTerminal, focusTerminal]);
 
   // Auto-switch to Terminal when Claude's TUI shows a numbered-choice
   // picker. The picker needs arrow-keys + Enter to interact, which the
@@ -192,7 +215,7 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
           stay alive while the user is reading Remote view. CSS hides
           whichever pane the active view-mode doesn't want. */}
       <div className="session-body">
-        <div className="session-terminal-pane">
+        <div className="session-terminal-pane" onPointerDown={focusTerminal}>
           <div className="terminal-host" ref={term.containerRef} />
           <ScrollToBottomButton
             visible={!term.terminalAtBottom}
@@ -213,3 +236,5 @@ export function SessionView({ sessionId, onStatusChange, isActive = false }: Pro
     </div>
   );
 }
+
+export const SessionView = memo(SessionViewInner);

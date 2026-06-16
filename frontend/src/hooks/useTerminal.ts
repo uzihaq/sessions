@@ -27,6 +27,17 @@ interface UseTerminalResult {
   terminalAtBottom: boolean;
   // Imperative jump-to-bottom on xterm. Wired to the floating button.
   scrollTerminalToBottomRef: { current: () => void };
+  // Imperative focus of xterm's hidden input textarea. Wired to a
+  // pointer-down handler on the terminal pane so ANY click in the pane
+  // (including the 8px padding ring, which isn't part of .xterm and so
+  // never triggered xterm's own click-to-focus) puts the cursor in the
+  // terminal. Without this, the shared-socket rewrite left tab switches
+  // with no focus call at all (display toggle fires no 'open' status),
+  // so you'd click a visible terminal and type into nothing.
+  focusTerminalRef: { current: () => void };
+  // Imperative re-fit (FitAddon) of xterm to its container. Fired when a
+  // tab becomes active, since fits are gated to the visible session.
+  fitTerminalRef: { current: () => void };
   // Stream of Claude Code's structured session events, captured from
   // the same WS we use for raw bytes. The server tails
   // ~/.claude/projects/<encoded-cwd>/<id>.jsonl and forwards each
@@ -57,14 +68,36 @@ const CLAUDE_EVENT_CAP = 5000;
 // When `false`, the hook still attaches to the mux socket and ingests
 // claudeEvents (so Remote view stays live) — but skips the ~250KB xterm
 // instance, its DOM tree, and the FitAddon ResizeObserver.
-export function useTerminal(sessionId: string | null, mountTerminal: boolean = true): UseTerminalResult {
+//
+// `isActive` is whether this is the session the user is currently viewing.
+// Only the active session replays Claude conversation *history* on attach;
+// hidden sessions attach live-only. Otherwise every mounted session dumps
+// ~300 events on page load (32 sessions ≈ 20MB at once → frozen page,
+// laggy typing). Read through a ref (not an effect dependency) so flipping
+// active doesn't tear down + rebuild xterm on every tab switch — the burst
+// only matters at page-load attach, and each session attaches once with
+// its mount-time isActive. (Trade-off: a session hidden at load backfills
+// its Pretty history only on the next reconnect, not instantly on switch —
+// fine; the terminal view doesn't use this path at all.)
+export function useTerminal(sessionId: string | null, mountTerminal: boolean = true, isActive: boolean = true): UseTerminalResult {
   const [status, setStatus] = useState<Status>('connecting');
   const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null);
   const [resumedFromSeq, setResumedFromSeq] = useState<number | null>(null);
   const [claudeEvents, setClaudeEvents] = useState<ClaudeSessionEvent[]>([]);
   const containerElRef = useRef<HTMLDivElement | null>(null);
+  // Current activeness, readable from the attach closure without making it
+  // an effect dependency. Updated every render below.
+  const isActiveRef = useRef(isActive);
+  isActiveRef.current = isActive;
   const sendInputRef = useRef<(data: string) => void>(() => {});
   const scrollTerminalToBottomRef = useRef<() => void>(() => {});
+  const focusTerminalRef = useRef<() => void>(() => {});
+  // Re-subscribe this session's mux stream with flags recomputed for the
+  // current activeness, and re-fit the terminal — invoked when isActive
+  // flips (tab switch). Set inside the mount effect once the channel
+  // exists; no-ops until then.
+  const reattachRef = useRef<(active: boolean) => void>(() => {});
+  const fitTerminalRef = useRef<() => void>(() => {});
   const [terminalAtBottom, setTerminalAtBottom] = useState(true);
   // Re-attach whenever the active server flips. Same effect-key pattern
   // as sessionId — no need to share buffers across servers.
@@ -133,12 +166,15 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           scrollTerminalToBottomRef.current = (): void => {
             try { term?.scrollToBottom(); } catch { /* ignore */ }
           };
+          focusTerminalRef.current = (): void => {
+            try { term?.focus(); } catch { /* ignore */ }
+          };
         }
       }
 
       // The session's channel on the shared mux socket. Assigned by
-      // prefillThenAttach below; input before then is dropped (matches
-      // the old "socket not open yet" behavior).
+      // attachNow below; input before then is dropped (matches the old
+      // "socket not open yet" behavior).
       let channel: SessionChannel | null = null;
 
       sendInputRef.current = (data: string): void => {
@@ -184,6 +220,14 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       };
       const applyFit = (): void => {
         if (!term || !fit) return;
+        // Only the viewed session fits/resizes. A window-resize fires the
+        // listener on EVERY mounted session; without this gate, all ~36
+        // run fit.fit() — each a synchronous layout measurement — dozens of
+        // times per drag (the resize was ~5s instead of ~500ms). Hidden
+        // panes are display:none so fit would throw on them anyway, but the
+        // measurement attempt is the cost. Fit-on-activate (the isActive
+        // effect) sizes a session the moment it becomes visible.
+        if (!isActiveRef.current) return;
         try {
           fit.fit();
         } catch {
@@ -202,6 +246,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       const onResize = (): void => {
         requestAnimationFrame(applyFit);
       };
+      fitTerminalRef.current = applyFit;
 
       const onMessage = (msg: ServerMsg): void => {
         if (disposed) return;
@@ -276,6 +321,16 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           return;
         }
         if (msg.type === 'claudeEvent') {
+          // Only the viewed session folds events into React state. A hidden
+          // session's RemoteView isn't on screen, and without this guard a
+          // few busy background sessions (e.g. the sw-lanes builders) storm
+          // React — 35 invisible RemoteViews re-rendering per event — which
+          // starves the active terminal's main thread and shows up as
+          // laggy input echo. claudeEventsSeen is NOT advanced for dropped
+          // events, so when the tab is reactivated reattach() asks the
+          // server to replay from where we left off and the Pretty view
+          // catches up. (Live output is already gated the same way.)
+          if (!isActiveRef.current) return;
           // Batch appends via a microtask. The server ships history on
           // attach (could be thousands of events); we don't want each
           // one to schedule its own re-render.
@@ -317,45 +372,54 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         if (c) ro.observe(c);
       }
 
-      // Snapshot-prefill: instead of attaching at seq=0 and watching
-      // xterm fill top-to-bottom as every frame replays one at a time,
-      // fetch the server-side serialized snapshot in ONE HTTP request
-      // and write it to xterm in a single bulk call. Then attach with
-      // lastSeq=<snapshot's seq> so we only receive deltas going
-      // forward. Visually: buffer is just THERE on first paint.
-      //
-      // If the snapshot fetch fails for any reason (404, network error
-      // mid-flight) we fall back to the full-replay behavior.
-      const prefillThenAttach = async (): Promise<void> => {
-        if (term) {
+      const getResume = (): { lastSeq: number; claudeEventsSince: number; outputReplay: boolean; claudeReplay: boolean } => ({
+        lastSeq,
+        claudeEventsSince: claudeEventsSeen,
+        // Raw PTY bytes (replay AND live) only for the session the user is
+        // actually viewing. Without the isActive gate, every mounted
+        // terminal replays its output ring on page load / reconnect — at
+        // 36 sessions that backlog drains slowly over Tailscale and the
+        // keystroke echo queues behind it (the "typing is 5s" symptom).
+        // No terminal mounted (Pretty-only) → no bytes at all. A hidden
+        // session catches up via snapshot-prefill when it's reactivated.
+        outputReplay: term !== null && isActiveRef.current,
+        // Likewise only the viewed session replays Claude history (the
+        // 20MB page-load burst this already fixed). Ref, not the prop, so
+        // tab switches re-attach via reattach() instead of re-mounting.
+        claudeReplay: isActiveRef.current
+      });
+
+      // Snapshot-prefill: instead of attaching at seq=0 and watching xterm
+      // fill top-to-bottom as every frame replays one at a time, fetch the
+      // server-side serialized snapshot in ONE HTTP request and write it in
+      // a single bulk call, then attach with lastSeq=<snapshot's seq> so we
+      // only receive deltas. Visually: the buffer is just THERE on first
+      // paint. Reused on reactivation (a hidden terminal had output
+      // suppressed, so it's stale — reset + reprime from the snapshot).
+      const attachNow = async (doPrefill: boolean): Promise<void> => {
+        if (disposed) return;
+        channel?.detach();
+        channel = null;
+        if (doPrefill && term) {
           try {
             const snap = await fetchServerSnapshot(sessionId);
             if (disposed) return;
             if (snap && snap.seq > 0) {
+              term.reset();
               term.write(snap.text);
               lastSeq = snap.seq;
             }
           } catch { /* fall through to plain attach — full replay */ }
         }
         if (disposed) return;
-        channel = attachSession(wsMuxUrl(), sessionId, {
-          onMessage,
-          onStatus,
-          // No terminal mounted → skip raw PTY bytes entirely. Pretty
-          // view only consumes claudeEvents; replaying every session's
-          // output ring through the shared socket on page load was
-          // ~230MB at 56 sessions and wedged the page (input queued
-          // behind it). When the user opens Terminal view, mountTerminal
-          // flips → this effect re-runs → fresh attach with prefill +
-          // output enabled.
-          getResume: () => ({
-            lastSeq,
-            claudeEventsSince: claudeEventsSeen,
-            outputReplay: term !== null
-          })
-        });
+        channel = attachSession(wsMuxUrl(), sessionId, { onMessage, onStatus, getResume });
       };
-      void prefillThenAttach();
+      // Re-subscribe with flags recomputed for current activeness. Becoming
+      // active → prefill (the terminal was frozen while hidden) + the
+      // server starts streaming output again; going inactive → re-attach
+      // output-less so the server stops sending this session's bytes.
+      reattachRef.current = (active: boolean): void => { void attachNow(active && term !== null); };
+      void attachNow(true);
 
       // Wire up the cleanup closure now that all locals exist. The
       // outer-effect cleanup invokes this if it's set.
@@ -376,6 +440,22 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
     };
   }, [sessionId, activeServerId, mountTerminal]);
 
+  // Activeness changes are NOT a mount-effect dependency (that would
+  // dispose + rebuild xterm on every tab switch). Instead, re-subscribe
+  // the mux stream with output gated to the active session, and fit the
+  // terminal the moment it becomes visible. Skip the initial run — the
+  // mount effect already did the first attach.
+  const activeFirstRunRef = useRef(true);
+  useEffect(() => {
+    if (activeFirstRunRef.current) { activeFirstRunRef.current = false; return; }
+    reattachRef.current(isActive);
+    if (isActive) {
+      const id = requestAnimationFrame(() => fitTerminalRef.current());
+      return () => cancelAnimationFrame(id);
+    }
+    return undefined;
+  }, [isActive]);
+
   const containerRef = useCallback((el: HTMLDivElement | null) => {
     containerElRef.current = el;
   }, []);
@@ -388,6 +468,8 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
     sendInputRef,
     terminalAtBottom,
     scrollTerminalToBottomRef,
+    focusTerminalRef,
+    fitTerminalRef,
     claudeEvents
   };
 }

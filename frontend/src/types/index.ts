@@ -88,7 +88,12 @@ export type MuxClientMsg =
   // this attach — Pretty-only sessions don't consume them, and replaying
   // every session's 4MB ring through one socket on page load wedges the
   // browser for minutes.
-  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean }
+  // claudeReplay=false suppresses the on-attach replay of Claude JSONL
+  // history (live claudeEvents still flow). Hidden sessions attach this
+  // way so page load doesn't replay every session's conversation through
+  // the one socket at once (32 sessions × ~300 events ≈ 20MB → frozen
+  // page, laggy typing). Only the viewed session asks for history.
+  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean; claudeReplay?: boolean }
   | { type: 'detach'; sessionId: string }
   | { type: 'input'; data: string; sessionId: string }
   | { type: 'resize'; cols: number; rows: number; sessionId: string };

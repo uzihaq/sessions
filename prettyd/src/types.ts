@@ -82,7 +82,14 @@ export type ClientMsg =
   // hundreds of MB the client immediately discards — and input frames
   // queue behind it ("can't type"). Terminal views attach with output on
   // (default) and a snapshot-prefill lastSeq, so their replay is tiny.
-  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean }
+  // claudeReplay=false suppresses the on-attach replay of Claude JSONL
+  // *history* (live claudeEvents still flow). A page with N mounted
+  // sessions otherwise replays N×INITIAL_REPLAY_CAP events through the one
+  // socket on load — 32 sessions × ~300 ≈ 20MB into the main thread at
+  // once, which freezes the page and makes typing lag. Only the session
+  // the user is actually viewing asks for history; the rest attach
+  // live-only and backfill when activated.
+  | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean; claudeReplay?: boolean }
   | { type: 'detach'; sessionId: string };
 
 // Server → client WS messages.

@@ -2,6 +2,41 @@ import { create } from 'zustand';
 import * as api from '../api/prettyd';
 import type { CreateSessionRequest, SessionInfo } from '../types';
 
+// Re-use the previous object for any session whose render-relevant fields
+// are unchanged, so component selectors (`sessions.find(id)`) keep stable
+// references across the 3s poll. Without this, every poll replaces all
+// objects → every mounted SessionView re-renders on a timer (36 of them),
+// a periodic main-thread hitch that shows up as laggy terminal input.
+// lastDataAt is deliberately excluded — it climbs on every output byte but
+// drives nothing visible on its own (the `working` flag is the live signal),
+// and including it would defeat the reuse for any busy session.
+function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionInfo[] {
+  const prevById = new Map(prev.map((s) => [s.id, s]));
+  return fresh.map((f) => {
+    const old = prevById.get(f.id);
+    if (
+      old &&
+      old.working === f.working &&
+      old.exited === f.exited &&
+      old.exitCode === f.exitCode &&
+      old.exitSignal === f.exitSignal &&
+      old.exitedAt === f.exitedAt &&
+      old.lastUserMessageAt === f.lastUserMessageAt &&
+      old.cwd === f.cwd &&
+      old.cmd === f.cmd &&
+      old.tool === f.tool &&
+      old.cols === f.cols &&
+      old.rows === f.rows &&
+      old.pid === f.pid &&
+      old.claudeCustomTitle === f.claudeCustomTitle &&
+      old.claudeAiTitle === f.claudeAiTitle
+    ) {
+      return old;
+    }
+    return f;
+  });
+}
+
 interface SessionsState {
   sessions: SessionInfo[];
   activeId: string | null;
@@ -97,7 +132,8 @@ export const useSessions = create<SessionsState>((set, get) => ({
   refresh: async () => {
     set({ loading: true, error: null });
     try {
-      const sessions = await api.listSessions();
+      const fresh = await api.listSessions();
+      const sessions = reconcileSessions(get().sessions, fresh);
       const active = get().activeId;
       const stillExists = active && sessions.some((s) => s.id === active);
       const nextActive = stillExists ? active : (sessions[0]?.id ?? null);

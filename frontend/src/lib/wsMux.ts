@@ -26,7 +26,9 @@ export interface SessionHandlers {
   // session's client-side state is, so the server replays only deltas.
   // outputReplay=false means "no raw PTY bytes at all" (no terminal is
   // mounted for this session; only claudeEvents are consumed).
-  getResume: () => { lastSeq: number; claudeEventsSince: number; outputReplay: boolean };
+  // claudeReplay=false means "no Claude history replay" (this session is
+  // hidden; only the viewed session loads its conversation history).
+  getResume: () => { lastSeq: number; claudeEventsSince: number; outputReplay: boolean; claudeReplay: boolean };
 }
 
 export interface SessionChannel {
@@ -37,12 +39,23 @@ export interface SessionChannel {
 
 const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
 
+// Cap on input/resize frames buffered while the socket is down. Keystrokes
+// are tiny; this is seconds of furious typing. Bounded so a socket that
+// never comes back can't grow it without limit.
+const OUTBOX_CAP = 2000;
+
 class MuxManager {
   private ws: WebSocket | null = null;
   private status: MuxStatus = 'connecting';
   private attempt = 0;
   private reconnectTimer: number | null = null;
   private readonly sessions = new Map<string, SessionHandlers>();
+  // Input/resize typed while the socket isn't OPEN (initial connect, or a
+  // reconnect blip after phone-sleep / network handoff). Without this they
+  // were silently dropped — you'd click a terminal that LOOKS ready (the
+  // snapshot is already painted) and type into the void until the socket
+  // happened to be OPEN. Flushed in order on reopen, after re-attach.
+  private readonly outbox: MuxClientMsg[] = [];
   private readonly onVis = (): void => {
     // Phone unlock / tab foreground: if the socket died while backgrounded,
     // reconnect immediately instead of waiting out the backoff timer.
@@ -84,6 +97,22 @@ class MuxManager {
   private send(msg: MuxClientMsg): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+      return;
+    }
+    // Socket not OPEN. Queue input & resize so they're delivered on reopen
+    // instead of silently lost. attach/detach are NOT queued — they're
+    // rebuilt from the live `sessions` map on reconnect (sendAttach in
+    // onopen), so a stale queued attach/detach would only fight that.
+    if (msg.type === 'input' || msg.type === 'resize') {
+      this.outbox.push(msg);
+      if (this.outbox.length > OUTBOX_CAP) {
+        this.outbox.splice(0, this.outbox.length - OUTBOX_CAP);
+      }
+      // A queued keystroke means we WANT a live socket. If none is pending,
+      // kick a connect now rather than waiting for the next backoff tick.
+      if (!this.ws || this.ws.readyState >= WebSocket.CLOSING) {
+        if (this.reconnectTimer === null) this.connect();
+      }
     }
   }
 
@@ -93,6 +122,7 @@ class MuxManager {
     if (r.lastSeq > 0) msg.lastSeq = r.lastSeq;
     if (r.claudeEventsSince > 0) msg.claudeEventsSince = r.claudeEventsSince;
     if (!r.outputReplay) msg.outputReplay = false;
+    if (!r.claudeReplay) msg.claudeReplay = false;
     this.send(msg);
   }
 
@@ -113,6 +143,14 @@ class MuxManager {
       this.setStatus('open');
       // (Re-)attach every registered session at its current resume point.
       for (const [id, handlers] of this.sessions) this.sendAttach(id, handlers);
+      // Then flush input/resize typed while we were down — AFTER re-attach,
+      // so the server has each session subscribed on this connection first.
+      if (this.outbox.length > 0) {
+        const pending = this.outbox.splice(0, this.outbox.length);
+        for (const m of pending) {
+          if (sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(m));
+        }
+      }
     };
 
     sock.onmessage = (ev) => {
@@ -156,6 +194,8 @@ class MuxManager {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    // No sessions left → drop any frames still queued for a dead window.
+    this.outbox.length = 0;
     const sock = this.ws;
     this.ws = null; // socket handlers no-op via identity checks
     try { sock?.close(); } catch { /* ignore */ }
