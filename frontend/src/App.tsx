@@ -95,6 +95,34 @@ export function App(): JSX.Element {
   // right initial view of the same dialog.
   const [dialogOpen, setDialogOpen] = useState<null | 'new' | 'resume'>(null);
   const [activeStatus, setActiveStatus] = useState<ActiveStatus>(INITIAL_STATUS);
+
+  // Bound how many sessions are kept LIVE (mounted SessionView → xterm
+  // buffer + claudeEvents history + WS attach). Without this, every session
+  // the user ever viewed kept its full terminal scrollback and message
+  // history resident forever (the view was sticky-mounted and never
+  // discarded) — so a long-open tab with dozens of windows accumulated
+  // hundreds of MB and degraded into multi-second freezes. We keep only the
+  // active session plus the few most-recently-viewed live; the rest are
+  // discarded (their SessionView unmounts, freeing xterm + events) but stay
+  // in the tab strip (SessionTabs renders ALL sessions, driven by the HTTP
+  // poll) and re-hydrate instantly from the server snapshot + event replay
+  // when clicked. Nothing is hidden — only un-viewed history is dropped.
+  const LIVE_SESSION_CAP = 3;
+  const [liveIds, setLiveIds] = useState<string[]>(() => (activeId ? [activeId] : []));
+  useEffect(() => {
+    if (!activeId) return;
+    setLiveIds((prev) => (prev[0] === activeId
+      ? prev
+      : [activeId, ...prev.filter((id) => id !== activeId)].slice(0, LIVE_SESSION_CAP)));
+  }, [activeId]);
+  useEffect(() => {
+    // Drop ids for sessions that no longer exist (killed/exited).
+    setLiveIds((prev) => {
+      const alive = prev.filter((id) => rawSessions.some((s) => s.id === id));
+      return alive.length === prev.length ? prev : alive;
+    });
+  }, [rawSessions]);
+
   const isMobile = useIsMobile();
   const [textSize, setTextSize] = useState(readTextSize());
   // On phones the layout toggle is hidden and mode is forced to "tabs"
@@ -261,25 +289,28 @@ export function App(): JSX.Element {
         ) : sessions.length === 0 ? (
           <EmptyState onNew={() => setDialogOpen("new")} />
         ) : (
-          // Mount one SessionView per session and toggle visibility with
-          // CSS. The previous shape (single keyed instance) made every
-          // tab switch a full unmount/remount: xterm rebuild, fresh WS,
-          // full claudeEvents replay, full message-list re-render. For
-          // long sessions that was 3+ seconds. Keeping all views mounted
-          // means switching is just `display: flex` ↔ `display: none` —
-          // instant. Trade: N concurrent WS + N parsers running.
-          sessions.map((s) => (
-            <div
-              key={s.id}
-              className={`session-view-host${s.id === activeId ? '' : ' is-hidden'}`}
-            >
-              <SessionView
-                sessionId={s.id}
-                isActive={s.id === activeId}
-                onStatusChange={s.id === activeId ? setActiveStatus : undefined}
-              />
-            </div>
-          ))
+          // Mount a SessionView only for the LIVE set (active + a few
+          // recently-viewed), not all N sessions — see LIVE_SESSION_CAP.
+          // The active one is always included even if the LRU effect hasn't
+          // caught up yet. Visibility within the live set is still a CSS
+          // display toggle, so switching between recently-viewed tabs stays
+          // instant; switching to a long-dormant one re-mounts and
+          // snapshot-prefills (fast, not blank). Every session still appears
+          // in the tab strip above regardless of live state.
+          sessions
+            .filter((s) => s.id === activeId || liveIds.includes(s.id))
+            .map((s) => (
+              <div
+                key={s.id}
+                className={`session-view-host${s.id === activeId ? '' : ' is-hidden'}`}
+              >
+                <SessionView
+                  sessionId={s.id}
+                  isActive={s.id === activeId}
+                  onStatusChange={s.id === activeId ? setActiveStatus : undefined}
+                />
+              </div>
+            ))
         )}
       </main>
 
