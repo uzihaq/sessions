@@ -28,6 +28,17 @@ const server = createServer((req, res) => {
   });
 });
 
+// Disable Nagle's algorithm on every TCP connection (HTTP + the WS upgrades
+// that ride the same sockets). A keystroke echo is a tiny lone packet;
+// with Nagle on, TCP holds it waiting to coalesce until an ACK arrives, and
+// the receiver's delayed-ACK timer means that wait is ~40ms PER keystroke —
+// the exact stall that made typing feel "so much slower than tmux" (tmux
+// rides SSH, which sets TCP_NODELAY for the same reason). node-pty echo is
+// sub-ms; this removes the artificial 40ms tax on top of it.
+server.on('connection', (socket) => {
+  socket.setNoDelay(true);
+});
+
 server.on('upgrade', handleUpgrade);
 
 server.listen(config.port, config.host, () => {
