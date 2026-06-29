@@ -118,7 +118,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       // xterm refs — null when mountTerminal=false. Every term.* call
       // is wrapped in `if (term)` so the mux / claudeEvents path runs
       // identically in either mode.
-      let term: import('xterm').Terminal | null = null;
+      let term: import('@xterm/xterm').Terminal | null = null;
       let fit: import('@xterm/addon-fit').FitAddon | null = null;
       let scrollDisp: { dispose: () => void } | null = null;
       let dataDisp: { dispose: () => void } | null = null;
@@ -126,18 +126,18 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
 
       if (mountTerminal) {
         const [xtermMod, serializeMod, fitMod, webglMod, canvasMod] = await Promise.all([
-          import('xterm'),
+          import('@xterm/xterm'),
           import('@xterm/addon-serialize'),
           import('@xterm/addon-fit'),
-          // GPU renderers — pinned to the xterm@5.3 generation (old package
-          // names) so they match the core's render internals. Kept in the
-          // same lazy chunk as xterm. See the loadAddon block after open().
-          import('xterm-addon-webgl'),
-          import('xterm-addon-canvas'),
+          // GPU renderers (maintained @xterm/* 5.5 generation, matching the
+          // core). Kept in the same lazy chunk. See the loadAddon block
+          // after open() — this is THE fix for slow typing.
+          import('@xterm/addon-webgl'),
+          import('@xterm/addon-canvas'),
           // CSS side-effect import — Vite injects the stylesheet on resolve.
           // Keeps the CSS in the same lazy chunk as the JS so the initial
           // bundle stays slim. Discard the unused module value via void.
-          import('xterm/css/xterm.css').then(() => undefined)
+          import('@xterm/xterm/css/xterm.css').then(() => undefined)
         ]);
         if (disposed) return;
         const { Terminal } = xtermMod;
@@ -233,6 +233,22 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       // server skips events we already have.
       let claudeEventsSeen = 0;
 
+      // Output coalescing: a busy TUI emits MANY small PTY frames per
+      // keystroke (each ~1KB). Writing each one to xterm separately multiplies
+      // VT-parser invocations and render scheduling. Buffer incoming frames
+      // and flush them as ONE term.write per animation frame, so the parser
+      // and renderer run once per painted frame instead of N times. lastSeq is
+      // tracked per-message (above) so resume is unaffected by the batching.
+      let pendingOutput: string[] = [];
+      let outputRaf: number | null = null;
+      const flushOutput = (): void => {
+        outputRaf = null;
+        if (!term || pendingOutput.length === 0) return;
+        const data = pendingOutput.length === 1 ? pendingOutput[0]! : pendingOutput.join('');
+        pendingOutput = [];
+        term.write(data);
+      };
+
       // Sizing strategy: FitAddon measures cell metrics + container dims
       // and computes cols/rows that fill the visible terminal pane. We
       // then forward the new size to prettyd so the PTY (and the TUI
@@ -303,11 +319,18 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           return;
         }
         if (msg.type === 'output') {
-          if (term) term.write(msg.data);
           lastSeq = msg.seq;
+          if (term) {
+            pendingOutput.push(msg.data);
+            if (outputRaf === null) outputRaf = requestAnimationFrame(flushOutput);
+          }
           return;
         }
         if (msg.type === 'gap') {
+          // Resync wipes the screen — any buffered-but-unwritten frames are
+          // now stale; drop them and cancel the pending flush.
+          pendingOutput = [];
+          if (outputRaf !== null) { cancelAnimationFrame(outputRaf); outputRaf = null; }
           if (term) {
             term.reset();
             term.writeln(
@@ -319,6 +342,10 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           return;
         }
         if (msg.type === 'exit') {
+          // Flush any buffered output so the final bytes show before the
+          // exit banner, then stop the coalescer.
+          flushOutput();
+          if (outputRaf !== null) { cancelAnimationFrame(outputRaf); outputRaf = null; }
           ptyExited = true;
           setExitInfo({ code: msg.code, signal: msg.signal });
           setStatus('closed');
@@ -453,6 +480,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         window.removeEventListener('resize', onResize);
         ro?.disconnect();
         if (resizeSendTimer !== null) window.clearTimeout(resizeSendTimer);
+        if (outputRaf !== null) { cancelAnimationFrame(outputRaf); outputRaf = null; }
         dataDisp?.dispose();
         scrollDisp?.dispose();
         channel?.detach();

@@ -12,7 +12,7 @@ import type { CreateSessionRequest, SessionInfo } from '../types';
 // and including it would defeat the reuse for any busy session.
 function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionInfo[] {
   const prevById = new Map(prev.map((s) => [s.id, s]));
-  return fresh.map((f) => {
+  const next = fresh.map((f) => {
     const old = prevById.get(f.id);
     if (
       old &&
@@ -35,6 +35,11 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
     }
     return f;
   });
+  // If every element is the same object in the same order as before, return
+  // the PREVIOUS array reference so subscribers to the whole `sessions` array
+  // (App, SessionTabs, GridView) don't re-render at all on an idle 3s poll.
+  if (next.length === prev.length && next.every((s, i) => s === prev[i])) return prev;
+  return next;
 }
 
 interface SessionsState {
