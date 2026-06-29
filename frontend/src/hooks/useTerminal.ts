@@ -125,10 +125,15 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       let ro: ResizeObserver | null = null;
 
       if (mountTerminal) {
-        const [xtermMod, serializeMod, fitMod] = await Promise.all([
+        const [xtermMod, serializeMod, fitMod, webglMod, canvasMod] = await Promise.all([
           import('xterm'),
           import('@xterm/addon-serialize'),
           import('@xterm/addon-fit'),
+          // GPU renderers — pinned to the xterm@5.3 generation (old package
+          // names) so they match the core's render internals. Kept in the
+          // same lazy chunk as xterm. See the loadAddon block after open().
+          import('xterm-addon-webgl'),
+          import('xterm-addon-canvas'),
           // CSS side-effect import — Vite injects the stylesheet on resolve.
           // Keeps the CSS in the same lazy chunk as the JS so the initial
           // bundle stays slim. Discard the unused module value via void.
@@ -157,6 +162,27 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           term.loadAddon(serialize);
           term.loadAddon(fit);
           term.open(container);
+          // GPU renderer — THE fix for slow typing. The default DOM renderer
+          // rebuilds one <span>-run-per-style for every dirty row each frame
+          // and reflows them; at 254×127 with Claude's full-pane repaint that
+          // is thousands of DOM nodes + layout per keystroke (tens of ms of
+          // main-thread work = the browser-side echo lag). WebGL/canvas
+          // rasterize glyphs to a single canvas with no per-cell DOM or
+          // reflow. MUST load AFTER open(). Chain: webgl → canvas → DOM, all
+          // in try/catch so a missing GPU context degrades safely to the old
+          // behavior instead of blanking the terminal. With the live-session
+          // cap (≤3 mounted), the WebGL per-page context limit isn't a risk;
+          // term.dispose() (runCleanup) frees the context on unmount.
+          try {
+            const webgl = new webglMod.WebglAddon();
+            webgl.onContextLoss(() => {
+              try { webgl.dispose(); } catch { /* ignore */ }
+              try { term?.loadAddon(new canvasMod.CanvasAddon()); } catch { /* stay on DOM */ }
+            });
+            term.loadAddon(webgl);
+          } catch {
+            try { term.loadAddon(new canvasMod.CanvasAddon()); } catch { /* stay on DOM */ }
+          }
           scrollDisp = term.onScroll(() => {
             const buf = term!.buffer.active;
             const atBottom = buf.viewportY >= buf.baseY - 2;
