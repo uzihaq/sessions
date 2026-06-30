@@ -29,7 +29,7 @@ import { createRequire } from 'node:module';
 const xtermRequire = createRequire(import.meta.url);
 const { Terminal } = xtermRequire('@xterm/headless') as typeof import('@xterm/headless');
 const { SerializeAddon } = xtermRequire('@xterm/addon-serialize') as typeof import('@xterm/addon-serialize');
-import { createServer, type Server, type Socket } from 'node:net';
+import { connect, createServer, type Server, type Socket } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -58,6 +58,30 @@ const cols = Number(process.env.RUNNER_COLS ?? 300);
 const rows = Number(process.env.RUNNER_ROWS ?? 50);
 
 fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+
+// Duplicate-runner guard — the root fix for orphan/duplicate accumulation.
+// If a runner for THIS id is already alive and serving the socket, a second
+// instance (launchd KeepAlive race, a stray `launchctl kickstart`, a
+// double-bootstrap) must NOT proceed: the unlink below would steal the live
+// socket, and we'd spawn a DUPLICATE `claude` — two runners and two claude
+// processes for one session, each eating CPU and fighting over the PTY. Probe
+// the existing socket; if anything answers, exit 0 so launchd's
+// KeepAlive(SuccessfulExit=false) leaves us dead instead of respawn-looping.
+// A stale socket file from a real crash refuses the connection (ECONNREFUSED)
+// → we fall through and rebind, so legitimate respawns are unaffected.
+if (fs.existsSync(SOCK_PATH)) {
+  const ownerAlive = await new Promise<boolean>((resolve) => {
+    const probe = connect(SOCK_PATH);
+    const finish = (v: boolean) => { try { probe.destroy(); } catch { /* ignore */ } resolve(v); };
+    probe.once('connect', () => finish(true));
+    probe.once('error', () => finish(false));
+    setTimeout(() => finish(false), 1000);
+  });
+  if (ownerAlive) {
+    console.error(`runner ${RUNNER_ID}: another instance already owns ${SOCK_PATH} — exiting to avoid a duplicate`);
+    process.exit(0);
+  }
+}
 // Stale socket from a previous crash → unlink before bind.
 try { fs.unlinkSync(SOCK_PATH); } catch { /* not present */ }
 
