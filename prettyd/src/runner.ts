@@ -75,7 +75,26 @@ delete env.RUNNER_COLS;
 delete env.RUNNER_ROWS;
 delete env.RUNNER_STATE_DIR;
 
-const pty: IPty = spawn(cmd, args, { name: 'xterm-256color', cols, rows, cwd, env });
+// On a RESPAWN (Mac reboot, crash-restart via launchd KeepAlive), the
+// session's Claude JSONL already exists on disk. Re-running the original
+// `claude --session-id <uuid>` then dies immediately with "Session ID is
+// already in use" and launchd crash-loops it — so a reboot would lose every
+// Claude session instead of restoring it. Swap `--session-id` → `--resume`
+// on respawn so Claude reattaches to the same conversation. The persistent
+// events file already holding content is the reliable "this session has run
+// before" signal (it's empty/absent on a genuinely fresh start). codex/shell
+// sessions carry no --session-id, so they're untouched.
+let spawnArgs = args;
+try {
+  const isRespawn = fs.existsSync(EVENTS_PATH) && fs.statSync(EVENTS_PATH).size > 0;
+  const sidIdx = args.indexOf('--session-id');
+  if (isRespawn && sidIdx >= 0) {
+    spawnArgs = args.slice();
+    spawnArgs[sidIdx] = '--resume';
+  }
+} catch { /* best effort — fall back to the original args */ }
+
+const pty: IPty = spawn(cmd, spawnArgs, { name: 'xterm-256color', cols, rows, cwd, env });
 const log = new EventLog();
 const term = new Terminal({ cols, rows, scrollback: 5000, allowProposedApi: true });
 const serialize = new SerializeAddon();
