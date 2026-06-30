@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import nodePath from 'node:path';
-import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering } from './sessions.js';
+import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering, deepSessionDiagnostics } from './sessions.js';
 import { scanResumableSessions } from './claudeSessionScanner.js';
 import { listDirectoryCandidates } from './directories.js';
 import type { CreateSessionRequest } from './types.js';
@@ -53,6 +53,22 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
       version: '0.1.0',
       discovering: isDiscovering(),
       sessionsLoaded: listSessions({ includeExited: true }).length
+    });
+    return;
+  }
+
+  // Deep health for `pretty doctor` / diagnostics: daemon uptime + per-session
+  // facts the daemon knows. QoS class and runner spawn-path (the throttling
+  // saga's culprits) are read CLI-side from plists + ps.
+  if (path === '/api/health/deep' && method === 'GET') {
+    send(res, 200, {
+      ok: true,
+      name: 'prettyd',
+      version: '0.1.0',
+      discovering: isDiscovering(),
+      sessionsLoaded: listSessions({ includeExited: true }).length,
+      uptimeSec: Math.round(process.uptime()),
+      sessions: deepSessionDiagnostics()
     });
     return;
   }

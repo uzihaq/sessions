@@ -375,9 +375,10 @@ function SinglePopOut({
   const cwdShort = useMemo(() => {
     const c = session?.cwd ?? '';
     if (!c) return '';
-    // Replace $HOME with ~ for compactness.
-    const home = '/Users/uzair';  // matches the user; harmless for others — just doesn't shorten
-    return c.startsWith(home) ? '~' + c.slice(home.length) : c;
+    // Shorten the OS home dir to ~ for compactness, without hardcoding a
+    // username — match the standard macOS (/Users/<user>) and Linux
+    // (/home/<user>) home layouts so it works for any operator.
+    return c.replace(/^\/(Users|home)\/[^/]+/, '~');
   }, [session?.cwd]);
 
   // Keep the OS window title (and tab title) in sync with the session

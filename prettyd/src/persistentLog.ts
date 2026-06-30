@@ -37,10 +37,29 @@ export class PersistentLog {
   private fd: number;
   private bytesOnDisk: number;
   private trimming = false;
+  // Async write buffer: append() enqueues here and schedules a flush
+  // instead of doing a synchronous write on the PTY hot path (every output
+  // chunk). A hard crash loses at most the un-flushed tail (sub-frame of
+  // terminal scrollback, already in the runner's in-memory ring) — an
+  // acceptable trade for keeping fs.writeSync off the keystroke path.
+  // close() flushes synchronously so a clean shutdown never loses data.
+  private pending: Buffer[] = [];
+  private writing = false;
+  private flushScheduled = false;
+  private closed = false;
+  // Cumulative metrics surfaced via /api/health/deep for debuggability.
+  private appendCount = 0;
+  private droppedFrames = 0;
 
   private constructor(public readonly filePath: string, fd: number, bytesOnDisk: number) {
     this.fd = fd;
     this.bytesOnDisk = bytesOnDisk;
+  }
+
+  stats(): { bytesOnDisk: number; pending: number; appendCount: number; droppedFrames: number } {
+    let pendingBytes = 0;
+    for (const b of this.pending) pendingBytes += b.length;
+    return { bytesOnDisk: this.bytesOnDisk, pending: pendingBytes, appendCount: this.appendCount, droppedFrames: this.droppedFrames };
   }
 
   static open(filePath: string): PersistentLog {
@@ -74,18 +93,56 @@ export class PersistentLog {
   }
 
   append(seq: number, data: string): void {
+    if (this.closed) return;
     const payload = Buffer.from(data, 'utf8');
     const recLen = RECORD_FIXED_BYTES + payload.length;
     const frame = Buffer.allocUnsafe(RECORD_HEADER_BYTES + recLen);
     frame.writeUInt32BE(recLen, 0);
     frame.writeUInt32BE(seq >>> 0, RECORD_HEADER_BYTES);
     payload.copy(frame, RECORD_HEADER_BYTES + RECORD_FIXED_BYTES);
-    // writeSync against an 'a+' fd appends regardless of position.
-    fs.writeSync(this.fd, frame, 0, frame.length);
-    this.bytesOnDisk += frame.length;
-    if (this.bytesOnDisk > SOFT_CAP_BYTES && !this.trimming) {
-      this.trim();
-    }
+    this.appendCount++;
+    this.pending.push(frame);
+    this.scheduleFlush();
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushScheduled || this.closed) return;
+    this.flushScheduled = true;
+    setImmediate(() => { this.flushScheduled = false; this.flush(); });
+  }
+
+  // Drain the pending buffer in one async write. Serialized via `writing`
+  // so we never overlap fs.write on the same fd. trim (rare, only when the
+  // soft cap is crossed) runs after the write settles, off the per-chunk path.
+  private flush(): void {
+    if (this.writing || this.trimming || this.pending.length === 0 || this.closed) return;
+    this.writing = true;
+    const batch = this.pending.length === 1 ? this.pending[0]! : Buffer.concat(this.pending);
+    this.pending = [];
+    fs.write(this.fd, batch, 0, batch.length, null, (err) => {
+      this.writing = false;
+      if (err) {
+        // Write failed (disk full, fd gone) — drop this batch rather than
+        // stall the runner. Counted for /health/deep visibility.
+        this.droppedFrames++;
+      } else {
+        this.bytesOnDisk += batch.length;
+        if (this.bytesOnDisk > SOFT_CAP_BYTES && !this.trimming) this.trim();
+      }
+      if (this.pending.length > 0) this.scheduleFlush();
+    });
+  }
+
+  // Synchronously write whatever is buffered. Used by close() so a clean
+  // shutdown (SIGTERM, runner exit) doesn't lose the un-flushed tail.
+  private flushSync(): void {
+    if (this.pending.length === 0) return;
+    const batch = Buffer.concat(this.pending);
+    this.pending = [];
+    try {
+      fs.writeSync(this.fd, batch, 0, batch.length);
+      this.bytesOnDisk += batch.length;
+    } catch { this.droppedFrames++; }
   }
 
   // Trim from the front: keep just the most recent
@@ -130,6 +187,9 @@ export class PersistentLog {
   }
 
   close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.flushSync(); // don't lose the un-flushed tail on clean shutdown
     try { fs.closeSync(this.fd); } catch { /* ignore */ }
   }
 

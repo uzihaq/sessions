@@ -124,6 +124,60 @@ function normalize(s) {
 // ────────────────────────────────────────────────────────────────────────
 // Subcommands.
 
+// `pretty doctor` — per-session health: is the runner on the un-throttled
+// (Interactive QoS) plist, and on the fast compiled spawn path? Surfaces the
+// exact "this session is old / background-classed / running via tsx" state
+// that otherwise needs shell archaeology to find. A session flagged here is
+// fixed by recreating it (or a full app restart respawns every runner clean).
+async function cmdDoctor() {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { execFileSync } = require('node:child_process');
+  const agents = path.join(os.homedir(), 'Library', 'LaunchAgents');
+  const ps1 = (fmt, pid) => {
+    try { return execFileSync('ps', ['-o', fmt, '-p', String(pid)], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
+    catch { return ''; }
+  };
+  const { sessions } = await getJson('/api/sessions');
+  let deep = null;
+  try { deep = await getJson('/api/health/deep'); } catch { /* older daemon */ }
+
+  const rows = sessions.map((s) => {
+    let qos = 'no-plist';
+    try {
+      const xml = fs.readFileSync(path.join(agents, `tech.pretty-pty.runner.${s.id}.plist`), 'utf8');
+      const m = xml.match(/<key>ProcessType<\/key>\s*<string>([^<]+)<\/string>/);
+      qos = m ? m[1] : 'none';
+    } catch { qos = 'no-plist'; }
+    let spawn = 'dead?';
+    if (s.pid) {
+      const ppid = ps1('ppid=', s.pid);
+      const pcmd = ppid ? ps1('command=', ppid) : '';
+      spawn = /dist\/runner\.js/.test(pcmd) ? 'dist' : (/tsx\b/.test(pcmd) ? 'tsx-SLOW' : (pcmd ? 'other' : 'dead?'));
+    }
+    const ok = qos === 'Interactive' && spawn === 'dist';
+    return { id: s.id, tool: s.tool || classifyTool(s.cmd, s.args), size: `${s.cols}x${s.rows}`, qos, spawn, ok };
+  });
+
+  if (wantJson) {
+    process.stdout.write(JSON.stringify({ daemon: deep, sessions: rows }, null, 2) + '\n');
+    return;
+  }
+  if (deep) {
+    process.stdout.write(`daemon: ${deep.sessionsLoaded} sessions, discovering=${deep.discovering}, uptime=${deep.uptimeSec}s\n\n`);
+  }
+  const W = (s, n) => String(s).slice(0, n - 1).padEnd(n);
+  const shortTool = (t) => (t === 'claude-code' ? 'claude' : t);
+  process.stdout.write(`${W('ID', 10)}${W('TOOL', 8)}${W('SIZE', 10)}${W('QoS', 13)}${W('SPAWN', 10)}STATUS\n`);
+  for (const r of rows) {
+    process.stdout.write(`${W(r.id.slice(0, 8), 10)}${W(shortTool(r.tool), 8)}${W(r.size, 10)}${W(r.qos, 13)}${W(r.spawn, 10)}${r.ok ? 'ok' : '⚠ needs recreate'}\n`);
+  }
+  const bad = rows.filter((r) => !r.ok);
+  process.stdout.write(`\n${bad.length} of ${rows.length} sessions need recreate `);
+  process.stdout.write(bad.length ? '(throttled QoS and/or slow tsx spawn — recreate them or do a full app restart for the fast path).\n' : '— all healthy (Interactive QoS, fast dist spawn).\n');
+  if (bad.length) process.exitCode = 1;
+}
+
 async function cmdLs(args) {
   const includeExited = args.includes('--include-exited') || args.includes('-a') || wantJson;
   const path = includeExited ? '/api/sessions?include_exited=1' : '/api/sessions';
@@ -504,6 +558,8 @@ function help() {
     '                           or supply --cmd / a positional command directly.',
     '  kill <id> [<id>...]      terminate one or more sessions',
     '  attach <id>              raw two-way stream (Ctrl+Q to detach)',
+    '  doctor                   per-session health: QoS (throttled?), spawn',
+    '                           path (dist/tsx), flags sessions needing recreate',
     '',
     'Global flags:',
     '  --json   machine-friendly output',
@@ -526,6 +582,7 @@ function help() {
     case 'tail': return cmdTail(argv);
     case 'wait': return cmdWait(argv);
     case 'attach': return cmdAttach(argv[0]);
+    case 'doctor': return cmdDoctor();
     case undefined:
     case 'help':
     case '--help':

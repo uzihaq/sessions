@@ -87,10 +87,21 @@ setInterval(() => {
     // non-Claude sessions (bash spam, `cat huge.txt`, codex) where there
     // is no such footer.
     if (s.info.tool === 'claude-code') {
-      try {
-        s.info.working = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
-      } catch {
-        s.info.working = byteWorking;
+      if (s.recentBytes <= 0) {
+        // No PTY output since the last tick → the screen can't have changed,
+        // so the "esc to interrupt" footer can't have appeared: it's idle.
+        // Skip the serialize entirely. This is the big saving — across many
+        // background sessions, the 800ms loop was serializing every Claude
+        // mirror (incl. the active 254×127 one) every tick regardless of
+        // whether anything happened. A truly-working session keeps emitting
+        // its spinner, so recentBytes stays > 0 and we still serialize it.
+        s.info.working = false;
+      } else {
+        try {
+          s.info.working = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
+        } catch {
+          s.info.working = byteWorking;
+        }
       }
     } else {
       s.info.working = byteWorking;
@@ -588,6 +599,23 @@ async function discoverRunnersInner(): Promise<void> {
 export function listSessions(opts: { includeExited?: boolean } = {}): SessionInfo[] {
   const all = [...sessions.values()].map((s) => s.info);
   return opts.includeExited ? all : all.filter((s) => !s.exited);
+}
+
+// Daemon-side per-session facts for /api/health/deep + `pretty doctor`.
+// (QoS/spawn-path facts are filesystem/process state, read CLI-side.)
+export function deepSessionDiagnostics(): Array<Record<string, unknown>> {
+  const now = Date.now();
+  return [...sessions.values()].map((s) => ({
+    id: s.info.id,
+    tool: s.info.tool,
+    cols: s.info.cols,
+    rows: s.info.rows,
+    pid: s.info.pid,
+    working: s.info.working,
+    exited: s.info.exited,
+    claudeEvents: s.claudeEventBase + s.claudeEventLog.length,
+    lastDataAgeMs: now - s.info.lastDataAt
+  }));
 }
 
 export function getSession(id: string): SessionInternal | undefined {
