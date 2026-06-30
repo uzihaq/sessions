@@ -73,8 +73,11 @@ ${envEntries}
     <key>SuccessfulExit</key>
     <false/>
   </dict>
+  <!-- These runners own interactive PTYs. Mark them Interactive so macOS
+       does not apply Darwin-background CPU/I/O throttling to keystrokes,
+       terminal repaint, or tool startup. -->
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Interactive</string>
   <key>StandardOutPath</key>
   <string>${escapeXml(args.logPath)}</string>
   <key>StandardErrorPath</key>
