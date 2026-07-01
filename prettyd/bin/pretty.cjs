@@ -270,15 +270,19 @@ async function cmdKeys(id, key) {
 const TOOL_PRESETS = {
   claude: {
     cmd: '/opt/homebrew/bin/claude',
-    args: ['--dangerously-skip-permissions']
+    args: ['--dangerously-skip-permissions'],
+    safeArgs: [] // --no-skip-perms → plain claude (prompts on each action)
   },
   codex: {
     cmd: '/opt/homebrew/bin/codex',
-    // codex >=0.137 removed `--full-auto` (parse error -> instant exit).
-    // This is the no-prompts equivalent: sandboxed to the workspace,
-    // never blocks on an approval prompt (matches the skip-perms
-    // workflow; a stalled prompt is unusable from a phone/agent loop).
-    args: ['--sandbox', 'workspace-write', '--ask-for-approval', 'never']
+    // Skip-perms (the default) = codex's exact twin of Claude's
+    // --dangerously-skip-permissions: `--dangerously-bypass-approvals-and-
+    // sandbox` — no sandbox, no approval prompts, full access. codex >=0.137
+    // removed `--full-auto`, and the old `--sandbox workspace-write` still
+    // boxed codex to the project; this matches Claude's full-access posture.
+    args: ['--dangerously-bypass-approvals-and-sandbox'],
+    // --no-skip-perms → sandboxed to the workspace and prompts on request.
+    safeArgs: ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
   },
   shell: {
     cmd: undefined, // prettyd default = $SHELL
@@ -316,11 +320,13 @@ async function cmdNew(args) {
       fail(`unknown --tool '${toolVal}'. valid: ${Object.keys(TOOL_PRESETS).join(', ')}`, 1);
     }
     if (preset.cmd) body.cmd = preset.cmd;
-    // Strip the skip-permissions flag if --no-skip-perms was passed.
-    if (preset.args) {
-      body.args = noSkipPerms
-        ? preset.args.filter((a) => !/^--(dangerously-skip-permissions|full-auto)$/.test(a))
-        : preset.args.slice();
+    // Skip-perms is the default; --no-skip-perms selects the preset's safe
+    // variant. Per-tool because "safe" isn't just dropping a flag — codex's
+    // safe mode is a different flag set (sandbox + approvals), not the
+    // absence of one. (The old regex-strip silently did nothing for codex.)
+    const chosenArgs = noSkipPerms ? preset.safeArgs : preset.args;
+    if (chosenArgs) {
+      body.args = chosenArgs.slice();
     }
     // Any leftover positional args become extra args to the tool.
     if (args.length > 0) {

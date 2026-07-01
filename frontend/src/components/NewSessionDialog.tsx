@@ -37,8 +37,9 @@ interface Props {
 }
 
 // Resolve the (cmd, args) prettyd should spawn for the selected tool.
-// Skip-perms maps to --dangerously-skip-permissions (Claude) or --full-auto
-// (Codex). Pretty-tmux's mapping; we mirror it.
+// Skip-perms maps to --dangerously-skip-permissions (Claude) or
+// --dangerously-bypass-approvals-and-sandbox (Codex) — full access, no
+// prompts, for both.
 //
 // For Claude Code we always pass `--session-id <uuid>` so Claude uses
 // the exact session ID we control. Two big benefits:
@@ -70,12 +71,17 @@ function resolveCommand(
     return { cmd: 'claude', args };
   }
   if (tool === 'codex') {
-    // codex >=0.137 removed `--full-auto` (parse error -> instant exit).
-    // Skip-perms maps to the no-prompts equivalent: workspace-sandboxed,
-    // never blocks on an approval prompt.
+    // Skip-perms is the DEFAULT and maps to codex's exact twin of Claude's
+    // --dangerously-skip-permissions: `--dangerously-bypass-approvals-and-
+    // sandbox` (no sandbox, no approval prompts). codex >=0.137 removed
+    // `--full-auto`, and workspace-write still boxed codex to the project —
+    // we now match Claude's full-access posture. Unchecking skip-perms drops
+    // to a sandboxed, prompting codex (workspace-write + on-request).
     return {
       cmd: 'codex',
-      args: skipPerms ? ['--sandbox', 'workspace-write', '--ask-for-approval', 'never'] : []
+      args: skipPerms
+        ? ['--dangerously-bypass-approvals-and-sandbox']
+        : ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
     };
   }
   // shell — let prettyd default to $SHELL
@@ -215,7 +221,7 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
               <span className="field-checkbox-body">
                 <span>Skip permissions</span>
                 <span className="field-hint">
-                  {tool === 'claude-code' ? '--dangerously-skip-permissions' : '--full-auto'}
+                  {tool === 'claude-code' ? '--dangerously-skip-permissions' : '--dangerously-bypass-approvals-and-sandbox'}
                 </span>
               </span>
             </label>

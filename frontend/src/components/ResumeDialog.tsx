@@ -52,9 +52,9 @@ function shortFolder(cwd: string): string {
 }
 
 function displayPath(cwd: string): string {
-  return cwd.startsWith('/Users/uzair')
-    ? '~' + cwd.slice('/Users/uzair'.length)
-    : cwd;
+  // Shorten the OS home dir to ~ without hardcoding a username (macOS
+  // /Users/<user>, Linux /home/<user>) — matches App.tsx's cwdShort.
+  return cwd.replace(/^\/(Users|home)\/[^/]+/, '~');
 }
 
 // Mirrors the helper in NewSessionDialog — kept local instead of shared
