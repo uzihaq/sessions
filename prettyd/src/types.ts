@@ -90,7 +90,11 @@ export type ClientMsg =
   // the user is actually viewing asks for history; the rest attach
   // live-only and backfill when activated.
   | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean; claudeReplay?: boolean }
-  | { type: 'detach'; sessionId: string };
+  | { type: 'detach'; sessionId: string }
+  // Application-level keepalive: the browser can't send WS protocol pings,
+  // so the client sends {type:'ping'} and the daemon replies {type:'pong'}.
+  // Lets the client detect a silently-dead TCP link and force a reconnect.
+  | { type: 'ping' };
 
 // Server → client WS messages.
 // Phase 2: every output chunk carries a monotonic seq#. Clients persist
@@ -117,8 +121,12 @@ export type ServerMsg =
     }
   | { type: 'output'; seq: number; data: string; sessionId?: string }
   | { type: 'gap'; oldestAvailableSeq: number; currentSeq: number; sessionId?: string }
-  | { type: 'exit'; code: number | null; signal: string | null; seq: number; sessionId?: string }
+  // reason='runner-lost' marks a synthetic exit the daemon emits when a
+  // runner disconnects without a clean EXIT frame (crash), so clients
+  // unfreeze instead of hanging on a dead session.
+  | { type: 'exit'; code: number | null; signal: string | null; seq: number; sessionId?: string; reason?: string }
   | { type: 'error'; message: string; sessionId?: string }
+  | { type: 'pong' }
   // Claude Code's structured session events, sourced from
   // ~/.claude/projects/<encoded-cwd>/<id>.jsonl. Frontend consumers
   // (currently Remote view) opt in to these instead of parsing the
