@@ -16,6 +16,7 @@ import type { CreateSessionRequest, SessionInfo } from './types.js';
 import { watchSessionFile, type SessionFileWatcher, type ClaudeSessionEvent } from './sessionFileWatcher.js';
 import { claudeWorkingFromSnapshot } from './claudeActivity.js';
 import { watchCodexRollout } from './codexWatcher.js';
+import { sendPush } from './push.js';
 
 // Same trick runner.ts uses to bypass @xterm/headless's broken ESM facade.
 const xtermRequire = createRequire(import.meta.url);
@@ -62,6 +63,10 @@ interface SessionInternal {
   // WS ?claudeEventsSince= / HTTP ?since= are absolute indices, so without
   // this offset a reconnect after a trim would silently skip events.
   claudeEventBase: number;
+  // Push notifications should only fire on observed working true → false
+  // edges. The first detector sample after daemon start/register is just
+  // initialization, not a completion event.
+  pushWorkingObserved: boolean;
 }
 
 export type { OutputEvent };
@@ -79,11 +84,37 @@ const WORKING_DECAY_MS = 800;
 // "exit code 0" briefly without showing ghost sessions forever.
 const EXITED_GRACE_MS = 30_000;
 
+function sessionDisplayLabel(info: SessionInfo): string {
+  if (info.claudeCustomTitle) return info.claudeCustomTitle;
+  if (info.claudeAiTitle) return info.claudeAiTitle;
+  const cwdBase = info.cwd.split('/').filter(Boolean).pop();
+  if (cwdBase) return cwdBase;
+  if (info.cmd) return info.cmd;
+  return info.id.slice(0, 8);
+}
+
+function setWorkingState(internal: SessionInternal, nextWorking: boolean): void {
+  const previous = internal.info.working;
+  internal.info.working = nextWorking;
+  if (!internal.pushWorkingObserved) {
+    internal.pushWorkingObserved = true;
+    return;
+  }
+  if (previous && !nextWorking && !internal.exited) {
+    const label = sessionDisplayLabel(internal.info);
+    void sendPush({
+      title: `${label} finished`,
+      data: { sessionId: internal.info.id }
+    });
+  }
+}
+
 setInterval(() => {
   for (const s of sessions.values()) {
     if (s.exited) continue;
     s.recentBytes = Math.floor(s.recentBytes / 2);
     const byteWorking = s.recentBytes >= WORKING_BYTES_THRESHOLD;
+    let nextWorking: boolean;
     // Byte-rate lies for Claude Code: a custom statusline (e.g. the
     // user's `/goal active (3d)◎`) repaints continuously while idle, so
     // the PTY never goes quiet and `working` would be pinned true. JSONL
@@ -101,19 +132,20 @@ setInterval(() => {
         // mirror (incl. the active 254×127 one) every tick regardless of
         // whether anything happened. A truly-working session keeps emitting
         // its spinner, so recentBytes stays > 0 and we still serialize it.
-        s.info.working = false;
+        nextWorking = false;
       } else {
         try {
-          s.info.working = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
+          nextWorking = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
         } catch {
-          s.info.working = byteWorking;
+          nextWorking = byteWorking;
         }
       }
     } else if (s.info.tool === 'codex') {
-      s.info.working = s.codexLifecycleWorking ?? byteWorking;
+      nextWorking = s.codexLifecycleWorking ?? byteWorking;
     } else {
-      s.info.working = byteWorking;
+      nextWorking = byteWorking;
     }
+    setWorkingState(s, nextWorking);
   }
 }, WORKING_DECAY_MS).unref();
 
@@ -486,7 +518,8 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
     fileWatcher: null,
     codexLifecycleWorking: null,
     claudeEventLog: [],
-    claudeEventBase: 0
+    claudeEventBase: 0,
+    pushWorkingObserved: false
   };
   sessions.set(hello.id, internal);
 
@@ -539,7 +572,7 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
         });
         watcher.emitter.on('working', (working: boolean) => {
           internal.codexLifecycleWorking = working;
-          internal.info.working = working;
+          setWorkingState(internal, working);
         });
         watcher.emitter.on('error', () => { /* swallow — non-fatal */ });
       })

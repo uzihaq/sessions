@@ -31,8 +31,15 @@ export class AuthError extends Error {
 //     prettyd is wildcarded, so the direct cross-port call just works.
 //   • Tauri OR a non-local server entry (e.g. the Mac Mini from a
 //     MacBook Tauri install) — absolute URL from the configured host.
+function useSameOriginDaemon(s: ReturnType<typeof getActiveServer>): boolean {
+  return !isTauri() && isLocalServer(s) && !import.meta.env.DEV;
+}
+
 function httpBase(): string {
   const s = getActiveServer();
+  if (useSameOriginDaemon(s)) {
+    return window.location.origin;
+  }
   // Honour an explicit scheme (e.g. 'https' for remote servers behind TLS
   // termination); fall back to 'http' so existing stored configs work.
   const scheme = s.scheme ?? 'http';
@@ -44,6 +51,10 @@ function httpBase(): string {
 
 function wsBase(): string {
   const s = getActiveServer();
+  if (useSameOriginDaemon(s)) {
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    return `${scheme}://${window.location.host}`;
+  }
   // Mirror the http→https / ws→wss mapping so TLS connections work end-to-end.
   const scheme = s.scheme === 'https' ? 'wss' : 'ws';
   if (!isTauri() && isLocalServer(s)) {
@@ -238,6 +249,59 @@ export async function uploadFile(sessionId: string, file: File): Promise<{ path:
     body: file
   });
   return json<{ path: string; size: number }>(r);
+}
+
+export interface PushSubscriptionPayload {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}
+
+function pushSubscriptionPayload(subscription: PushSubscription): PushSubscriptionPayload {
+  const raw = subscription.toJSON();
+  if (
+    typeof raw.endpoint !== 'string' ||
+    !raw.keys ||
+    typeof raw.keys.p256dh !== 'string' ||
+    typeof raw.keys.auth !== 'string'
+  ) {
+    throw new Error('browser returned an invalid push subscription');
+  }
+  return {
+    endpoint: raw.endpoint,
+    expirationTime: raw.expirationTime,
+    keys: {
+      p256dh: raw.keys.p256dh,
+      auth: raw.keys.auth
+    }
+  };
+}
+
+export async function getPushVapidPublicKey(): Promise<string> {
+  const r = await apiFetch(`${httpBase()}/api/push/vapid`);
+  const body = await json<{ publicKey: string }>(r);
+  return body.publicKey;
+}
+
+export async function subscribePush(subscription: PushSubscription): Promise<void> {
+  const r = await apiFetch(`${httpBase()}/api/push/subscribe`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(pushSubscriptionPayload(subscription))
+  });
+  await json<{ ok: boolean }>(r);
+}
+
+export async function unsubscribePush(endpoint: string): Promise<void> {
+  const r = await apiFetch(`${httpBase()}/api/push/unsubscribe`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ endpoint })
+  });
+  await json<{ ok: boolean }>(r);
 }
 
 export function wsUrl(sessionId: string, lastSeq?: number, claudeEventsSince?: number): string {

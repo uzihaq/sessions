@@ -3,11 +3,18 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering, deepSessionDiagnostics } from './sessions.js';
 import { scanResumableSessions } from './claudeSessionScanner.js';
 import { listDirectoryCandidates } from './directories.js';
 import { config, getAuthToken, isAllowedOrigin } from './config.js';
+import { addSubscription, getVapidPublicKey, removeSubscription } from './push.js';
 import type { CreateSessionRequest } from './types.js';
+
+const MODULE_DIR = nodePath.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_WEB_DIR = nodePath.resolve(MODULE_DIR, '../../frontend/dist');
+const WEB_DIR = nodePath.resolve(process.env.PRETTYD_WEB_DIR ?? DEFAULT_WEB_DIR);
+let loggedMissingWebDir = false;
 
 // Reflect the request origin back as ACAO only when it is on the
 // allowlist — replaces the former wildcard `*` that would have let any
@@ -65,6 +72,100 @@ function checkAuth(req: IncomingMessage, url: URL): boolean {
   return false;
 }
 
+function isStaticRequest(path: string, method: string): boolean {
+  return method === 'GET' && !path.startsWith('/api/') && path !== '/api' && !path.startsWith('/ws');
+}
+
+function contentType(filePath: string): string {
+  const ext = nodePath.extname(filePath).toLowerCase();
+  switch (ext) {
+    case '.html': return 'text/html; charset=utf-8';
+    case '.js': return 'text/javascript; charset=utf-8';
+    case '.css': return 'text/css; charset=utf-8';
+    case '.json': return 'application/json; charset=utf-8';
+    case '.svg': return 'image/svg+xml';
+    case '.png': return 'image/png';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.webp': return 'image/webp';
+    case '.ico': return 'image/x-icon';
+    case '.webmanifest': return 'application/manifest+json; charset=utf-8';
+    case '.woff': return 'font/woff';
+    case '.woff2': return 'font/woff2';
+    case '.ttf': return 'font/ttf';
+    case '.otf': return 'font/otf';
+    case '.wasm': return 'application/wasm';
+    default: return 'application/octet-stream';
+  }
+}
+
+function webDirExists(): boolean {
+  try {
+    return fs.statSync(WEB_DIR).isDirectory();
+  } catch {
+    if (!loggedMissingWebDir) {
+      loggedMissingWebDir = true;
+      console.log(`[http] frontend build dir not found; static serving disabled: ${WEB_DIR}`);
+    }
+    return false;
+  }
+}
+
+function resolveStaticCandidate(path: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    return null;
+  }
+  const relative = decoded.replace(/^\/+/, '');
+  const normalized = nodePath.normalize(relative);
+  if (normalized.startsWith('..') || nodePath.isAbsolute(normalized)) return null;
+  const resolved = nodePath.resolve(WEB_DIR, normalized);
+  if (resolved !== WEB_DIR && !resolved.startsWith(WEB_DIR + nodePath.sep)) return null;
+  return resolved;
+}
+
+function fileIfReadable(path: string): string | null {
+  try {
+    const st = fs.statSync(path);
+    if (st.isFile()) return path;
+    if (st.isDirectory()) {
+      const index = nodePath.join(path, 'index.html');
+      return fs.statSync(index).isFile() ? index : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function serveStatic(path: string, res: ServerResponse): boolean {
+  if (!webDirExists()) return false;
+  const candidate = resolveStaticCandidate(path);
+  if (!candidate) {
+    res.statusCode = 400;
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ error: 'invalid path' }));
+    return true;
+  }
+  const indexPath = nodePath.join(WEB_DIR, 'index.html');
+  const filePath = fileIfReadable(candidate) ?? fileIfReadable(indexPath);
+  if (!filePath) return false;
+  res.statusCode = 200;
+  res.setHeader('Content-Type', contentType(filePath));
+  fs.createReadStream(filePath)
+    .on('error', (err) => {
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+      }
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    })
+    .pipe(res);
+  return true;
+}
+
 export async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = url.pathname;
@@ -84,6 +185,13 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     // CORS preflight — must succeed without auth so the browser can
     // discover which headers are allowed before sending the real request.
     reply(204, {});
+    return;
+  }
+
+  if (isStaticRequest(path, method)) {
+    if (!serveStatic(path, res)) {
+      reply(404, { error: 'web build not found', path: WEB_DIR });
+    }
     return;
   }
 
@@ -119,6 +227,41 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   // All routes below this point require a valid auth token.
   if (!checkAuth(req, url)) {
     reply(401, { error: 'unauthorized' });
+    return;
+  }
+
+  if (path === '/api/push/vapid' && method === 'GET') {
+    try {
+      reply(200, { publicKey: getVapidPublicKey() });
+    } catch (err) {
+      reply(500, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  if (path === '/api/push/subscribe' && method === 'POST') {
+    try {
+      const body = await readJson<unknown>(req);
+      addSubscription(body);
+      reply(200, { ok: true });
+    } catch (err) {
+      reply(400, { error: (err as Error).message });
+    }
+    return;
+  }
+
+  if (path === '/api/push/unsubscribe' && method === 'POST') {
+    try {
+      const body = await readJson<{ endpoint?: unknown }>(req);
+      if (typeof body.endpoint !== 'string' || body.endpoint.length === 0) {
+        reply(400, { error: 'endpoint is required' });
+        return;
+      }
+      removeSubscription(body.endpoint);
+      reply(200, { ok: true });
+    } catch (err) {
+      reply(400, { error: (err as Error).message });
+    }
     return;
   }
 

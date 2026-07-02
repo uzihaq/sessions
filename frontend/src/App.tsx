@@ -67,6 +67,10 @@ function readStoredLayout(): LayoutMode {
   return 'tabs';
 }
 
+function isMessageObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 export function App(): JSX.Element {
   const rawSessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
@@ -139,6 +143,18 @@ export function App(): JSX.Element {
   useEffect(() => {
     try { window.localStorage.setItem(LAYOUT_KEY, layoutMode); } catch { /* ignore */ }
   }, [layoutMode]);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent<unknown>): void => {
+      const data = event.data;
+      if (!isMessageObject(data)) return;
+      if (data.type !== 'push-open-session' || typeof data.sessionId !== 'string') return;
+      setActive(data.sessionId);
+      setLayoutMode('tabs');
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [setActive]);
 
   // (Previously: reset activeStatus to INITIAL_STATUS on tab switch so
   // a freshly-mounting SessionView wouldn't briefly show stale values.
