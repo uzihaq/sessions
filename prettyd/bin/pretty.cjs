@@ -30,6 +30,8 @@ const https = require('node:https');
 const path = require('node:path');
 const url = require('node:url');
 const { randomUUID } = require('node:crypto');
+const os = require('node:os');
+const fs = require('node:fs');
 
 const argv = process.argv.slice(2);
 
@@ -47,6 +49,17 @@ if (wantJson) argv.splice(argv.indexOf('--json'), 1);
 
 const sub = argv.shift();
 
+// Auth token for communicating with an auth-enabled daemon (contract #1).
+// The daemon writes a 32-byte hex token to this file on first start; the
+// CLI reads it on every request so it works immediately after daemon start
+// without restarting the CLI process. Returns null if the file is absent
+// (older daemon without auth — safe to proceed unauthenticated).
+const TOKEN_FILE = path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'token');
+function readToken() {
+  try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim(); }
+  catch { return null; }
+}
+
 function fail(msg, code = 1) {
   process.stderr.write(`pretty: ${msg}\n`);
   process.exit(code);
@@ -55,12 +68,19 @@ function fail(msg, code = 1) {
 function api(method, p, body) {
   return new Promise((resolve, reject) => {
     const data = body !== undefined ? Buffer.from(JSON.stringify(body)) : null;
+    // Include auth token on every request; null token = older daemon without
+    // auth, so we skip the header rather than sending a bare "Bearer ".
+    const token = readToken();
+    const headers = data
+      ? { 'content-type': 'application/json', 'content-length': data.length }
+      : {};
+    if (token) headers['authorization'] = `Bearer ${token}`;
     const req = http.request({
       method,
       host: HOST,
       port: Number(PORT),
       path: p,
-      headers: data ? { 'content-type': 'application/json', 'content-length': data.length } : {}
+      headers
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -269,12 +289,16 @@ async function cmdKeys(id, key) {
 // opt out for one-off careful runs.
 const TOOL_PRESETS = {
   claude: {
-    cmd: '/opt/homebrew/bin/claude',
+    // Bare name — resolved via PATH at spawn time. The daemon's launchd env
+    // includes /opt/homebrew/bin (Apple Silicon) and /usr/local/bin (Intel)
+    // so this works on either Mac without hardcoding a Cellar path that
+    // breaks on `brew upgrade node` or running on the other arch. (contract #6)
+    cmd: 'claude',
     args: ['--dangerously-skip-permissions'],
     safeArgs: [] // --no-skip-perms → plain claude (prompts on each action)
   },
   codex: {
-    cmd: '/opt/homebrew/bin/codex',
+    cmd: 'codex', // bare name — see comment on claude above
     // Skip-perms (the default) = codex's exact twin of Claude's
     // --dangerously-skip-permissions: `--dangerously-bypass-approvals-and-
     // sandbox` — no sandbox, no approval prompts, full access. codex >=0.137
@@ -425,7 +449,10 @@ async function cmdTail(args) {
     try { return require(path.resolve(__dirname, '..', 'node_modules', 'ws')); }
     catch { fail('tail -f needs `ws` installed in prettyd/node_modules', 2); }
   })();
-  const sock = new ws(`ws://${HOST}:${PORT}/ws?sessionId=${encodeURIComponent(id)}`);
+  // WS auth uses query param — browsers cannot set WS headers (contract #1/#5).
+  const wsTok = readToken();
+  const wsTokParam = wsTok ? `&token=${encodeURIComponent(wsTok)}` : '';
+  const sock = new ws(`ws://${HOST}:${PORT}/ws?sessionId=${encodeURIComponent(id)}${wsTokParam}`);
   sock.on('message', (raw) => {
     let m;
     try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -502,7 +529,10 @@ async function cmdAttach(id) {
     try { return require(path.resolve(__dirname, '..', 'node_modules', 'ws')); }
     catch { fail('attach needs `ws` installed in prettyd/node_modules', 2); }
   })();
-  const sock = new WebSocket(`ws://${HOST}:${PORT}/ws?sessionId=${encodeURIComponent(id)}`);
+  // WS auth uses query param — browsers cannot set WS headers (contract #1/#5).
+  const wsTok = readToken();
+  const wsTokParam = wsTok ? `&token=${encodeURIComponent(wsTok)}` : '';
+  const sock = new WebSocket(`ws://${HOST}:${PORT}/ws?sessionId=${encodeURIComponent(id)}${wsTokParam}`);
   process.stdin.setRawMode(true);
   process.stdin.resume();
   const onStdin = (chunk) => {
@@ -541,6 +571,124 @@ async function cmdAttach(id) {
   });
 }
 
+// `pretty token` — print the daemon's auth token so the user can paste
+// it into the web UI's server-settings dialog. The daemon generates the
+// token on first start and writes it to TOKEN_FILE (mode 0600). This
+// command simply reads and surfaces that file value.
+function cmdToken() {
+  const tok = readToken();
+  if (!tok) {
+    process.stderr.write(`pretty: no token found at ${TOKEN_FILE}\n`);
+    process.stderr.write('        start the daemon first (or run: pretty install), then retry.\n');
+    process.exit(1);
+  }
+  process.stdout.write(tok + '\n');
+}
+
+// `pretty install` — register prettyd as a macOS LaunchAgent daemon and
+// start it. Safe to re-run: launchctl tolerates "already loaded" (status 17).
+// All paths are resolved at runtime from __dirname so the installed CLI
+// works wherever the repo was cloned — no hardcoded paths.
+async function cmdInstall() {
+  const { spawnSync } = require('node:child_process');
+
+  // __dirname = prettyd/bin/ → prettyd/ is one level up.
+  const prettydDir = path.resolve(__dirname, '..');
+  const serverJs  = path.join(prettydDir, 'dist', 'server.js');
+  const logDir    = path.join(os.homedir(), 'Library', 'Logs', 'pretty-pty');
+  const logFile   = path.join(logDir, 'daemon.log');
+  const agentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
+  const plistPath = path.join(agentsDir, 'tech.pretty-pty.daemon.plist');
+
+  // PATH must include both Homebrew roots so bare 'claude'/'codex'/'node'
+  // resolve on Apple Silicon (/opt/homebrew/bin) and Intel (/usr/local/bin).
+  const daemonPath = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin';
+
+  // Propagate any user-pinned bind host/port into the daemon environment.
+  const envVars = { PATH: daemonPath };
+  if (process.env.PRETTYD_HOST) envVars.PRETTYD_HOST = process.env.PRETTYD_HOST;
+  if (process.env.PRETTYD_PORT) envVars.PRETTYD_PORT = process.env.PRETTYD_PORT;
+
+  function escapeXml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  const envEntries = Object.entries(envVars)
+    .map(([k, v]) => `    <key>${escapeXml(k)}</key>\n    <string>${escapeXml(v)}</string>`)
+    .join('\n');
+
+  // Use /usr/bin/env node so the current Homebrew node resolves via PATH,
+  // not a versioned Cellar path that breaks on `brew upgrade node` (contract #6).
+  const plistXml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>tech.pretty-pty.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>node</string>
+    <string>${escapeXml(serverJs)}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${envEntries}
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>${escapeXml(prettydDir)}</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- KeepAlive=true: the daemon itself should restart on crash. This is
+       distinct from the per-session runner plists, which use KeepAlive only
+       on non-zero exit (SuccessfulExit=false). -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${escapeXml(logFile)}</string>
+  <key>StandardErrorPath</key>
+  <string>${escapeXml(logFile)}</string>
+</dict>
+</plist>
+`;
+
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.mkdirSync(logDir,    { recursive: true });
+  // 0600: plist may carry env vars with sensitive values (API keys, proxy)
+  // in the future — be restrictive now so we don't have to chmod later.
+  fs.writeFileSync(plistPath, plistXml, { mode: 0o600 });
+  try { fs.chmodSync(plistPath, 0o600); } catch { /* best effort */ }
+  process.stdout.write(`wrote plist: ${plistPath}\n`);
+
+  // Bootstrap the daemon. Tolerate status 17 / "already loaded" — safe to
+  // re-run install after an upgrade without first unloading the old plist.
+  const uid = process.getuid?.() ?? 0;
+  const r = spawnSync('launchctl', ['bootstrap', `gui/${uid}`, plistPath], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (r.status !== 0) {
+    const err = ((r.stderr) || Buffer.alloc(0)).toString().trim();
+    const alreadyLoaded = r.status === 17 || /already (loaded|bootstrapped)/i.test(err);
+    if (!alreadyLoaded) {
+      process.stderr.write(`warning: launchctl bootstrap failed (status=${r.status}): ${err}\n`);
+      process.stderr.write(`         to retry: launchctl bootstrap gui/${uid} ${plistPath}\n`);
+    }
+  }
+
+  const daemonHost = process.env.PRETTYD_HOST || '127.0.0.1';
+  const daemonPort = process.env.PRETTYD_PORT || '8787';
+  const tok = readToken();
+
+  process.stdout.write('\nprettyd daemon registered and started.\n');
+  process.stdout.write(`  URL:   http://${daemonHost}:${daemonPort}\n`);
+  if (tok) {
+    process.stdout.write(`  Token: ${tok}\n`);
+    process.stdout.write('\nPaste the URL and token into the pretty-PTY web UI (server settings).\n');
+  } else {
+    process.stdout.write('\nToken not yet generated — give the daemon a moment, then run: pretty token\n');
+  }
+  process.stdout.write(`  Logs:  ${logFile}\n`);
+}
+
 function help() {
   process.stdout.write([
     'pretty — prettyd CLI',
@@ -566,6 +714,8 @@ function help() {
     '  attach <id>              raw two-way stream (Ctrl+Q to detach)',
     '  doctor                   per-session health: QoS (throttled?), spawn',
     '                           path (dist/tsx), flags sessions needing recreate',
+    '  token                    print the daemon auth token (paste into web UI)',
+    '  install                  register prettyd as a macOS LaunchAgent and start it',
     '',
     'Global flags:',
     '  --json   machine-friendly output',
@@ -588,7 +738,9 @@ function help() {
     case 'tail': return cmdTail(argv);
     case 'wait': return cmdWait(argv);
     case 'attach': return cmdAttach(argv[0]);
-    case 'doctor': return cmdDoctor();
+    case 'doctor':  return cmdDoctor();
+    case 'token':   return cmdToken();
+    case 'install': return cmdInstall();
     case undefined:
     case 'help':
     case '--help':
