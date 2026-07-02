@@ -1,4 +1,4 @@
-// Sidebar state derived from Claude's persisted JSONL events.
+// Sidebar state derived from canonical Claude-shaped session events.
 //
 // Replaces the parser-derived sidebar (usePrettyParser → SidebarFindings).
 // The parser had to scrape Claude's TUI redraws for timer/tokens/files/
@@ -6,10 +6,10 @@
 // until the next thinking_active redraw, the timer could disagree with
 // what Claude itself was showing, etc.
 //
-// JSONL events are the canonical session record from Claude's own
-// persistence layer. Stable UUIDs, typed roles, structured content.
-// Everything we want (tokens, tool calls, file ops, todos) is right
-// there in `tool_use` and `usage` fields.
+// Stable UUIDs, typed roles, structured content. Everything we want
+// (tokens, tool calls, file ops, todos) is right there in `tool_use`
+// and `usage` fields. Codex rollouts are normalized to this same shape
+// in prettyd before they reach the browser.
 
 import { useMemo } from 'react';
 import type { ClaudeSessionEvent } from '../types';
@@ -107,8 +107,8 @@ export function useSessionSidebar({ session, claudeEvents, daemonWorking }: Args
   return useMemo((): SessionSidebarState => {
     const ident = tool(session?.tool ?? 'terminal');
 
-    if (!session || session.tool !== 'claude-code') {
-      // Non-Claude sessions: minimal sidebar. Working comes from daemon.
+    if (!session || (session.tool !== 'claude-code' && session.tool !== 'codex')) {
+      // Terminal sessions: minimal sidebar. Working comes from daemon.
       return {
         parserName: ident.name,
         parserIcon: ident.icon,
