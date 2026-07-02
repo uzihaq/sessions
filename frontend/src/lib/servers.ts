@@ -13,6 +13,13 @@ export interface ServerConfig {
   host: string;
   port: number;
   isDefault: boolean;
+  // Optional auth token (contract #1).  When present every HTTP request
+  // carries `Authorization: Bearer <token>` and every WS URL gets
+  // `?token=<token>` appended.  Absent → no auth (open daemon).
+  token?: string;
+  // Transport scheme.  Defaults to 'http' so existing stored configs
+  // (which have no scheme field) continue to work without migration.
+  scheme?: 'http' | 'https';
 }
 
 const STORAGE_KEY = 'pretty-pty:servers';
@@ -63,6 +70,9 @@ interface ServersStore {
   activeId: string;
   addServer: (s: Omit<ServerConfig, 'id' | 'isDefault'>) => ServerConfig;
   removeServer: (id: string) => void;
+  // Patch fields on an existing server (e.g. save a token entered after a
+  // 401, or flip scheme). Persists to localStorage like the other mutators.
+  updateServer: (id: string, updates: Partial<Omit<ServerConfig, 'id' | 'isDefault'>>) => void;
   setActive: (id: string) => void;
   // Resolve the live config for the active server. Falls back to the
   // default if the saved active id no longer exists (e.g. user removed
@@ -109,6 +119,16 @@ export const useServers = create<ServersStore>((set, get) => ({
         : state.activeId;
       if (activeId !== state.activeId) writeActiveId(activeId);
       return { servers, activeId };
+    });
+  },
+
+  updateServer: (id, updates) => {
+    set((state) => {
+      const servers = state.servers.map((s) =>
+        s.id === id ? { ...s, ...updates } : s
+      );
+      writeServers(servers);
+      return { servers };
     });
   },
 

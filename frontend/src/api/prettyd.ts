@@ -2,6 +2,18 @@ import type { CreateSessionRequest, SessionInfo, DirectoryCandidate } from '../t
 import { getActiveServer, isLocalServer } from '../lib/servers';
 import { isTauri } from '../lib/tauriBridge';
 
+// Thrown when the daemon returns HTTP 401 (token required / wrong token).
+// Callers (UI components) can instanceof-check this to show an auth prompt
+// rather than a generic error toast.  The `.code` property lets non-class
+// checks work too: `err.code === 'auth'`.
+export class AuthError extends Error {
+  readonly code = 'auth' as const;
+  constructor() {
+    super('prettyd: authentication required — check your server token (401)');
+    this.name = 'AuthError';
+  }
+}
+
 // All REST/WS calls resolve their base URL through the active server at
 // call time. Switching servers in the dropdown changes what subsequent
 // fetches/WebSockets target without any other plumbing.
@@ -21,18 +33,45 @@ import { isTauri } from '../lib/tauriBridge';
 //     MacBook Tauri install) — absolute URL from the configured host.
 function httpBase(): string {
   const s = getActiveServer();
+  // Honour an explicit scheme (e.g. 'https' for remote servers behind TLS
+  // termination); fall back to 'http' so existing stored configs work.
+  const scheme = s.scheme ?? 'http';
   if (!isTauri() && isLocalServer(s)) {
-    return `http://${window.location.hostname}:${s.port}`;
+    return `${scheme}://${window.location.hostname}:${s.port}`;
   }
-  return `http://${s.host}:${s.port}`;
+  return `${scheme}://${s.host}:${s.port}`;
 }
 
 function wsBase(): string {
   const s = getActiveServer();
+  // Mirror the http→https / ws→wss mapping so TLS connections work end-to-end.
+  const scheme = s.scheme === 'https' ? 'wss' : 'ws';
   if (!isTauri() && isLocalServer(s)) {
-    return `ws://${window.location.hostname}:${s.port}`;
+    return `${scheme}://${window.location.hostname}:${s.port}`;
   }
-  return `ws://${s.host}:${s.port}`;
+  return `${scheme}://${s.host}:${s.port}`;
+}
+
+// Returns `{ Authorization: 'Bearer <token>' }` when the active server has a
+// token configured, or an empty object when open (no auth).
+function authHeaders(): Record<string, string> {
+  const s = getActiveServer();
+  return s.token ? { Authorization: `Bearer ${s.token}` } : {};
+}
+
+// Drop-in replacement for the raw `fetch()` calls below.  Injects auth
+// headers from the active server config and translates a 401 response into
+// an AuthError so the UI can prompt for a token instead of showing a
+// generic "prettyd 401" error.
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const extra = authHeaders();
+  const merged: RequestInit = {
+    ...init,
+    headers: { ...extra, ...(init?.headers as Record<string, string> | undefined) }
+  };
+  const res = await fetch(input, merged);
+  if (res.status === 401) throw new AuthError();
+  return res;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -44,13 +83,13 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export async function listSessions(): Promise<SessionInfo[]> {
-  const r = await fetch(`${httpBase()}/api/sessions`);
+  const r = await apiFetch(`${httpBase()}/api/sessions`);
   const body = await json<{ sessions: SessionInfo[] }>(r);
   return body.sessions;
 }
 
 export async function createSession(req: CreateSessionRequest): Promise<SessionInfo> {
-  const r = await fetch(`${httpBase()}/api/sessions`, {
+  const r = await apiFetch(`${httpBase()}/api/sessions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(req)
@@ -80,7 +119,7 @@ export interface Snapshot {
 // box-drawing / table lines stay intact.
 export async function snapshot(sessionId: string, cols?: number): Promise<Snapshot | null> {
   const params = cols && cols > 0 ? `?cols=${cols | 0}` : '';
-  const r = await fetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/snapshot${params}`);
+  const r = await apiFetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/snapshot${params}`);
   if (r.status === 404) return null;
   if (!r.ok) {
     const text = await r.text().catch(() => '');
@@ -116,7 +155,7 @@ export async function fetchClaudeEvents(
   if (opts?.since != null) params.set('since', String(opts.since));
   const qs = params.toString();
   const url = `${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/events${qs ? '?' + qs : ''}`;
-  const r = await fetch(url);
+  const r = await apiFetch(url);
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`prettyd events ${r.status}`);
   return json<EventsResponse>(r);
@@ -132,13 +171,13 @@ export interface ResumableSession {
   sizeBytes: number;
 }
 export async function fetchResumableSessions(): Promise<ResumableSession[]> {
-  const r = await fetch(`${httpBase()}/api/claude-sessions`);
+  const r = await apiFetch(`${httpBase()}/api/claude-sessions`);
   const body = await json<{ sessions: ResumableSession[] }>(r);
   return body.sessions;
 }
 
 export async function listDirectories(): Promise<DirectoryCandidate[]> {
-  const r = await fetch(`${httpBase()}/api/directories`);
+  const r = await apiFetch(`${httpBase()}/api/directories`);
   const body = await json<{ directories: DirectoryCandidate[] }>(r);
   return body.directories;
 }
@@ -158,18 +197,17 @@ export interface FsListing {
 // curation, no "project-shape" filtering; every child the prettyd
 // process can stat shows up. Default to $HOME when path is omitted.
 export async function listFs(path?: string): Promise<FsListing> {
-  // httpBase() returns '' for the local server (browser + Vite proxy
-  // path), so the relative URL needs a base for new URL() to accept.
-  // Browser uses window.location.origin; Tauri uses the absolute base.
+  // httpBase() now always returns an absolute URL (scheme://host:port),
+  // so we can use it directly with new URL().
   const base = httpBase() || window.location.origin;
   const url = new URL(`${base}/api/fs/list`);
   if (path) url.searchParams.set('path', path);
-  const r = await fetch(url);
+  const r = await apiFetch(url);
   return json<FsListing>(r);
 }
 
 export async function killSession(id: string): Promise<void> {
-  const r = await fetch(`${httpBase()}/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const r = await apiFetch(`${httpBase()}/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
   await json<{ ok: boolean }>(r);
 }
 
@@ -178,7 +216,7 @@ export async function killSession(id: string): Promise<void> {
 // keystroke. The 2-second poll on each cell already reflects the
 // result back into the reflowed thumbnail.
 export async function sendInput(sessionId: string, data: string): Promise<void> {
-  const r = await fetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/input`, {
+  const r = await apiFetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/input`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ data })
@@ -191,7 +229,7 @@ export async function sendInput(sessionId: string, data: string): Promise<void> 
 // — the InputBar pastes that path as text after a successful upload so
 // Claude/Codex can read the file off disk.
 export async function uploadFile(sessionId: string, file: File): Promise<{ path: string; size: number }> {
-  const r = await fetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/upload`, {
+  const r = await apiFetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/upload`, {
     method: 'POST',
     headers: {
       'content-type': file.type || 'application/octet-stream',
@@ -203,11 +241,14 @@ export async function uploadFile(sessionId: string, file: File): Promise<{ path:
 }
 
 export function wsUrl(sessionId: string, lastSeq?: number, claudeEventsSince?: number): string {
+  const s = getActiveServer();
   const params = new URLSearchParams({ sessionId });
   if (lastSeq && lastSeq > 0) params.set('lastSeq', String(lastSeq));
   if (claudeEventsSince && claudeEventsSince > 0) {
     params.set('claudeEventsSince', String(claudeEventsSince));
   }
+  // Browsers cannot set custom headers on WebSocket — token goes in URL instead.
+  if (s.token) params.set('token', s.token);
   return `${wsBase()}/ws?${params.toString()}`;
 }
 
@@ -215,5 +256,10 @@ export function wsUrl(sessionId: string, lastSeq?: number, claudeEventsSince?: n
 // session's traffic as sessionId-tagged frames (tmux-style). useTerminal
 // attaches/detaches sessions over it via lib/wsMux.
 export function wsMuxUrl(): string {
-  return `${wsBase()}/ws?mux=1`;
+  const s = getActiveServer();
+  // Browsers cannot set WS request headers — pass the auth token as a query
+  // param instead (daemon accepts ?token=<hex> per contract #1).
+  const params = new URLSearchParams({ mux: '1' });
+  if (s.token) params.set('token', s.token);
+  return `${wsBase()}/ws?${params.toString()}`;
 }
