@@ -38,6 +38,9 @@ export class RunnerClient extends EventEmitter {
   private connected = false;
   // Outstanding snapshot requests, resolved in arrival order.
   private snapshotQueue: Array<(text: string) => void> = [];
+  // Ensures 'disconnect' fires at most once regardless of how many error/close
+  // events arrive (both can fire on the same socket failure).
+  private disconnected = false;
 
   constructor(public readonly sockPath: string) { super(); }
 
@@ -56,7 +59,10 @@ export class RunnerClient extends EventEmitter {
       const onError = (err: Error): void => {
         settle();
         if (!helloReceived) reject(err);
-        this.emit('disconnect', err);
+        // Don't emit 'disconnect' here — the 'close' event ALWAYS follows
+        // an 'error' on a Unix socket, so we emit exactly once from close().
+        // Emitting from both handlers causes callers to handle disconnect
+        // twice (double cleanup, double 'runner-lost' forwarding, etc.).
       };
       sock.once('error', onError);
       sock.on('data', (chunk: Buffer) => {
@@ -74,7 +80,15 @@ export class RunnerClient extends EventEmitter {
       });
       sock.on('close', () => {
         this.connected = false;
-        this.emit('disconnect');
+        if (!this.disconnected) {
+          this.disconnected = true;
+          // Drain pending snapshot waiters so requestSnapshot() promises
+          // never leak.  Resolve with '' — callers treat the empty string
+          // as a signal that the snapshot is unavailable.
+          const waiters = this.snapshotQueue.splice(0);
+          for (const resolve of waiters) resolve('');
+          this.emit('disconnect');
+        }
       });
       sock.on('connect', () => { this.connected = true; });
     });

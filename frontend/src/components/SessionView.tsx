@@ -85,6 +85,11 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
   // and ~8 sessions open, this saves ~2MB of memory + N×xterm DOM
   // trees when the user lives in Pretty view.
   const [hasMountedTerminal, setHasMountedTerminal] = useState(viewMode === 'terminal');
+  // Brief toolbar notice shown when the auto-switch fires (picker
+  // detected → Terminal). The draft in InputBar IS preserved because
+  // RemoteView stays mounted (only CSS-hidden) — we tell the user
+  // explicitly so they're not alarmed when they can't see the draft.
+  const [pickerNotice, setPickerNotice] = useState(false);
   useEffect(() => {
     if (effectiveView === 'terminal' && !hasMountedTerminal) setHasMountedTerminal(true);
   }, [effectiveView, hasMountedTerminal]);
@@ -145,6 +150,11 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
         if (present && !lastPickerSeenRef.current) {
           lastPickerSeenRef.current = true;
           setViewMode('terminal');
+          // Tell the user their InputBar draft is safe — RemoteView is
+          // CSS-hidden, not unmounted, so state is preserved. Without
+          // this notice the user sees the Terminal pane appear with no
+          // explanation and may think their draft was lost.
+          setPickerNotice(true);
         } else if (!present) {
           lastPickerSeenRef.current = false;
         }
@@ -154,6 +164,13 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
     const id = window.setInterval(() => { void tick(); }, 2000);
     return () => { alive = false; window.clearInterval(id); };
   }, [sessionId, isActive, effectiveView]);
+
+  // Auto-clear the picker notice after 4s.
+  useEffect(() => {
+    if (!pickerNotice) return;
+    const id = window.setTimeout(() => setPickerNotice(false), 4000);
+    return () => window.clearTimeout(id);
+  }, [pickerNotice]);
 
   // Push the active-session status up to App so the tab strip and mobile
   // nav reflect it.
@@ -188,6 +205,11 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
         {term.exitInfo ? (
           <span className="status-exit">
             exited code={term.exitInfo.code ?? '∅'} signal={term.exitInfo.signal ?? '∅'}
+          </span>
+        ) : null}
+        {pickerNotice ? (
+          <span className="status-picker-notice" aria-live="polite">
+            Switched to Terminal for picker — your draft is preserved in Pretty view
           </span>
         ) : null}
         <div className="view-toggle" role="tablist" aria-label="view mode">

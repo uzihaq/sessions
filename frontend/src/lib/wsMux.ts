@@ -44,11 +44,21 @@ const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
 // never comes back can't grow it without limit.
 const OUTBOX_CAP = 2000;
 
+// Application-level keepalive constants.  TCP RST from the peer is normally
+// visible, but silently-dead NAT/VPN tunnels and some Wi-Fi stacks drop the
+// TCP FIN and leave the socket open-but-dead — keystrokes then vanish.
+// Every PING_INTERVAL_MS we send {type:'ping'}; if no message at all arrives
+// for STALE_TIMEOUT_MS we force-close so the existing reconnect path fires.
+const PING_INTERVAL_MS  = 20_000; // 20 s — send a ping this often
+const STALE_TIMEOUT_MS  = 30_000; // 30 s — declare connection dead if silent
+
 class MuxManager {
   private ws: WebSocket | null = null;
   private status: MuxStatus = 'connecting';
   private attempt = 0;
   private reconnectTimer: number | null = null;
+  private pingInterval: number | null = null;
+  private lastMessageAt = 0;   // epoch ms of most recent server-sent frame
   private readonly sessions = new Map<string, SessionHandlers>();
   // Input/resize typed while the socket isn't OPEN (initial connect, or a
   // reconnect blip after phone-sleep / network handoff). Without this they
@@ -131,8 +141,40 @@ class MuxManager {
     for (const h of this.sessions.values()) h.onStatus(s);
   }
 
+  // ── keepalive ────────────────────────────────────────────────────────────
+  // Send {type:'ping'} every PING_INTERVAL_MS.  If no message has arrived
+  // from the server for STALE_TIMEOUT_MS, force-close the socket so the
+  // existing onclose→reconnect path fires.  This catches silently-dead
+  // NAT/VPN tunnels that never send a TCP RST.
+  private startPing(sock: WebSocket): void {
+    this.stopPing();
+    this.pingInterval = window.setInterval(() => {
+      if (sock !== this.ws || sock.readyState !== WebSocket.OPEN) {
+        this.stopPing();
+        return;
+      }
+      if (this.lastMessageAt > 0 && Date.now() - this.lastMessageAt > STALE_TIMEOUT_MS) {
+        // No traffic for 30 s → silently-dead connection.  Force-close so
+        // onclose triggers a reconnect rather than leaving keystrokes in the void.
+        this.stopPing();
+        sock.close();
+        return;
+      }
+      sock.send(JSON.stringify({ type: 'ping' }));
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopPing(): void {
+    if (this.pingInterval !== null) {
+      window.clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   private connect(): void {
     if (this.sessions.size === 0) return;
+    this.stopPing(); // clear any interval from the previous socket
     this.setStatus(this.attempt === 0 ? 'connecting' : 'reconnecting');
     const sock = new WebSocket(this.url);
     this.ws = sock;
@@ -140,7 +182,9 @@ class MuxManager {
     sock.onopen = () => {
       if (sock !== this.ws) return;
       this.attempt = 0;
+      this.lastMessageAt = Date.now(); // treat open as first "message" so stale check has a baseline
       this.setStatus('open');
+      this.startPing(sock);
       // (Re-)attach every registered session at its current resume point.
       for (const [id, handlers] of this.sessions) this.sendAttach(id, handlers);
       // Then flush input/resize typed while we were down — AFTER re-attach,
@@ -156,14 +200,21 @@ class MuxManager {
     sock.onmessage = (ev) => {
       if (sock !== this.ws) return;
       if (typeof ev.data !== 'string') return;
+      // Any incoming frame (including pong) resets the staleness clock.
+      this.lastMessageAt = Date.now();
       let msg: ServerMsg;
       try {
-        msg = JSON.parse(ev.data) as ServerMsg;
+        const parsed: unknown = JSON.parse(ev.data);
+        // Minimal runtime validation before trusting the cast — guards against
+        // malformed frames (missing type, wrong shape) causing downstream errors.
+        if (!parsed || typeof (parsed as { type?: unknown }).type !== 'string') return;
+        msg = parsed as ServerMsg;
       } catch {
         return;
       }
+      // {type:'pong'} has no sessionId — silently consumed; lastMessageAt already updated.
       const sid = (msg as { sessionId?: string }).sessionId;
-      if (!sid) return; // mux frames are always tagged
+      if (!sid) return; // mux frames are always tagged; pong / unknown frames stop here
       this.sessions.get(sid)?.onMessage(msg);
     };
 
@@ -174,6 +225,7 @@ class MuxManager {
 
     sock.onclose = () => {
       if (sock !== this.ws) return;
+      this.stopPing(); // stop sending pings into a closed socket
       this.ws = null;
       if (this.sessions.size === 0) {
         this.setStatus('closed');
@@ -190,6 +242,7 @@ class MuxManager {
   }
 
   private shutdownSocket(): void {
+    this.stopPing();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

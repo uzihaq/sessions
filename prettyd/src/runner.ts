@@ -37,6 +37,7 @@ import { EventLog } from './eventLog.js';
 import { PersistentLog } from './persistentLog.js';
 import {
   FrameParser, FrameType, encodeFrame, encodeOutput,
+  RUNNER_PROTOCOL_VERSION,
   type RunnerHello, type RunnerExit
 } from './runnerProtocol.js';
 
@@ -52,7 +53,16 @@ const META_PATH = path.join(STATE_DIR, RUNNER_ID + '.json');
 const EVENTS_PATH = path.join(STATE_DIR, RUNNER_ID + '.events');
 
 const cmd = process.env.RUNNER_CMD ?? '/bin/bash';
-const args: string[] = process.env.RUNNER_ARGS_JSON ? JSON.parse(process.env.RUNNER_ARGS_JSON) : [];
+// Wrap JSON.parse so a corrupted env var doesn't crash-loop the runner.
+// Exit 0 so launchd KeepAlive(SuccessfulExit=false) does NOT respawn.
+const rawArgsJson = process.env.RUNNER_ARGS_JSON;
+let args: string[];
+try {
+  args = rawArgsJson ? (JSON.parse(rawArgsJson) as string[]) : [];
+} catch (err) {
+  process.stderr.write(`runner: failed to parse RUNNER_ARGS_JSON="${rawArgsJson}": ${err}\n`);
+  process.exit(0);
+}
 const cwd = process.env.RUNNER_CWD ?? os.homedir();
 const cols = Number(process.env.RUNNER_COLS ?? 300);
 const rows = Number(process.env.RUNNER_ROWS ?? 50);
@@ -109,12 +119,39 @@ delete env.RUNNER_STATE_DIR;
 // before" signal (it's empty/absent on a genuinely fresh start). codex/shell
 // sessions carry no --session-id, so they're untouched.
 let spawnArgs = args;
+// Set when the backing Claude JSONL is absent on a respawn attempt.
+// Prevents pty.onExit from flipping sessionEnded=true, which would
+// delete the events history we want to preserve.
+let jsonlMissing = false;
 try {
   const isRespawn = fs.existsSync(EVENTS_PATH) && fs.statSync(EVENTS_PATH).size > 0;
   const sidIdx = args.indexOf('--session-id');
   if (isRespawn && sidIdx >= 0) {
     spawnArgs = args.slice();
     spawnArgs[sidIdx] = '--resume';
+    // Guard: verify the Claude JSONL for this session exists before
+    // committing to --resume. If it's missing, Claude exits immediately
+    // with an error and pty.onExit would normally delete our events file.
+    // We still attempt --resume (best chance of success or graceful error),
+    // but mark jsonlMissing so the history is not discarded on exit.
+    const sessionUuid = args[sidIdx + 1];
+    if (sessionUuid) {
+      const claudeProjects = path.join(os.homedir(), '.claude', 'projects');
+      let jsonlFound = false;
+      if (fs.existsSync(claudeProjects)) {
+        try {
+          // Claude stores JSONL at ~/.claude/projects/<hash>/<uuid>.jsonl;
+          // search one level deep since we don't know the project hash.
+          for (const dir of fs.readdirSync(claudeProjects)) {
+            if (fs.existsSync(path.join(claudeProjects, dir, sessionUuid + '.jsonl'))) {
+              jsonlFound = true;
+              break;
+            }
+          }
+        } catch { /* scan errors are non-fatal */ }
+      }
+      if (!jsonlFound) jsonlMissing = true;
+    }
   }
 } catch { /* best effort — fall back to the original args */ }
 
@@ -143,6 +180,14 @@ if (restored.length > 0) {
   term.write(banner);
   // Don't persist the banner — it's purely a UX artifact for this
   // restore. If we did, every restore would add another banner on top.
+}
+if (jsonlMissing) {
+  // Warn the user in the scrollback that the backing JSONL was absent.
+  // The --resume may fail or create a new session; events are preserved.
+  // Not persisted — diagnostic only.
+  const notice = `\r\n\x1b[33m[pretty-pty: backing Claude JSONL not found — attempted --resume may fail; events history is preserved]\x1b[0m\r\n`;
+  log.push(notice);
+  term.write(notice);
 }
 
 interface SessionMeta {
@@ -201,7 +246,11 @@ pty.onData((data) => {
 
 pty.onExit(({ exitCode, signal }) => {
   exited = true;
-  sessionEnded = true; // PTY is gone for good — drop persistent log on cleanup.
+  // Only mark the session as permanently ended if the JSONL was present on
+  // this respawn attempt. If it was missing, Claude may have exited right
+  // away with an error; keeping sessionEnded=false preserves the events file
+  // so the next run (or the user) can inspect what happened.
+  if (!jsonlMissing) sessionEnded = true;
   exitInfo = {
     code: exitCode,
     signal: typeof signal === 'number' ? String(signal) : (signal ?? null),
@@ -232,7 +281,10 @@ const helloPayload = (): Buffer => {
     cmd, args, cwd, cols: pty.cols, rows: pty.rows,
     createdAt: meta.createdAt,
     pid: pty.pid,
-    currentSeq: log.currentSeq()
+    currentSeq: log.currentSeq(),
+    // Contract #3: daemon reads hello.protocolVersion ?? 0 (legacy) and
+    // logs a mismatch warning but always attaches to stay backward-compat.
+    protocolVersion: RUNNER_PROTOCOL_VERSION
   };
   return encodeFrame(FrameType.HELLO, JSON.stringify(h));
 };
@@ -258,6 +310,14 @@ const server: Server = createServer((sock) => {
   if (exited && exitInfo) {
     sock.write(encodeFrame(FrameType.EXIT, JSON.stringify(exitInfo)));
   }
+});
+
+// A bind failure (e.g. stale socket we couldn't unlink, permissions) must
+// not leave the runner in a silent crashloop — log and exit non-zero so
+// launchd sees the failure and can back off.
+server.on('error', (err) => {
+  console.error('runner socket error:', err.message);
+  cleanupAndExit(1);
 });
 
 server.listen(SOCK_PATH, () => {
@@ -351,15 +411,22 @@ function cleanupAndExit(code: number): void {
   } else {
     try { persistent.close(); } catch { /* ignore */ }
   }
+  // Belt-and-suspenders: kill the PTY child so it's never orphaned.
+  // Normally the master fd close (implicit on process exit) sends SIGHUP,
+  // but pty.kill() is more explicit. We call process.exit() immediately
+  // after, so pty.onExit() never runs — sessionEnded is NOT mutated here,
+  // and the events file decision above is final.
+  try { pty.kill(); } catch { /* already dead or PTY not yet spawned */ }
   process.exit(code);
 }
 
 // SIGTERM is what `launchctl bootout` sends during system shutdown /
-// reboot. We DON'T kill the PTY here — that would trigger pty.onExit,
-// flip sessionEnded=true, and cause cleanupAndExit to unlink the
-// persistent event log. We want the events file to survive shutdown so
-// the next runner instance can replay it. The PTY child will die when
-// the runner exits anyway (master fd closes → SIGHUP to child).
+// reboot. cleanupAndExit(0) does call pty.kill() for belt-and-suspenders
+// cleanup, but because process.exit() follows immediately, pty.onExit()
+// never runs — sessionEnded stays false, and the persistent event log
+// is closed (not deleted) so the next runner instance can replay it.
+// Note: we do NOT set sessionEnded=true in the SIGTERM path, which is
+// why the kill is safe inside cleanupAndExit rather than here.
 //
 // SIGINT is what tsx-watch sends on hot reload — runners must survive
 // that, so we ignore it. SIGHUP fires when the parent dies; we're

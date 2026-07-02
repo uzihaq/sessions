@@ -76,6 +76,10 @@ interface CachedSession {
   createdAt: number;
   pid: number;
   tool: SessionInfo['tool'];
+  // Cache Claude-side titles so the PWA cold-start renders the correct
+  // tab label without a flash-of-wrong-name before live data arrives.
+  claudeCustomTitle?: string;
+  claudeAiTitle?: string;
 }
 
 function readCache(): { sessions: SessionInfo[]; activeId: string | null } {
@@ -115,7 +119,10 @@ function writeCache(sessions: SessionInfo[], activeId: string | null): void {
       rows: s.rows,
       createdAt: s.createdAt,
       pid: s.pid,
-      tool: s.tool
+      tool: s.tool,
+      // Persist titles so they survive a PWA cold-start without flashing.
+      claudeCustomTitle: s.claudeCustomTitle,
+      claudeAiTitle: s.claudeAiTitle
     }));
     window.localStorage.setItem(CACHE_KEY, JSON.stringify(stripped));
     if (activeId) window.localStorage.setItem(ACTIVE_KEY, activeId);

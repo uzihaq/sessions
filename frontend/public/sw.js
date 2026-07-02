@@ -27,13 +27,18 @@
 //                               new entries.
 //   • activate: drop any old caches whose key isn't the current version.
 
-const CACHE_VERSION = 'pretty-pty-v1';
+// Bump this string on every release so the new SW evicts the old cache and
+// takes control immediately via skipWaiting() below.
+// TODO: inject a build hash here (e.g. via Vite's define) to automate this.
+const CACHE_VERSION = 'pretty-pty-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-maskable.svg'];
 
 self.addEventListener('install', (event) => {
-  // We deliberately do NOT call self.skipWaiting() — a new SW version
-  // should wait until the user closes/reopens the app, so a mid-session
-  // reload doesn't reset the live view out from under them.
+  // skipWaiting() lets the new SW take over immediately without waiting for
+  // all existing tabs to close.  The activate handler posts a 'sw-update-ready'
+  // message so the page can show an "update available — reload to apply" banner
+  // rather than silently replacing a live session mid-session.
+  self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_VERSION).then((cache) => cache.addAll(SHELL).catch(() => {}))
   );
@@ -45,6 +50,14 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then((clients) => {
+        // Notify open tabs that a new SW version is active so the UI can
+        // prompt the user to reload at a safe moment.
+        for (const client of clients) {
+          client.postMessage({ type: 'sw-update-ready', version: CACHE_VERSION });
+        }
+      })
   );
 });
 
@@ -99,8 +112,13 @@ self.addEventListener('fetch', (event) => {
             }
             return res;
           })
-          .catch(() => cached);
-        return cached || fresh;
+          // On network failure: return the cached copy if we have one,
+          // otherwise return a 503 so respondWith() always gets a valid
+          // Response (returning undefined here would throw a network error).
+          .catch(() => cached ?? new Response('offline', { status: 503, statusText: 'Service Unavailable' }));
+        // Serve cache immediately if available; fall back to the network
+        // promise (which itself has the 503 safety net above).
+        return cached ?? fresh;
       })
     );
   }

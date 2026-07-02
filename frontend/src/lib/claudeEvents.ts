@@ -26,6 +26,7 @@
 
 import type { ClaudeSessionEvent } from '../types';
 import type { DispatchMessage, ToolCall } from '../hooks/useDispatch';
+import { previewToolInput } from './toolPreview';
 
 interface AnthropicContentBlock {
   type: string;
@@ -42,59 +43,6 @@ interface AnthropicContentBlock {
 
 function isContentBlockArray(x: unknown): x is AnthropicContentBlock[] {
   return Array.isArray(x);
-}
-
-// Shorten a tool input to a single-line preview suitable for a chip.
-// Tries to pick the most-recognizable field per tool name (file_path,
-// pattern, command, etc.) and falls back to the JSON serialization
-// truncated to ~80 chars.
-function previewToolInput(name: string, input: Record<string, unknown> | undefined): string {
-  if (!input) return '';
-  const tryField = (k: string): string | null => {
-    const v = input[k];
-    return typeof v === 'string' && v.length > 0 ? v : null;
-  };
-  // Tool-specific best-field guesses. Falls through to JSON if none.
-  let preview: string | null = null;
-  switch (name) {
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-    case 'NotebookEdit':
-      preview = tryField('file_path') ?? tryField('notebook_path');
-      break;
-    case 'Bash':
-    case 'BashOutput':
-    case 'KillBash':
-      preview = tryField('command') ?? tryField('description');
-      break;
-    case 'Glob':
-    case 'Grep':
-      preview = tryField('pattern') ?? tryField('path');
-      break;
-    case 'WebFetch':
-    case 'WebSearch':
-      preview = tryField('url') ?? tryField('query');
-      break;
-    case 'Task':
-    case 'Agent':
-      preview = tryField('description') ?? tryField('prompt');
-      break;
-    case 'TaskCreate':
-    case 'TaskUpdate':
-    case 'TaskStop':
-      preview = tryField('title') ?? tryField('description');
-      break;
-    default:
-      preview = tryField('description') ?? tryField('command') ?? tryField('query') ?? tryField('path');
-  }
-  if (!preview) {
-    try { preview = JSON.stringify(input); } catch { preview = ''; }
-  }
-  // Single-line, truncated.
-  preview = preview.replace(/\s+/g, ' ').trim();
-  if (preview.length > 80) preview = preview.slice(0, 79) + '…';
-  return preview;
 }
 
 // Extract everything we care about from an assistant message's content

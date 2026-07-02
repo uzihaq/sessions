@@ -8,7 +8,7 @@ import { MobileNav } from './components/MobileNav';
 import { ConnectionStatus, fromTerminalStatus } from './components/ConnectionStatus';
 import { GridView } from './components/GridView';
 import { useSessions } from './store/sessions';
-import { useServers } from './lib/servers';
+import { useServers, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { ParserIcon } from './components/ParserIcon';
@@ -73,6 +73,10 @@ export function App(): JSX.Element {
   const setActive = useSessions((s) => s.setActive);
   const refresh = useSessions((s) => s.refresh);
   const kill = useSessions((s) => s.kill);
+  // Track whether the session list has ever successfully loaded. While
+  // hydrated is false, any error means we can't reach the daemon.
+  const sessionsError = useSessions((s) => s.error);
+  const sessionsHydrated = useSessions((s) => s.hydrated);
 
   // User-defined tab order. Persisted in localStorage so the order
   // survives reloads. Server's session list comes back in creation
@@ -283,11 +287,17 @@ export function App(): JSX.Element {
               // input rather than switching to tabs view.
               onExpand={(id) => { setActive(id); setLayoutMode('tabs'); }}
             />
+          ) : sessionsError && !sessionsHydrated ? (
+            <DaemonBanner error={sessionsError} onRetry={() => void refresh()} />
           ) : (
             <EmptyState onNew={() => setDialogOpen("new")} />
           )
         ) : sessions.length === 0 ? (
-          <EmptyState onNew={() => setDialogOpen("new")} />
+          sessionsError && !sessionsHydrated ? (
+            <DaemonBanner error={sessionsError} onRetry={() => void refresh()} />
+          ) : (
+            <EmptyState onNew={() => setDialogOpen("new")} />
+          )
         ) : (
           // Mount a SessionView only for the LIVE set (active + a few
           // recently-viewed), not all N sessions — see LIVE_SESSION_CAP.
@@ -334,6 +344,83 @@ export function App(): JSX.Element {
           onStartNew={() => setDialogOpen('new')}
         />
       ) : null}
+    </div>
+  );
+}
+
+// Daemon-unreachable banner — shown when the first session-list fetch
+// fails and we have no live data (hydrated is false). Two variants:
+//   • Auth (401): token input + save + retry.
+//   • Network: shows host:port so the user knows which prettyd to check.
+//
+// Auth detection: stream E's api/prettyd.ts throws an AuthError for 401
+// responses; the sessions store stores its message. We check for '401'
+// in the string — stable regardless of the exact message wording.
+// updateServer is added by stream E to lib/servers.ts; we call it via
+// getState() with a runtime guard so this compiles without a type cast.
+function DaemonBanner({
+  error,
+  onRetry
+}: {
+  error: string;
+  onRetry: () => void;
+}): JSX.Element {
+  const isAuthError = /\b401\b/.test(error);
+  const server = getActiveServer();
+  const [tokenInput, setTokenInput] = useState('');
+
+  const handleTokenSubmit = (): void => {
+    const token = tokenInput.trim();
+    if (!token) return;
+    // Save the pasted token onto the active server config, then retry.
+    useServers.getState().updateServer(server.id, { token });
+    onRetry();
+  };
+
+  return (
+    <div className="daemon-banner">
+      {isAuthError ? (
+        <>
+          <p className="daemon-banner-title">Authentication required</p>
+          <p className="daemon-banner-host">{server.host}:{server.port}</p>
+          <p className="daemon-banner-hint">Enter the daemon token to connect.</p>
+          <div className="daemon-banner-token-row">
+            <input
+              type="password"
+              className="daemon-banner-token-input"
+              placeholder="Token"
+              value={tokenInput}
+              autoFocus
+              onChange={(e) => setTokenInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleTokenSubmit(); }}
+            />
+            <button
+              type="button"
+              className="btn btn-primary daemon-banner-token-submit"
+              disabled={!tokenInput.trim()}
+              onClick={handleTokenSubmit}
+            >
+              Connect
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="daemon-banner-title">Daemon unreachable</p>
+          <p className="daemon-banner-host">{server.host}:{server.port}</p>
+          <p className="daemon-banner-hint">
+            prettyd is not responding. Check that it is running on{' '}
+            <strong>{server.host}</strong> port <strong>{server.port}</strong>.
+          </p>
+          <button
+            type="button"
+            className="btn daemon-banner-retry"
+            onClick={onRetry}
+          >
+            Retry
+          </button>
+        </>
+      )}
     </div>
   );
 }

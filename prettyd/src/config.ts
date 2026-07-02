@@ -1,4 +1,7 @@
 import os from 'node:os';
+import fs from 'node:fs';
+import nodePath from 'node:path';
+import crypto from 'node:crypto';
 
 export const config = {
   host: process.env.PRETTYD_HOST ?? '127.0.0.1',
@@ -15,3 +18,59 @@ export const config = {
   defaultCols: 300,
   defaultRows: 50
 };
+
+// ~/.local/state/pretty-PTY/token — 64 hex chars (32 random bytes).
+const TOKEN_PATH = nodePath.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'token');
+
+/**
+ * Returns the daemon's auth token, creating it on first call.
+ *
+ * The token is 32 cryptographically random bytes encoded as 64 lowercase
+ * hex characters, stored at ~/.local/state/pretty-PTY/token with mode
+ * 0600. The directory is created (mode 0700) if missing. Every HTTP
+ * route except /api/health and /api/health/deep, and every WS upgrade,
+ * requires this token — either as an `Authorization: Bearer <t>` header
+ * or a `?token=<t>` query parameter.
+ */
+export function getAuthToken(): string {
+  try {
+    const existing = fs.readFileSync(TOKEN_PATH, 'utf8').trim();
+    // Validate format so a truncated/corrupted file doesn't become the token.
+    if (/^[0-9a-f]{64}$/.test(existing)) return existing;
+  } catch { /* missing or unreadable — fall through to create */ }
+  // mkdir -p so the first run on a fresh machine doesn't fail.
+  const dir = nodePath.dirname(TOKEN_PATH);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const token = crypto.randomBytes(32).toString('hex');
+  fs.writeFileSync(TOKEN_PATH, token, { mode: 0o600 });
+  return token;
+}
+
+/**
+ * True when the request origin is allowed to reach this daemon.
+ *
+ * Non-browser clients (CLI, curl) send no Origin header and are always
+ * allowed. Browser requests are allowed when the origin is loopback
+ * (127.0.0.1, localhost, ::1) OR the origin hostname matches the
+ * configured bind host — enabling the web UI when prettyd is bound to a
+ * Tailscale address without opening it to arbitrary cross-origin sites.
+ */
+export function isAllowedOrigin(origin: string | undefined, host: string): boolean {
+  // No origin = non-browser client (curl, CLI) — always allow.
+  if (!origin) return true;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false; // malformed origin — reject
+  }
+
+  const oh = parsed.hostname;
+  // Loopback: standard browser localhost variants.
+  if (oh === '127.0.0.1' || oh === 'localhost' || oh === '::1') return true;
+  // Configured bind host (e.g. a Tailscale IP like 100.x.x.x).
+  if (oh === host) return true;
+
+  return false;
+}

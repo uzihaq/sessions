@@ -15,6 +15,7 @@ import { useMemo } from 'react';
 import type { ClaudeSessionEvent } from '../types';
 import type { SessionInfo } from '../types';
 import type { SidebarChecklistItem } from '../types/sidebar';
+import { previewToolInput } from '../lib/toolPreview';
 
 export interface SessionSidebarState {
   parserName: string;
@@ -79,47 +80,6 @@ function formatElapsed(ms: number): string {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}m ${sec}s`;
-}
-
-// Parse a tool input field that's most likely the "what is this about" handle.
-function previewToolInput(name: string, input: Record<string, unknown> | undefined): string {
-  if (!input) return '';
-  const tryField = (k: string): string | null => {
-    const v = input[k];
-    return typeof v === 'string' && v.length > 0 ? v : null;
-  };
-  let preview: string | null = null;
-  switch (name) {
-    case 'Read':
-    case 'Write':
-    case 'Edit':
-    case 'NotebookEdit':
-      preview = tryField('file_path') ?? tryField('notebook_path');
-      break;
-    case 'Bash':
-    case 'BashOutput':
-    case 'KillBash':
-      preview = tryField('description') ?? tryField('command');
-      break;
-    case 'Glob':
-    case 'Grep':
-      preview = tryField('pattern') ?? tryField('path');
-      break;
-    case 'WebFetch':
-    case 'WebSearch':
-      preview = tryField('url') ?? tryField('query');
-      break;
-    case 'Task':
-    case 'Agent':
-      preview = tryField('description') ?? tryField('prompt');
-      break;
-    default:
-      preview = tryField('description') ?? tryField('command') ?? tryField('query') ?? tryField('path');
-  }
-  if (!preview) return '';
-  preview = preview.replace(/\s+/g, ' ').trim();
-  if (preview.length > 60) preview = preview.slice(0, 59) + '…';
-  return preview;
 }
 
 // Stop reasons that indicate a turn has fully completed. "tool_use" is

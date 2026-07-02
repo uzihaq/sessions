@@ -1,20 +1,26 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import nodePath from 'node:path';
 import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering, deepSessionDiagnostics } from './sessions.js';
 import { scanResumableSessions } from './claudeSessionScanner.js';
 import { listDirectoryCandidates } from './directories.js';
+import { config, getAuthToken, isAllowedOrigin } from './config.js';
 import type { CreateSessionRequest } from './types.js';
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+// Reflect the request origin back as ACAO only when it is on the
+// allowlist — replaces the former wildcard `*` that would have let any
+// page on the user's browser silently read daemon responses. Methods and
+// headers are always advertised regardless of origin (browsers need them
+// for preflight even when ACAO is absent). `authorization` is listed so
+// browsers allow the Bearer-token header on CORS requests.
+function send(res: ServerResponse, status: number, body: unknown, corsOrigin?: string): void {
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
-  // prettyd is loopback-only by default. Vite proxies browser traffic to it.
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (corsOrigin) res.setHeader('Access-Control-Allow-Origin', corsOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'content-type');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
   res.end(JSON.stringify(body));
 }
 
@@ -36,18 +42,55 @@ async function readJson<T>(req: IncomingMessage): Promise<T> {
   return JSON.parse(raw) as T;
 }
 
+// Constant-time token comparison. timingSafeEqual requires equal-length
+// buffers; a length mismatch is rejected in O(1) before reaching it so
+// length itself leaks nothing beyond "wrong length" (acceptable — the
+// token is always 64 hex chars so any other length is trivially wrong).
+function verifyToken(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Returns true when the request carries a valid auth token — either the
+// `Authorization: Bearer <t>` header or the `?token=<t>` query param.
+function checkAuth(req: IncomingMessage, url: URL): boolean {
+  const token = getAuthToken();
+  const authHeader = req.headers.authorization ?? '';
+  if (authHeader.startsWith('Bearer ')) {
+    if (verifyToken(authHeader.slice(7), token)) return true;
+  }
+  const qToken = url.searchParams.get('token') ?? '';
+  if (qToken && verifyToken(qToken, token)) return true;
+  return false;
+}
+
 export async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const path = url.pathname;
   const method = req.method ?? 'GET';
 
+  // Echo the request's Origin back as ACAO only when it is on the
+  // allowlist. Non-browser clients send no Origin and get no ACAO header
+  // (which is fine — they don't enforce CORS).
+  const origin = req.headers.origin;
+  const corsOrigin = isAllowedOrigin(origin, config.host) ? origin : undefined;
+
+  // Closure so every route gets the correct ACAO header without threading
+  // corsOrigin through every call-site individually.
+  const reply = (status: number, body: unknown): void => send(res, status, body, corsOrigin);
+
   if (method === 'OPTIONS') {
-    send(res, 204, {});
+    // CORS preflight — must succeed without auth so the browser can
+    // discover which headers are allowed before sending the real request.
+    reply(204, {});
     return;
   }
 
+  // Health probes are always unauthenticated: `pretty doctor`, load
+  // balancers, and the UI connectivity indicator all need them.
   if (path === '/api/health' && method === 'GET') {
-    send(res, 200, {
+    reply(200, {
       ok: true,
       name: 'prettyd',
       version: '0.1.0',
@@ -61,7 +104,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   // facts the daemon knows. QoS class and runner spawn-path (the throttling
   // saga's culprits) are read CLI-side from plists + ps.
   if (path === '/api/health/deep' && method === 'GET') {
-    send(res, 200, {
+    reply(200, {
       ok: true,
       name: 'prettyd',
       version: '0.1.0',
@@ -73,14 +116,20 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     return;
   }
 
+  // All routes below this point require a valid auth token.
+  if (!checkAuth(req, url)) {
+    reply(401, { error: 'unauthorized' });
+    return;
+  }
+
   if (path === '/api/sessions' && method === 'GET') {
     const includeExited = url.searchParams.get('include_exited') === '1';
-    send(res, 200, { sessions: listSessions({ includeExited }) });
+    reply(200, { sessions: listSessions({ includeExited }) });
     return;
   }
 
   if (path === '/api/directories' && method === 'GET') {
-    send(res, 200, { directories: listDirectoryCandidates() });
+    reply(200, { directories: listDirectoryCandidates() });
     return;
   }
 
@@ -88,10 +137,12 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   // picker. No "project shape" smart-filtering: every immediate child
   // of the requested path that we can stat shows up. Default path is
   // $HOME. Returned entries are sorted: dirs first, alphabetical.
+  // Scoped to the user's HOME directory — realpathSync + prefix check
+  // prevents path-traversal to /etc, /private, etc.
   if (path === '/api/fs/list' && method === 'GET') {
     let p = url.searchParams.get('path') ?? os.homedir();
     if (!nodePath.isAbsolute(p)) {
-      send(res, 400, { error: 'path must be absolute' });
+      reply(400, { error: 'path must be absolute' });
       return;
     }
     try {
@@ -100,9 +151,24 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
       let canonical: string;
       try { canonical = fs.realpathSync(p); }
       catch { canonical = nodePath.resolve(p); }
+
+      // Reject paths outside the user's HOME. The fs/list endpoint is
+      // only for the cwd picker — there is no reason to expose / or
+      // /private/etc through it. realpath the home too so the comparison
+      // is symlink-resolved on BOTH sides — otherwise a symlinked home
+      // path component (e.g. macOS /tmp → /private/tmp, or a home on a
+      // symlinked volume) makes canonical diverge from the raw homedir and
+      // rejects legitimate in-home paths.
+      let home: string;
+      try { home = fs.realpathSync(os.homedir()); } catch { home = os.homedir(); }
+      if (canonical !== home && !canonical.startsWith(home + nodePath.sep)) {
+        reply(403, { error: 'path outside home directory', path: canonical });
+        return;
+      }
+
       const st = fs.statSync(canonical);
       if (!st.isDirectory()) {
-        send(res, 400, { error: 'not a directory', path: canonical });
+        reply(400, { error: 'not a directory', path: canonical });
         return;
       }
       const names = fs.readdirSync(canonical);
@@ -127,12 +193,12 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
         if ((a.kind === 'dir') !== (b.kind === 'dir')) return a.kind === 'dir' ? -1 : 1;
         return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       });
-      const parent = canonical === '/' ? null : nodePath.dirname(canonical);
-      send(res, 200, { path: canonical, parent, entries });
+      const parent = canonical === home ? null : nodePath.dirname(canonical);
+      reply(200, { path: canonical, parent, entries });
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       const code = e.code === 'ENOENT' ? 404 : e.code === 'EACCES' ? 403 : 500;
-      send(res, code, { error: e.message, code: e.code });
+      reply(code, { error: e.message, code: e.code });
     }
     return;
   }
@@ -141,9 +207,9 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     try {
       const body = await readJson<CreateSessionRequest>(req);
       const info = await createSession(body);
-      send(res, 201, info);
+      reply(201, info);
     } catch (err) {
-      send(res, 400, { error: (err as Error).message });
+      reply(400, { error: (err as Error).message });
     }
     return;
   }
@@ -153,7 +219,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   if (idMatch && method === 'DELETE') {
     const id = idMatch[1]!;
     const ok = killSession(id);
-    send(res, ok ? 200 : 404, { ok });
+    reply(ok ? 200 : 404, { ok });
     return;
   }
 
@@ -171,16 +237,19 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     const cols = colsParam ? Math.max(0, Number(colsParam) | 0) : 0;
     const result = await snapshot(id, cols > 0 ? { cols } : undefined);
     if (result === null) {
-      send(res, 404, { error: 'unknown session', id });
+      reply(404, { error: 'unknown session', id });
       return;
     }
     res.statusCode = 200;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    // Expose the seq this snapshot represents so the browser can
-    // open a WebSocket with ?lastSeq=N and skip re-replaying
-    // everything that's already painted into xterm.
-    res.setHeader('Access-Control-Expose-Headers', 'X-Pretty-Seq');
+    // Only echo back an allowed origin — same policy as send().
+    if (corsOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+      // Expose the seq this snapshot represents so the browser can
+      // open a WebSocket with ?lastSeq=N and skip re-replaying
+      // everything that's already painted into xterm.
+      res.setHeader('Access-Control-Expose-Headers', 'X-Pretty-Seq');
+    }
     res.setHeader('X-Pretty-Seq', String(result.seq));
     res.end(result.text);
     return;
@@ -191,7 +260,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   // the New Session dialog. Sourced from ~/.claude/projects/*.
   if (path === '/api/claude-sessions' && method === 'GET') {
     const list = await scanResumableSessions();
-    send(res, 200, { sessions: list });
+    reply(200, { sessions: list });
     return;
   }
 
@@ -217,7 +286,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     const id = eventsMatch[1]!;
     const sess = getSession(id);
     if (!sess) {
-      send(res, 404, { error: 'unknown session', id });
+      reply(404, { error: 'unknown session', id });
       return;
     }
     const log = sess.claudeEventLog;
@@ -242,7 +311,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
       if (Number.isFinite(n) && n > 0) start = Math.max(start, Math.max(0, len - Math.floor(n)));
     }
     const events = start === 0 ? log : log.slice(start);
-    send(res, 200, { events, nextIndex: total, totalCount: total });
+    reply(200, { events, nextIndex: total, totalCount: total });
     return;
   }
 
@@ -254,9 +323,9 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     try {
       const body = await readJson<{ data: string }>(req);
       const ok = writeInput(id, body.data ?? '');
-      send(res, ok ? 200 : 404, { ok });
+      reply(ok ? 200 : 404, { ok });
     } catch (err) {
-      send(res, 400, { error: (err as Error).message });
+      reply(400, { error: (err as Error).message });
     }
     return;
   }
@@ -271,7 +340,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   if (uploadMatch && method === 'POST') {
     const id = uploadMatch[1]!;
     if (!getSession(id)) {
-      send(res, 404, { error: 'unknown session', id });
+      reply(404, { error: 'unknown session', id });
       return;
     }
     try {
@@ -297,18 +366,22 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
         const buf = chunk as Buffer;
         total += buf.length;
         if (total > MAX) {
-          send(res, 413, { error: 'file too large', max: MAX });
+          reply(413, { error: 'file too large', max: MAX });
+          // Drain the remaining request body so the underlying socket can
+          // close cleanly. Without this the client may stall waiting for
+          // the server to consume the bytes it already sent.
+          req.resume();
           return;
         }
         chunks.push(buf);
       }
       fs.writeFileSync(outPath, Buffer.concat(chunks), { mode: 0o600 });
-      send(res, 200, { path: outPath, size: total });
+      reply(200, { path: outPath, size: total });
     } catch (err) {
-      send(res, 500, { error: (err as Error).message });
+      reply(500, { error: (err as Error).message });
     }
     return;
   }
 
-  send(res, 404, { error: 'not found', path });
+  reply(404, { error: 'not found', path });
 }

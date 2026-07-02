@@ -1,6 +1,5 @@
 {
   "name": "prettyd",
-  "private": true,
   "version": "0.1.0",
   "description": "Pretty PTY daemon — owns node-pty sessions, exposes them over HTTP + WS.",
   "type": "module",
@@ -8,12 +7,20 @@
   "bin": {
     "pretty": "bin/pretty.cjs"
   },
+  "files": [
+    "bin/",
+    "dist/",
+    "src/",
+    "scripts/fix-spawn-helper.cjs",
+    "tsconfig.json"
+  ],
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "postinstall": "node scripts/fix-spawn-helper.cjs"
+    "postinstall": "node scripts/fix-spawn-helper.cjs",
+    "setup": "npm run build && pretty install"
   },
   "dependencies": {
     "@xterm/addon-serialize": "^0.14.0",
