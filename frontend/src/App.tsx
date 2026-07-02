@@ -327,9 +327,11 @@ export function App(): JSX.Element {
       <MobileNav
         sessions={sessions}
         activeId={activeId}
-        isWorking={activeStatus.isWorking}
+        statusBySession={statusBySession}
+        iconBySession={iconBySession}
         onSwitch={setActive}
         onNew={() => setDialogOpen("new")}
+        onResume={() => setDialogOpen("resume")}
       />
 
       {dialogOpen === 'new' ? (
