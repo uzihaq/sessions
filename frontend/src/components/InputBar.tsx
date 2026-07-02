@@ -1,4 +1,4 @@
-import { useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { uploadFile } from '../api/prettyd';
 
 interface Props {
@@ -60,8 +60,18 @@ export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JS
   const [uploadError, setUploadError] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
+  // Auto-dismiss the upload error after 8s — the user may have moved on
+  // and it's annoying to have a persistent red stripe that they can't
+  // dismiss. Refreshes the timer each time a new error is set.
+  useEffect(() => {
+    if (!uploadError) return;
+    const id = window.setTimeout(() => setUploadError(null), 8000);
+    return () => window.clearTimeout(id);
+  }, [uploadError]);
+
   const submit = (): void => {
     if (!connected) return;
+    setUploadError(null); // clear any lingering upload error on submit
     if (text) {
       // Two-step submit:
       //   1. Send the text wrapped in bracketed-paste markers so
@@ -201,7 +211,16 @@ export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JS
       ) : null}
       {uploadError ? (
         <div className="input-bar-upload-state is-error">
-          Upload failed: {uploadError}
+          <span>Upload failed: {uploadError}</span>
+          {/* Dismiss button — the error auto-clears after 8s but users
+              shouldn't have to wait; also clears on next successful
+              submit or when the textarea is emptied. */}
+          <button
+            type="button"
+            className="input-bar-upload-dismiss"
+            aria-label="Dismiss upload error"
+            onClick={() => setUploadError(null)}
+          >×</button>
         </div>
       ) : null}
       <div className="input-quick-row" role="toolbar" aria-label="Quick keys">
@@ -224,7 +243,13 @@ export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JS
           ref={taRef}
           className="input-textarea"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            // Clear a stale upload error when the user wipes the draft —
+            // the attached file path is gone so the error is no longer
+            // actionable.
+            if (!e.target.value) setUploadError(null);
+          }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           placeholder={connected ? 'Type a message — Enter sends, Shift+Enter for newline' : 'Disconnected'}

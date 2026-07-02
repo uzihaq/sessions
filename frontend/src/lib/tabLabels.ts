@@ -13,6 +13,7 @@
 // Empty / missing override = fall back to the cwd-derived basename.
 
 import { useSyncExternalStore } from 'react';
+import type { SessionInfo } from '../types';
 
 const STORAGE_KEY = 'pretty-pty:tab-labels:v2';
 
@@ -104,4 +105,27 @@ export function useTabLabel(sessionId: string, cwd?: string): string | null {
     () => cache.byId[sessionId] ?? (cwd ? cache.byCwd[cwd] ?? null : null),
     () => null
   );
+}
+
+// Canonical label for a session from its metadata (no user overrides).
+// Resolution order mirrors the tab strip's derivedLabel so every consumer
+// (SessionTabs, GridView, MobileNav, pop-out title, …) shows the same
+// name for the same session.
+//   1. Claude's /rename title (user-facing, cross-client authoritative)
+//   2. Claude's ai-title (auto-generated first-prompt summary)
+//   3. cwd basename — the project folder name, our traditional default
+//   4. cmd basename or short id as last resort
+//
+// User's pretty-PTY tab rename is layered ABOVE this by callers (via
+// getTabLabel / useTabLabel) so it always wins without being part of
+// this function.
+export function sessionLabel(session: SessionInfo): string {
+  if (session.claudeCustomTitle && session.claudeCustomTitle.length > 0) return session.claudeCustomTitle;
+  if (session.claudeAiTitle && session.claudeAiTitle.length > 0) return session.claudeAiTitle;
+  if (session.cwd && session.cwd.length > 0) {
+    const parts = session.cwd.split('/').filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (last) return last;
+  }
+  return session.cmd || session.id.slice(0, 6);
 }

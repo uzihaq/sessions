@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { SessionInfo } from '../types';
+import { getTabLabel, useTabLabel, sessionLabel } from '../lib/tabLabels';
 
 interface Props {
   sessions: SessionInfo[];
@@ -7,16 +8,6 @@ interface Props {
   isWorking: boolean;
   onSwitch: (id: string) => void;
   onNew: () => void;
-}
-
-function shortLabel(s: SessionInfo | undefined): string {
-  if (!s) return '—';
-  if (s.cwd && s.cwd.length > 0) {
-    const parts = s.cwd.split('/').filter(Boolean);
-    const last = parts[parts.length - 1];
-    if (last) return last;
-  }
-  return s.cmd || s.id.slice(0, 6);
 }
 
 // Bottom navigation for ≤720px screens. Hero "Sessions" button in the
@@ -32,6 +23,10 @@ export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Pr
   const [sheetOpen, setSheetOpen] = useState(false);
   const active = sessions.find((s) => s.id === activeId);
   const idx = activeId ? sessions.findIndex((s) => s.id === activeId) : -1;
+  // Use the shared label chain (user override > Claude titles > cwd > cmd)
+  // so the hero button matches what SessionTabs shows for the same session.
+  const activeUserLabel = useTabLabel(active?.id ?? '');
+  const activeLabel = activeUserLabel ?? (active ? sessionLabel(active) : '—');
 
   // Tiny haptic helper. Mirrors pretty-tmux: 10ms for taps, 14ms for
   // swipes — short enough to feel like an "ack" not a buzz, long
@@ -111,7 +106,7 @@ export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Pr
             <span className="mn-hero-label">Sessions</span>
             <span aria-hidden>›</span>
           </div>
-          <div className="mn-hero-name">{shortLabel(active)}</div>
+          <div className="mn-hero-name">{activeLabel}</div>
           {sessions.length > 0 ? <span className="mn-badge">{sessions.length}</span> : null}
         </button>
 
@@ -137,7 +132,7 @@ export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Pr
                     setSheetOpen(false);
                   }}
                 >
-                  <span className="bottom-sheet-name">{shortLabel(s)}</span>
+                  <span className="bottom-sheet-name">{getTabLabel(s.id) ?? sessionLabel(s)}</span>
                   <span className="bottom-sheet-cmd">{s.cmd}</span>
                 </li>
               ))}

@@ -189,27 +189,51 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
     saveScrollPosition(sessionId, 'remote', { scrollTop: el.scrollTop, atBottom: true });
   }, [sessionId]);
 
-  const handleRefresh = (): void => {
-    const ok = window.confirm(
-      'Clear the local chat log and re-derive from the parser? The conversation will be rebuilt from current scrollback. No data is sent anywhere.'
-    );
-    if (ok) resetLog();
-  };
+  // Two-step confirm for the destructive "clear log" action. window.confirm
+  // is suppressed in Tauri/WebViews so we can't use it — instead we toggle
+  // an inline confirm state that renders "Clear? [Clear] [Cancel]" in place
+  // of the button. Pressing either option clears the confirm state.
+  const [clearConfirm, setClearConfirm] = useState(false);
+  const handleRefresh = (): void => setClearConfirm(true);
+  const handleRefreshConfirm = (): void => { setClearConfirm(false); resetLog(); };
+  const handleRefreshCancel = (): void => setClearConfirm(false);
 
   return (
     <div className="remote-view">
       {/* Refresh — wipes Remote's owned log and re-bootstraps from the
           parser's current blocks. Recovery valve for when Remote and
           Terminal disagree (accumulated dispatch artifacts). Tucked
-          top-right; not pretty, but discoverable. */}
-      <button
-        type="button"
-        className="remote-refresh"
-        onClick={handleRefresh}
-        title="Clear local chat log and re-derive from terminal scrollback"
-      >
-        refresh
-      </button>
+          top-right; not pretty, but discoverable. Uses an inline
+          two-step confirm so window.confirm isn't needed (it's
+          suppressed in Tauri/WebViews). */}
+      {clearConfirm ? (
+        <div className="remote-refresh-confirm">
+          <span className="remote-refresh-confirm-label">Clear log?</span>
+          <button
+            type="button"
+            className="remote-refresh-confirm-yes"
+            onClick={handleRefreshConfirm}
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            className="remote-refresh-confirm-no"
+            onClick={handleRefreshCancel}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="remote-refresh"
+          onClick={handleRefresh}
+          title="Clear local chat log and re-derive from terminal scrollback"
+        >
+          refresh
+        </button>
+      )}
       <div
         className="remote-scroll"
         ref={scrollRef}

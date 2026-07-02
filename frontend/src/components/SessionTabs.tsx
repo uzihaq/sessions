@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { SessionInfo } from '../types';
 import { openSessionWindow } from '../lib/tauriBridge';
 import { ParserIcon } from './ParserIcon';
-import { getTabLabel, setTabLabel } from '../lib/tabLabels';
+import { getTabLabel, setTabLabel, sessionLabel } from '../lib/tabLabels';
 
 export type TabStatus = 'working' | 'finished' | 'idle';
 
@@ -24,33 +24,13 @@ interface Props {
   onReorder?: (fromId: string, toId: string) => void;
 }
 
-function derivedLabel(s: SessionInfo): string {
-  // Resolution order:
-  //   1. Claude's user-set title (/rename in the TUI). This is the
-  //      "official" name across all Claude clients — terminal, web,
-  //      whatever else — so it should win automatically.
-  //   2. Claude's auto-generated ai-title (first-prompt summary).
-  //      A decent label when the user hasn't bothered to /rename.
-  //   3. cwd basename — the project-folder name, our original default.
-  //   4. cmd or short id as last resort.
-  // pretty-PTY's own rename (per-tab override) is layered ABOVE this
-  // in shortLabel() so the user can still override the Claude title.
-  if (s.claudeCustomTitle && s.claudeCustomTitle.length > 0) return s.claudeCustomTitle;
-  if (s.claudeAiTitle && s.claudeAiTitle.length > 0) return s.claudeAiTitle;
-  if (s.cwd && s.cwd.length > 0) {
-    const parts = s.cwd.split('/').filter(Boolean);
-    const last = parts[parts.length - 1];
-    if (last) return last;
-  }
-  return s.cmd || s.id.slice(0, 6);
-}
-
 // Combined label — user override (set via double-click rename in
 // pretty-PTY) > Claude's own title > cwd basename. Exported so every
 // consumer (tabs, grid cells, pop-out window title) reaches the same
-// name.
+// name. Delegates the base resolution to lib/tabLabels.sessionLabel so
+// all callers use one authoritative chain.
 export function shortLabel(s: SessionInfo): string {
-  return getTabLabel(s.id) ?? derivedLabel(s);
+  return getTabLabel(s.id) ?? sessionLabel(s);
 }
 
 export function SessionTabs({
@@ -77,6 +57,11 @@ export function SessionTabs({
   // the typed-but-not-committed string.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
+  // Two-step close confirmation — armed when the × is clicked on a
+  // non-exited session. The tab shows "Close? [Close] [Cancel]" instead
+  // of immediately killing hours of live AI work. Exited sessions bypass
+  // confirm (no active work to lose). Clears on any tab switch or drag.
+  const [closingId, setClosingId] = useState<string | null>(null);
 
   const startRename = (s: SessionInfo): void => {
     setEditingId(s.id);
@@ -141,8 +126,8 @@ export function SessionTabs({
                 tabIndex={0}
                 data-tab-id={s.id}
                 draggable={!!onReorder}
-                className={`tab${isActive ? ' is-active' : ''}${isDragging ? ' is-dragging' : ''}${isDropTarget ? ' is-drop-target' : ''}`}
-                onClick={() => onSwitch(s.id)}
+                className={`tab${isActive ? ' is-active' : ''}${isDragging ? ' is-dragging' : ''}${isDropTarget ? ' is-drop-target' : ''}${closingId === s.id ? ' is-closing' : ''}`}
+                onClick={() => { setClosingId(null); onSwitch(s.id); }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -152,6 +137,7 @@ export function SessionTabs({
                 onDragStart={(e) => {
                   if (!onReorder) return;
                   setDragId(s.id);
+                  setClosingId(null); // drag cancels any pending confirm
                   e.dataTransfer.effectAllowed = 'move';
                   // Some browsers require dataTransfer to have some
                   // data set for the drag to proceed at all.
@@ -227,17 +213,48 @@ export function SessionTabs({
                 >
                   ↗
                 </button>
-                <button
-                  type="button"
-                  className="tab-close"
-                  aria-label={`Close ${shortLabel(s)}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onClose(s.id);
-                  }}
-                >
-                  ×
-                </button>
+                {closingId === s.id ? (
+                  // Two-step confirm: replaces the × while armed.
+                  // Exited sessions never reach this branch (see below).
+                  <>
+                    <span className="tab-close-label">Close?</span>
+                    <button
+                      type="button"
+                      className="tab-close-yes"
+                      aria-label={`Confirm close ${shortLabel(s)}`}
+                      onClick={(e) => { e.stopPropagation(); setClosingId(null); void onClose(s.id); }}
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="button"
+                      className="tab-close-no"
+                      aria-label="Cancel close"
+                      onClick={(e) => { e.stopPropagation(); setClosingId(null); }}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="tab-close"
+                    aria-label={`Close ${shortLabel(s)}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Exited sessions have no live work — close without confirm.
+                      // Live sessions require an explicit second click to prevent
+                      // misclick kills of hours of running AI work.
+                      if (s.exited) {
+                        void onClose(s.id);
+                      } else {
+                        setClosingId(s.id);
+                      }
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             );
           })

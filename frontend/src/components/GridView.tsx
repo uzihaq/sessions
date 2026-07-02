@@ -9,7 +9,7 @@ import { ParserIcon } from './ParserIcon';
 import { renderContent } from '../lib/contentRender';
 import { eventsToMessages } from '../lib/claudeEvents';
 import { copyOnClickAtPointer } from '../lib/copyText';
-import { getTabLabel, useTabLabel } from '../lib/tabLabels';
+import { getTabLabel, useTabLabel, sessionLabel } from '../lib/tabLabels';
 import type { DispatchMessage } from '../hooks/useDispatch';
 
 // Tile every session in a column-flow grid. Each cell renders a
@@ -32,22 +32,8 @@ interface Props {
   onExpand?: (id: string) => void;
 }
 
-// Note: this is the cwd-derived FALLBACK only. Each cell wraps it
-// with the user's tab-label override via useTabLabel below — that's
-// the value rendered in the cell header / typing popup / pop-out.
-function derivedLabel(s: SessionInfo): string {
-  // Same resolution order as SessionTabs: Claude's own title (custom
-  // first, then ai-summary) > cwd basename > cmd > short id. User's
-  // pretty-PTY rename is layered ABOVE this in the cell render path.
-  if (s.claudeCustomTitle && s.claudeCustomTitle.length > 0) return s.claudeCustomTitle;
-  if (s.claudeAiTitle && s.claudeAiTitle.length > 0) return s.claudeAiTitle;
-  if (s.cwd) {
-    const parts = s.cwd.split('/').filter(Boolean);
-    const last = parts[parts.length - 1];
-    if (last) return last;
-  }
-  return s.cmd.split('/').pop() ?? s.id.slice(0, 8);
-}
+// Note: derivedLabel is removed — sessionLabel from lib/tabLabels.ts
+// is the single canonical resolution chain shared across all consumers.
 
 // "5s", "3m", "2h ago" — short relative-time label for the cell header
 // so the user can see at a glance how stale a session's last activity
@@ -68,7 +54,7 @@ export function GridView({ sessions, statusBySession, iconBySession, onClose, on
   return (
     <div className="grid-view">
       {sessions.map((s) => {
-        const label = getTabLabel(s.id) ?? derivedLabel(s);
+        const label = getTabLabel(s.id) ?? sessionLabel(s);
         return (
           <GridCell
             key={s.id}
@@ -79,6 +65,7 @@ export function GridView({ sessions, statusBySession, iconBySession, onClose, on
             onExpand={onExpand ? () => onExpand(s.id) : undefined}
             onClose={onClose ? () => onClose(s.id) : undefined}
           />
+
         );
       })}
     </div>
@@ -100,6 +87,12 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
   // Tick the clock every 30s so the relative-time label in the header
   // ("3m ago") stays current without forcing a refetch.
   const [, setNow] = useState(Date.now());
+  // Two-step confirmation before closing a live session. Exited sessions
+  // close without confirm — there is no live work to lose.
+  const [closeConfirm, setCloseConfirm] = useState(false);
+  // Flash a red border and "send failed" hint when a keystroke POST fails.
+  // Cleared automatically after 1.5s so the cell returns to normal.
+  const [sendFailed, setSendFailed] = useState(false);
   const cellRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   // Auto-stick to bottom only when the user is parked at the bottom.
@@ -167,9 +160,17 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   };
 
+  // Auto-clear the send-failure indicator after 1.5s. Re-runs each time
+  // sendFailed transitions from false→true (a new failure resets the timer).
+  useEffect(() => {
+    if (!sendFailed) return;
+    const id = window.setTimeout(() => setSendFailed(false), 1500);
+    return () => window.clearTimeout(id);
+  }, [sendFailed]);
+
   const cwd = useMemo(() => session.cwd ?? '', [session.cwd]);
   const customLabel = useTabLabel(session.id);
-  const label = customLabel ?? derivedLabel(session);
+  const label = customLabel ?? sessionLabel(session);
 
   // Local typing buffer — shown as a floating popup over the cell while
   // focused so the user can see what they're typing without resizing
@@ -178,16 +179,26 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
   // Escape (cancel), and on blur (focus left the cell).
   const [typedBuffer, setTypedBuffer] = useState('');
 
+  // Flag a failed send: clear the typed buffer (bytes didn't land) and
+  // flash the cell border red so the user knows the keystroke was lost.
+  // Declared after typedBuffer so setTypedBuffer is in scope.
+  const flagSendFailed = (): void => {
+    setTypedBuffer('');
+    setSendFailed(true);
+  };
+
   // Direct keystroke forwarding. Each keystroke is translated to its
   // PTY byte sequence and POSTed via the input endpoint. The 2s
   // snapshot poll picks up the echo and re-renders the cell so the
   // user eventually sees their typing land in Claude's prompt — but
   // the typedBuffer popup gives instant feedback in the meantime.
+  // On POST failure: clear the local buffer and flash the red border so
+  // the user knows the keystroke was lost (not silently swallowed).
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
     const bytes = keyToBytes(e);
     if (bytes === null) return;
     e.preventDefault();
-    void sendInput(session.id, bytes);
+    sendInput(session.id, bytes).catch(flagSendFailed);
 
     // Maintain the local visual buffer alongside.
     const k = e.key;
@@ -224,7 +235,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
     e.preventDefault();
     // Bracketed paste, no trailing Enter — user submits with Return
     // separately. Same protocol as InputBar's paste path.
-    void sendInput(session.id, `\x1b[200~${text}\x1b[201~`);
+    sendInput(session.id, `\x1b[200~${text}\x1b[201~`).catch(flagSendFailed);
     // Local-buffer display marker.
     const newlines = (text.match(/\n/g) ?? []).length;
     let marker: string;
@@ -261,7 +272,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
 
   return (
     <div
-      className={`grid-cell${focused ? ' is-focused' : ''}${status === 'working' && !session.exited ? ' is-working' : ''}${session.exited ? ' is-exited' : ''}`}
+      className={`grid-cell${focused ? ' is-focused' : ''}${status === 'working' && !session.exited ? ' is-working' : ''}${session.exited ? ' is-exited' : ''}${sendFailed ? ' is-send-failed' : ''}`}
       ref={cellRef}
       tabIndex={0}
       onClick={focusCell}
@@ -293,13 +304,42 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
           title="Pop out into its own window"
         >↗</button>
         {onClose ? (
-          <button
-            type="button"
-            className="grid-cell-close"
-            onClick={(e) => { e.stopPropagation(); void onClose(); }}
-            title="Close this session (same as the tab × in tabs mode)"
-            aria-label="Close session"
-          >×</button>
+          closeConfirm ? (
+            // Two-step confirm armed — show "Close? [Close] [Cancel]".
+            // Exited sessions bypass this and close directly (see onClick below).
+            <>
+              <span className="grid-cell-close-label">Close?</span>
+              <button
+                type="button"
+                className="grid-cell-close-yes"
+                aria-label="Confirm close session"
+                onClick={(e) => { e.stopPropagation(); setCloseConfirm(false); void onClose(); }}
+              >Close</button>
+              <button
+                type="button"
+                className="grid-cell-close-no"
+                aria-label="Cancel close"
+                onClick={(e) => { e.stopPropagation(); setCloseConfirm(false); }}
+              >Cancel</button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="grid-cell-close"
+              onClick={(e) => {
+                e.stopPropagation();
+                // Exited sessions have no live work — close without confirm.
+                // Live sessions show a two-step confirm to prevent misclick kills.
+                if (session.exited) {
+                  void onClose();
+                } else {
+                  setCloseConfirm(true);
+                }
+              }}
+              title="Close this session (same as the tab × in tabs mode)"
+              aria-label="Close session"
+            >×</button>
+          )
         ) : null}
       </div>
       <div ref={bodyRef} className="grid-cell-body grid-cell-body-chat" onScroll={onBodyScroll}>
@@ -336,7 +376,11 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
           typed text appears alongside as it accumulates. */}
       {focused ? (
         <div className="grid-cell-typing-popup" role="status" aria-live="polite">
-          {typedBuffer ? (
+          {sendFailed ? (
+            // Send-failed hint: the typed byte was not delivered. Buffer is
+            // already cleared so the user doesn't retry stale text.
+            <span className="grid-cell-typing-failed">send failed — tap to retry</span>
+          ) : typedBuffer ? (
             <span className="grid-cell-typing-text">{typedBuffer}</span>
           ) : (
             <span className="grid-cell-typing-placeholder">type to send to {label}</span>
