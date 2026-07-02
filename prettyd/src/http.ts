@@ -154,8 +154,13 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
 
       // Reject paths outside the user's HOME. The fs/list endpoint is
       // only for the cwd picker — there is no reason to expose / or
-      // /private/etc through it.
-      const home = os.homedir();
+      // /private/etc through it. realpath the home too so the comparison
+      // is symlink-resolved on BOTH sides — otherwise a symlinked home
+      // path component (e.g. macOS /tmp → /private/tmp, or a home on a
+      // symlinked volume) makes canonical diverge from the raw homedir and
+      // rejects legitimate in-home paths.
+      let home: string;
+      try { home = fs.realpathSync(os.homedir()); } catch { home = os.homedir(); }
       if (canonical !== home && !canonical.startsWith(home + nodePath.sep)) {
         reply(403, { error: 'path outside home directory', path: canonical });
         return;
