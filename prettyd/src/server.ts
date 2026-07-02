@@ -41,6 +41,22 @@ server.on('connection', (socket) => {
 
 server.on('upgrade', handleUpgrade);
 
+// Catch EADDRINUSE and other bind errors early so they produce a readable
+// message and a clean exit instead of an uncaught exception stack trace.
+// EADDRINUSE in particular happens when a second prettyd is started while
+// one is already running (e.g. a tsx-watch restart that races itself).
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(
+      `prettyd: port ${config.port} is already in use on ${config.host}.\n` +
+      `  Is another prettyd instance running? Check with: launchctl list | grep pretty`
+    );
+  } else {
+    console.error(`prettyd: server error (${err.code ?? err.name}): ${err.message}`);
+  }
+  process.exit(1);
+});
+
 server.listen(config.port, config.host, () => {
   const isLocal = config.host === '127.0.0.1' || config.host === '::1' || config.host === 'localhost';
   console.log(`prettyd listening on http://${config.host}:${config.port}`);

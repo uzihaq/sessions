@@ -12,6 +12,11 @@ import { Buffer } from 'node:buffer';
 
 export const MAX_FRAME_LEN = 4 * 1024 * 1024;
 
+// Incremented when the runner↔daemon wire protocol gains new mandatory fields.
+// The daemon reads hello.protocolVersion ?? 0 and logs a warning on mismatch
+// but ALWAYS attaches — live runners on old code must never be dropped.
+export const RUNNER_PROTOCOL_VERSION = 1;
+
 export const enum FrameType {
   // Runner → client (prettyd) ----------------------------------------------
   HELLO          = 0x20, // sent on connect; payload = JSON RunnerHello
@@ -37,6 +42,9 @@ export interface RunnerHello {
   createdAt: number;
   pid: number;
   currentSeq: number;
+  // Added in protocol v1. Absent on runners built before this field was
+  // introduced (treat missing as 0 / legacy). See RUNNER_PROTOCOL_VERSION.
+  protocolVersion?: number;
 }
 
 export interface RunnerExit {

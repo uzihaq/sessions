@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { config } from './config.js';
+import { RUNNER_PROTOCOL_VERSION } from './runnerProtocol.js';
 import { EventLog, type OutputEvent } from './eventLog.js';
 import { RunnerClient } from './runnerClient.js';
 import { classifyTool } from './types.js';
@@ -172,7 +174,12 @@ function resolveRunnerProgramArguments(): string[] {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const sideBySide = path.join(here, 'runner.js');
   if (fs.existsSync(sideBySide)) {
-    return [process.execPath, sideBySide];
+    // Use /usr/bin/env node rather than process.execPath so the plist
+    // survives `brew upgrade node`. process.execPath bakes the versioned
+    // Cellar path (/opt/homebrew/Cellar/node/22.x.y/bin/node) into every
+    // plist; after a major version bump that path is gone and launchd can
+    // no longer restart any session on reboot.
+    return ['/usr/bin/env', 'node', sideBySide];
   }
   const tsPath = path.join(here, 'runner.ts');
   const distSibling = path.join(here, '..', 'dist', 'runner.js');
@@ -181,7 +188,7 @@ function resolveRunnerProgramArguments(): string[] {
       const distMtime = fs.statSync(distSibling).mtimeMs;
       const srcMtime = fs.statSync(tsPath).mtimeMs;
       if (distMtime >= srcMtime) {
-        return [process.execPath, distSibling];
+        return ['/usr/bin/env', 'node', distSibling];
       }
     } catch {
       // fall through to tsx
@@ -192,9 +199,36 @@ function resolveRunnerProgramArguments(): string[] {
     if (!fs.existsSync(tsxBin)) {
       throw new Error(`runner needs tsx but ${tsxBin} not found; run npm install in prettyd/`);
     }
-    return [process.execPath, tsxBin, tsPath];
+    // tsx is a local JS script so `node tsxBin` works fine.
+    // Still avoid process.execPath here for the same brew-upgrade reason.
+    return ['/usr/bin/env', 'node', tsxBin, tsPath];
   }
   throw new Error(`runner not found near ${here}`);
+}
+
+// Attempt to reconnect to a runner that disconnected unexpectedly (crash /
+// KeepAlive-triggered restart). Uses a short fixed back-off sequence and
+// aborts without reaping if all attempts fail — sessions-are-sacred.
+// Idempotent: the first check inside each attempt bails out if the session
+// was already re-registered (e.g. by discoverRunners on a concurrent start).
+function scheduleRunnerReconnect(id: string, sockPath: string, delays: number[]): void {
+  if (delays.length === 0) return; // budget exhausted; leave it for next prettyd start
+  const [delay, ...rest] = delays;
+  setTimeout(async () => {
+    if (sessions.has(id)) return; // already re-registered by another path
+    if (!fs.existsSync(sockPath)) {
+      // Socket not yet recreated by the respawned runner; retry later.
+      scheduleRunnerReconnect(id, sockPath, rest);
+      return;
+    }
+    try {
+      await registerRunner(sockPath);
+      console.log(`[reconnect] runner ${id} reattached after unexpected disconnect`);
+    } catch {
+      // Not ready yet; try again with the remaining delay budget.
+      scheduleRunnerReconnect(id, sockPath, rest);
+    }
+  }, delay).unref();
 }
 
 export async function createSession(req: CreateSessionRequest): Promise<SessionInfo> {
@@ -251,13 +285,46 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
     const v = process.env[k];
     if (typeof v === 'string' && v.length > 0) passthrough[k] = v;
   }
+
+  // Build a PATH that guarantees both Homebrew install locations are present
+  // so bare command names ('claude', 'codex', 'node') resolve under launchd's
+  // minimal environment on both Apple Silicon (/opt/homebrew/bin) and Intel
+  // (/usr/local/bin) Macs. If they're already in the inherited PATH, don't
+  // duplicate them; just prepend the ones that are missing.
+  const BREW_PATHS = ['/opt/homebrew/bin', '/usr/local/bin'];
+  const basePath = process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin';
+  const pathSegments = basePath.split(':');
+  const missingBrewPaths = BREW_PATHS.filter((p) => !pathSegments.includes(p));
+  const launchdPath = missingBrewPaths.length > 0
+    ? [...missingBrewPaths, ...pathSegments].join(':')
+    : basePath;
+
+  // Sanitize caller-supplied env: strip RUNNER_* (internal runner config that
+  // must not be overridden) and known process-injection keys. All other vars
+  // are passed through so callers can set e.g. a per-session ANTHROPIC_API_KEY
+  // or custom HOME. They are spread before the locked RUNNER_* block below so
+  // those keys always win.
+  const CALLER_STRIP_RE = /^RUNNER_/i;
+  const CALLER_STRIP_SET = new Set(['NODE_OPTIONS', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH', 'LD_PRELOAD']);
+  const safeCallerEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.env ?? {})) {
+    if (CALLER_STRIP_RE.test(k) || CALLER_STRIP_SET.has(k)) continue;
+    safeCallerEnv[k] = v;
+  }
+
   const launchdEnv: Record<string, string> = {
     ...passthrough,
     HOME: process.env.HOME || os.homedir(),
     USER: process.env.USER || '',
-    PATH: process.env.PATH || '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    PATH: launchdPath,
     LANG: process.env.LANG || 'en_US.UTF-8',
     SHELL: process.env.SHELL || '/bin/bash',
+    // Caller env after defaults so it can override HOME/PATH/LANG/SHELL,
+    // but comes before the RUNNER_* block which must always win.
+    ...safeCallerEnv,
+    // These keys are always forced to the values prettyd controls. A caller
+    // cannot override them even after the safeCallerEnv spread above because
+    // they appear after it in this literal.
     TERM: 'xterm-256color',
     RUNNER_ID: id,
     RUNNER_STATE_DIR: STATE_DIR,
@@ -266,7 +333,6 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
     RUNNER_CWD: cwd,
     RUNNER_COLS: String(cols),
     RUNNER_ROWS: String(rows),
-    ...(req.env ?? {})
   };
 
   const programArguments = resolveRunnerProgramArguments();
@@ -318,6 +384,17 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
 async function registerRunner(sockPath: string): Promise<SessionInternal> {
   const client = new RunnerClient(sockPath);
   const hello = await client.connect();
+
+  // Contract #3: log a protocol version mismatch but ALWAYS attach.
+  // Runners built before protocolVersion was introduced send no field
+  // (treat as v0). The 11 live runners are in this category; dropping
+  // them on version skew would destroy real sessions.
+  const runnerVersion = hello.protocolVersion ?? 0;
+  if (runnerVersion !== RUNNER_PROTOCOL_VERSION) {
+    console.log(
+      `[protocol] runner ${hello.id} reports v${runnerVersion}, daemon expects v${RUNNER_PROTOCOL_VERSION}; attaching anyway`
+    );
+  }
 
   // Mirror the runner's event log locally so WS replay is in-memory.
   // Pull whatever the runner already has via REPLAY_REQ(0) before going
@@ -485,14 +562,25 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
   client.on('disconnect', () => {
     // Socket dropped without a clean EXIT (runner crashed, or we got
     // here via the exit handler above). If we already saw EXIT, the
-    // grace-period timer above will clean up. If not, drop now.
+    // grace-period timer above will clean up. If not, handle the crash.
     if (!internal.exited) {
+      // Contract #4: emit 'runner-lost' so the WS layer can forward an
+      // exit frame to browser clients. Without this, a runner crash or
+      // KeepAlive-triggered restart leaves every open WS view frozen
+      // indefinitely since no EXIT frame is ever sent.
+      internal.emitter.emit('runner-lost');
       sessions.delete(hello.id);
       try { mirrorTerm.dispose(); } catch { /* ignore */ }
       // Close the JSONL watcher too — otherwise a crash-disconnect (no
       // EXIT frame) leaks its dir watcher, file watcher, and 2s poll
       // interval, and they keep appending to the orphaned event log.
       try { internal.fileWatcher?.close(); } catch { /* ignore */ }
+      // Schedule bounded reconnect attempts in case launchd
+      // KeepAlive(SuccessfulExit=false) respawns the runner after the
+      // crash. Delays: 1s, 3s, 10s. Conservative and idempotent: each
+      // attempt checks sessions.has(id) first to avoid a duplicate entry,
+      // and never reaps on failure (sessions-are-sacred).
+      scheduleRunnerReconnect(hello.id, sockPath, [1_000, 3_000, 10_000]);
     }
   });
 
@@ -579,8 +667,29 @@ async function discoverRunnersInner(): Promise<void> {
       try {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as { pid?: number };
         if (typeof meta.pid === 'number' && meta.pid > 0) {
-          process.kill(meta.pid, 0); // throws if the process is gone
-          alivePid = meta.pid;
+          process.kill(meta.pid, 0); // throws ESRCH if the process is gone
+          // pid is still alive. Best-effort guard against PID reuse after a
+          // reboot: verify the process argv mentions runner.js or this session
+          // id so we don't conserve a completely unrelated process that
+          // happened to reuse the same pid. If ps fails or returns nothing
+          // (which is unexpected given kill(0) succeeded), stay conservative
+          // and do NOT reap — sessions-are-sacred.
+          const ps = spawnSync('ps', ['-p', String(meta.pid), '-o', 'args='], {
+            encoding: 'utf8', timeout: 2_000
+          });
+          const cmdline = (ps.stdout ?? '').trim();
+          if (cmdline.length > 0 &&
+              !cmdline.includes('runner.js') &&
+              !cmdline.includes('runner.ts') &&
+              !cmdline.includes(id)) {
+            // Cmdline is readable but clearly unrelated — PID was reused by
+            // a different process after a reboot. The session is gone.
+            console.error(`[discover] runner ${id} pid ${meta.pid} is PID reuse (${cmdline.slice(0, 60)}) — treating as dead`);
+          } else {
+            // Either argv confirms it's our runner, or we couldn't determine
+            // (empty cmdline / ps error) — stay conservative.
+            alivePid = meta.pid;
+          }
         }
       } catch { /* unreadable meta or dead pid → reap below */ }
       if (alivePid !== null) {

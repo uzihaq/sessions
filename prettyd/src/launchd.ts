@@ -159,13 +159,30 @@ export function bootoutRunner(id: string): void {
 export function cleanupOrphanPlists(stateDir: string): void {
   if (!fs.existsSync(LAUNCH_AGENTS_DIR)) return;
   const entries = fs.readdirSync(LAUNCH_AGENTS_DIR);
+  // How long after a plist is written before we consider it "started" and
+  // eligible for orphan checks. A freshly-bootstrapped runner has RunAtLoad
+  // but hasn't written any state files yet; without this guard it looks like
+  // an orphan during the window between `launchctl bootstrap` and the runner
+  // process creating its .json / .sock / .events files. 30s is generous even
+  // for the slow tsx cold-start path (which can take up to 60s but always
+  // creates the .json meta early in the startup sequence).
+  const STARTING_GRACE_MS = 30_000;
   for (const name of entries) {
     if (!name.startsWith(LABEL_PREFIX) || !name.endsWith('.plist')) continue;
     const id = name.slice(LABEL_PREFIX.length, -'.plist'.length);
+    const plistPath = path.join(LAUNCH_AGENTS_DIR, name);
     const sockPath = path.join(stateDir, id + '.sock');
     const metaPath = path.join(stateDir, id + '.json');
     const eventsPath = path.join(stateDir, id + '.events');
     if (fs.existsSync(eventsPath)) continue; // session data alive, keep plist
+    // Skip plists that were written very recently — the runner may still be
+    // booting and hasn't created its state files yet. Being wrong here is
+    // catastrophic (destroys a live session); being conservative just delays
+    // cleanup by one prettyd restart, which is fine.
+    try {
+      const plistMtime = fs.statSync(plistPath).mtimeMs;
+      if (Date.now() - plistMtime < STARTING_GRACE_MS) continue;
+    } catch { continue; } // can't stat the plist — conservative, skip
     if (!fs.existsSync(sockPath) && !fs.existsSync(metaPath)) {
       bootoutRunner(id);
     }

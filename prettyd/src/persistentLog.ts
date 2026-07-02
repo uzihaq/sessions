@@ -37,14 +37,18 @@ export class PersistentLog {
   private fd: number;
   private bytesOnDisk: number;
   private trimming = false;
-  // Async write buffer: append() enqueues here and schedules a flush
-  // instead of doing a synchronous write on the PTY hot path (every output
-  // chunk). A hard crash loses at most the un-flushed tail (sub-frame of
-  // terminal scrollback, already in the runner's in-memory ring) — an
-  // acceptable trade for keeping fs.writeSync off the keystroke path.
-  // close() flushes synchronously so a clean shutdown never loses data.
+  // Batched write buffer: append() pushes a pre-encoded frame here and
+  // schedules a setImmediate flush instead of writing on every PTY chunk
+  // (which would serialise every keystroke on a writeSync call).
+  // flush() drains ALL pending frames in ONE writeSync call, so there is
+  // never an in-flight async write that close() cannot recover.  This is
+  // the key difference from the previous fs.write() design: SIGTERM during
+  // an async write could lose the in-flight batch even though close() called
+  // flushSync(), because the batch had already been dequeued from `pending`.
+  // With writeSync the flush is atomic from JS's perspective: pending is
+  // drained and written before we return. close() therefore just calls
+  // flush() before setting closed=true and the data is guaranteed on disk.
   private pending: Buffer[] = [];
-  private writing = false;
   private flushScheduled = false;
   private closed = false;
   // Cumulative metrics surfaced via /api/health/deep for debuggability.
@@ -64,6 +68,10 @@ export class PersistentLog {
 
   static open(filePath: string): PersistentLog {
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    // Remove any leftover .tmp from a previous interrupted atomic rename.
+    // If trim() was killed between writeFileSync and renameSync (e.g. a
+    // hard power-off), the stale .tmp would linger on disk forever.
+    try { fs.unlinkSync(filePath + '.tmp'); } catch { /* not present */ }
     // Open in append+read mode so we can both append AND truncate-rewrite.
     const fd = fs.openSync(filePath, 'a+');
     const stat = fs.fstatSync(fd);
@@ -111,38 +119,24 @@ export class PersistentLog {
     setImmediate(() => { this.flushScheduled = false; this.flush(); });
   }
 
-  // Drain the pending buffer in one async write. Serialized via `writing`
-  // so we never overlap fs.write on the same fd. trim (rare, only when the
-  // soft cap is crossed) runs after the write settles, off the per-chunk path.
+  // Drain ALL pending frames in one writeSync call. Because the write is
+  // synchronous there is never an in-flight batch that close() cannot see.
+  // trim (rare, only when the soft cap is crossed) runs inline here, off
+  // the per-chunk hot path.
   private flush(): void {
-    if (this.writing || this.trimming || this.pending.length === 0 || this.closed) return;
-    this.writing = true;
+    if (this.trimming || this.pending.length === 0 || this.closed) return;
     const batch = this.pending.length === 1 ? this.pending[0]! : Buffer.concat(this.pending);
-    this.pending = [];
-    fs.write(this.fd, batch, 0, batch.length, null, (err) => {
-      this.writing = false;
-      if (err) {
-        // Write failed (disk full, fd gone) — drop this batch rather than
-        // stall the runner. Counted for /health/deep visibility.
-        this.droppedFrames++;
-      } else {
-        this.bytesOnDisk += batch.length;
-        if (this.bytesOnDisk > SOFT_CAP_BYTES && !this.trimming) this.trim();
-      }
-      if (this.pending.length > 0) this.scheduleFlush();
-    });
-  }
-
-  // Synchronously write whatever is buffered. Used by close() so a clean
-  // shutdown (SIGTERM, runner exit) doesn't lose the un-flushed tail.
-  private flushSync(): void {
-    if (this.pending.length === 0) return;
-    const batch = Buffer.concat(this.pending);
     this.pending = [];
     try {
       fs.writeSync(this.fd, batch, 0, batch.length);
       this.bytesOnDisk += batch.length;
-    } catch { this.droppedFrames++; }
+      if (this.bytesOnDisk > SOFT_CAP_BYTES && !this.trimming) this.trim();
+    } catch {
+      // Write failed (disk full, fd gone) — drop this batch rather than
+      // stall the runner. Counted for /health/deep visibility.
+      this.droppedFrames++;
+    }
+    if (this.pending.length > 0) this.scheduleFlush();
   }
 
   // Trim from the front: keep just the most recent
@@ -165,13 +159,21 @@ export class PersistentLog {
         off += RECORD_HEADER_BYTES + recLen;
       }
       const totalEnd = off; // one past the last complete record
-      // Find first offset where (totalEnd - offset) <= cutoffSize.
-      let firstKept = 0;
+      // Find the earliest record offset where keeping from there to end
+      // is within the target size.  Use -1 as "not found yet" so we can
+      // distinguish "first record at offset 0 fit" from "nothing fit".
+      let firstKept = -1;
       for (const o of recordOffsets) {
         if (totalEnd - o <= cutoffSize) {
           firstKept = o;
           break;
         }
+      }
+      if (firstKept < 0) {
+        // No record individually fits within TARGET_AFTER_TRIM_BYTES (e.g.
+        // a single > 8 MB chunk).  Force-keep only the last record so trim
+        // always makes progress and doesn't re-fire on every subsequent flush.
+        firstKept = recordOffsets.length > 0 ? recordOffsets[recordOffsets.length - 1]! : 0;
       }
       const trimmed = all.slice(firstKept, totalEnd);
       const tmpPath = this.filePath + '.tmp';
@@ -188,8 +190,10 @@ export class PersistentLog {
 
   close(): void {
     if (this.closed) return;
+    // Flush BEFORE setting closed so flush()'s guard doesn't short-circuit.
+    // flush() is now synchronous, so this is loss-free on SIGTERM.
+    this.flush();
     this.closed = true;
-    this.flushSync(); // don't lose the un-flushed tail on clean shutdown
     try { fs.closeSync(this.fd); } catch { /* ignore */ }
   }
 
