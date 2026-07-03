@@ -7,6 +7,8 @@
 //   pretty snap <id>                Print current xterm buffer (clean text).
 //   pretty snap <id> --raw          Print buffer with ANSI escapes preserved.
 //   pretty send <id> <text...>      Send text + Enter to the session.
+//   pretty send <id> --file P       Send UTF-8 file contents to the session.
+//   pretty transcript <id>          Print user/assistant turns from events.
 //   pretty keys <id> <key>          Send a control key: esc | up | down | ^c.
 //   pretty new [--cwd P] [--cmd C] [args...]
 //                                   Create a new session.
@@ -19,6 +21,7 @@
 //   --json     Output JSON (machine-friendly) where applicable.
 //   --host     prettyd host (default: 127.0.0.1).
 //   --port     prettyd port (default: 8787).
+// Session ids accept full ids or unique prefixes.
 //
 // Exit codes:
 //   0 success · 1 user error (bad args, unknown id) · 2 transport error.
@@ -97,11 +100,19 @@ function api(method, p, body) {
 
 async function getJson(p) {
   const r = await api('GET', p);
+  if (r.status === 404) {
+    const sid = sessionIdFromApiPath(p);
+    if (sid) fail(unknownSessionMessage(sid), 1);
+  }
   if (r.status >= 400) fail(`${p} → ${r.status} ${r.body.toString('utf8').slice(0, 200)}`, 2);
   return JSON.parse(r.body.toString('utf8'));
 }
 async function postJson(p, body) {
   const r = await api('POST', p, body);
+  if (r.status === 404) {
+    const sid = sessionIdFromApiPath(p);
+    if (sid) fail(unknownSessionMessage(sid), 1);
+  }
   if (r.status >= 400) fail(`${p} → ${r.status} ${r.body.toString('utf8').slice(0, 200)}`, 2);
   return JSON.parse(r.body.toString('utf8'));
 }
@@ -112,7 +123,11 @@ async function del(p) {
 }
 async function getText(p) {
   const r = await api('GET', p);
-  if (r.status === 404) return null;
+  if (r.status === 404) {
+    const sid = sessionIdFromApiPath(p);
+    if (sid) fail(unknownSessionMessage(sid), 1);
+    return null;
+  }
   if (r.status >= 400) fail(`${p} → ${r.status}`, 2);
   return r.body.toString('utf8');
 }
@@ -134,6 +149,52 @@ function classifyTool(cmd, args) {
   return path.basename(c) || 'shell';
 }
 
+function shortToolName(t) {
+  return t === 'claude-code' ? 'claude' : (t || 'shell');
+}
+
+function toolOfSession(s) {
+  return s.tool || classifyTool(s.cmd, s.args);
+}
+
+function isConfirmableTool(tool) {
+  return tool === 'claude-code' || tool === 'codex';
+}
+
+function unknownSessionMessage(idOrPrefix) {
+  return `no session matching '${idOrPrefix}' — it may be a stale id after a daemon restart; run \`pretty ls\``;
+}
+
+function sessionIdFromApiPath(p) {
+  const m = /^\/api\/sessions\/([^/?]+)/.exec(p);
+  if (!m) return null;
+  try { return decodeURIComponent(m[1]); }
+  catch { return m[1]; }
+}
+
+function sessionLabel(s) {
+  const parts = [shortToolName(toolOfSession(s))];
+  if (s.cwd) parts.push(s.cwd.replace(process.env.HOME || '', '~'));
+  if (s.exited) parts.push('exited');
+  else parts.push(s.working ? 'working' : 'idle');
+  return parts.join(' ');
+}
+
+async function resolveSessionId(idOrPrefix) {
+  const { sessions } = await getJson('/api/sessions?include_exited=1');
+  const exact = sessions.find((s) => s.id === idOrPrefix);
+  if (exact) return exact.id;
+
+  const matches = sessions.filter((s) => typeof s.id === 'string' && s.id.startsWith(idOrPrefix));
+  if (matches.length === 1) return matches[0].id;
+  if (matches.length === 0) fail(unknownSessionMessage(idOrPrefix), 1);
+
+  const lines = matches
+    .map((s) => `  ${s.id.slice(0, 8)}  ${sessionLabel(s)}`)
+    .join('\n');
+  fail(`ambiguous session prefix '${idOrPrefix}' — matches:\n${lines}\nrun \`pretty ls\``, 1);
+}
+
 // Small ANSI stripper — same regex used everywhere in pretty-PTY.
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07/g;
 const CURSOR_FORWARD_RE = /\x1b\[(\d+)C/g;
@@ -147,7 +208,7 @@ function normalize(s) {
 // prettyd/src/claudeSessionScanner.ts so the CLI can interpret raw events
 // returned by GET /api/sessions/:id/events without a daemon round-trip.
 
-// Extract the plain-text body from a Claude JSONL event's message.content.
+// Extract the plain-text body from a structured JSONL event's message.content.
 // Handles both the string form (older SDK) and the block-array form.
 function extractEventText(ev) {
   const msg = ev && typeof ev === 'object' && ev.message;
@@ -156,15 +217,44 @@ function extractEventText(ev) {
   if (typeof c === 'string') return c;
   if (Array.isArray(c)) {
     return c
-      .filter((b) => b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string')
+      .filter((b) => b && typeof b === 'object' &&
+        (b.type === 'text' || b.type === 'input_text' || b.type === 'output_text') &&
+        typeof b.text === 'string')
       .map((b) => b.text)
       .join('');
   }
   return '';
 }
 
+function extractEventToolCalls(ev) {
+  const msg = ev && typeof ev === 'object' && ev.message;
+  if (!msg || typeof msg !== 'object') return [];
+  const calls = [];
+  const push = (name) => {
+    if (name) calls.push(String(name));
+  };
+  const c = msg.content;
+  if (Array.isArray(c)) {
+    for (const b of c) {
+      if (!b || typeof b !== 'object') continue;
+      if (b.type === 'tool_use' || b.type === 'server_tool_use') {
+        push(b.name || b.tool_name || b.id || 'tool');
+      } else if (b.type === 'function_call') {
+        push(b.name || b.call_id || 'function_call');
+      }
+    }
+  }
+  if (Array.isArray(msg.tool_calls)) {
+    for (const t of msg.tool_calls) {
+      if (!t || typeof t !== 'object') continue;
+      push((t.function && t.function.name) || t.name || t.type || 'tool');
+    }
+  }
+  return calls;
+}
+
 // True when a JSONL event represents a real human message — not tool_result
-// feedback and not the synthetic pseudo-messages Claude writes for its own
+// feedback and not the synthetic pseudo-messages tools write for their own
 // bookkeeping (<command-name>, <system-reminder>, compact banners, etc.).
 // Mirrors isRealUserMessage in prettyd/src/sessions.ts.
 function isRealUserEvent(ev) {
@@ -183,7 +273,7 @@ function isRealUserEvent(ev) {
 }
 
 // Return the last ≤8 non-empty lines of the cleaned terminal snapshot.
-// Used to check whether sent text is still sitting in Claude's composer box.
+// Used to check whether sent text is still sitting in the TUI composer box.
 function getComposerLines(snap) {
   if (!snap) return [];
   const cleaned = normalize(snap).replace(ANSI_RE, '');
@@ -194,8 +284,8 @@ function getComposerLines(snap) {
 
 // ── sendAndConfirm ───────────────────────────────────────────────────────
 //
-// Core of `pretty send` for claude-code sessions: fires text + Enter then
-// polls until the JSONL confirms the user event was written (→ Claude
+// Core of `pretty send` for structured-event sessions: fires text + Enter
+// then polls until the JSONL confirms the user event was written (→ the tool
 // actually accepted the message) or the timeout expires.
 //
 // Anti-duplicate rule: re-presses Enter ONLY when the sent text is
@@ -206,7 +296,7 @@ function getComposerLines(snap) {
 // opts: { timeoutMs?: number, noWait?: boolean }
 // Returns: { confirmed: true|false|null, tool?, text?, reason?,
 //            textStillInComposer?, composerTail? }
-//   confirmed=null  → fire-and-forget (noWait=true or non-claude tool)
+//   confirmed=null  → fire-and-forget (noWait=true or non-confirmable tool)
 //   confirmed=true  → JSONL user event confirmed
 //   confirmed=false → timed out without confirmation
 async function sendAndConfirm(id, text, opts) {
@@ -216,9 +306,10 @@ async function sendAndConfirm(id, text, opts) {
   // ── 1. Baseline ──────────────────────────────────────────────────────
   const { sessions } = await getJson('/api/sessions');
   const s = sessions.find((x) => x.id === id);
-  if (!s) fail(`unknown session: ${id}`, 1);
+  if (!s) fail(unknownSessionMessage(id), 1);
 
-  const isClaude = s.tool === 'claude-code';
+  const tool = toolOfSession(s);
+  const confirmable = isConfirmableTool(tool);
   // lastUserMessageAt is a Unix-ms timestamp (or null/undefined for sessions
   // that haven't received a message yet). Treat absent as 0.
   const baseTs = (typeof s.lastUserMessageAt === 'number' ? s.lastUserMessageAt : 0);
@@ -227,7 +318,7 @@ async function sendAndConfirm(id, text, opts) {
   // only events that appeared AFTER our send — avoids confusing an old user
   // event for our new one.
   let baseNextIndex = 0;
-  if (isClaude && !noWait) {
+  if (confirmable && !noWait) {
     try {
       const evData = await getJson(`/api/sessions/${encodeURIComponent(id)}/events?tail=1`);
       if (typeof evData.nextIndex === 'number') baseNextIndex = evData.nextIndex;
@@ -235,7 +326,7 @@ async function sendAndConfirm(id, text, opts) {
   }
 
   // ── 2. Fire ──────────────────────────────────────────────────────────
-  // Write the text, pause so Claude's TUI registers it, then send Enter
+  // Write the text, pause so the TUI registers it, then send Enter
   // as a separate discrete keystroke (prevents the "\r" from being
   // interpreted as a newline inside the multiline box).
   const inputUrl = `/api/sessions/${encodeURIComponent(id)}/input`;
@@ -243,8 +334,8 @@ async function sendAndConfirm(id, text, opts) {
   await new Promise((r) => setTimeout(r, 150));
   await postJson(inputUrl, { data: '\r' });
 
-  if (!isClaude || noWait) {
-    return { confirmed: null, tool: s.tool || 'shell' };
+  if (!confirmable || noWait) {
+    return { confirmed: null, tool };
   }
 
   // ── 3. Poll for confirmation ─────────────────────────────────────────
@@ -261,7 +352,7 @@ async function sendAndConfirm(id, text, opts) {
 
   while (true) {
     // Primary confirmation signal: did lastUserMessageAt advance?
-    // The daemon sets this only when Claude writes a real user event to the
+    // The daemon sets this only when the tool writes a real user event to the
     // JSONL, which happens exactly when the message is submitted.
     const { sessions: sess2 } = await getJson('/api/sessions');
     const s2 = sess2.find((x) => x.id === id);
@@ -359,10 +450,9 @@ async function cmdDoctor() {
     process.stdout.write(`daemon: ${deep.sessionsLoaded} sessions, discovering=${deep.discovering}, uptime=${deep.uptimeSec}s\n\n`);
   }
   const W = (s, n) => String(s).slice(0, n - 1).padEnd(n);
-  const shortTool = (t) => (t === 'claude-code' ? 'claude' : t);
   process.stdout.write(`${W('ID', 10)}${W('TOOL', 8)}${W('SIZE', 10)}${W('QoS', 13)}${W('SPAWN', 10)}STATUS\n`);
   for (const r of rows) {
-    process.stdout.write(`${W(r.id.slice(0, 8), 10)}${W(shortTool(r.tool), 8)}${W(r.size, 10)}${W(r.qos, 13)}${W(r.spawn, 10)}${r.ok ? 'ok' : '⚠ needs recreate'}\n`);
+    process.stdout.write(`${W(r.id.slice(0, 8), 10)}${W(shortToolName(r.tool), 8)}${W(r.size, 10)}${W(r.qos, 13)}${W(r.spawn, 10)}${r.ok ? 'ok' : '⚠ needs recreate'}\n`);
   }
   const bad = rows.filter((r) => !r.ok);
   process.stdout.write(`\n${bad.length} of ${rows.length} sessions need recreate `);
@@ -396,8 +486,8 @@ async function cmdLs(args) {
     ['CWD', (s) => s.cwd.replace(process.env.HOME || '', '~')],
     ['STATE', stateOf],
     ['AGE', (s) => ageOf(s.createdAt)],
-    // When the human last typed a real message (from the Claude JSONL).
-    // '-' for non-Claude sessions or before the first message. The
+    // When the human last typed a real message (from the structured event log).
+    // '-' for sessions without event streams or before the first message. The
     // staleness signal: a session idle for days here is a cull candidate.
     ['LAST-USER', (s) => (s.lastUserMessageAt ? ageOf(s.lastUserMessageAt) : '-')],
     ['PID', (s) => String(s.pid)]
@@ -411,25 +501,27 @@ async function cmdLs(args) {
 
 async function cmdSnap(id, raw) {
   if (!id) fail('usage: pretty snap <id> [--raw]');
+  id = await resolveSessionId(id);
   const text = await getText(`/api/sessions/${encodeURIComponent(id)}/snapshot`);
-  if (text === null) fail(`unknown session: ${id}`, 1);
   const out = raw ? text : normalize(text).replace(ANSI_RE, '');
   process.stdout.write(out);
   if (!out.endsWith('\n')) process.stdout.write('\n');
 }
 
-// `pretty send <id> [--no-wait] [--timeout Ns] <text...>`
+// `pretty send <id> [--no-wait] [--timeout Ns] [--file path] <text...>`
 //
-// For claude-code sessions: sends text + Enter then polls until the daemon's
-// JSONL log confirms the message was actually submitted (via lastUserMessageAt
-// advancing). Exits non-zero if confirmation times out.
+// For structured-event sessions (Claude/Codex): sends text + Enter then polls
+// until the daemon's JSONL log confirms the message was actually submitted
+// (via lastUserMessageAt advancing). Exits non-zero if confirmation times out.
 //
 // --no-wait reverts to fire-and-forget (no blocking, no confirmation).
 // --timeout overrides the default 10s confirmation window.
+// --file reads the message body from a UTF-8 file.
 //
-// For non-claude-code sessions: fire-and-forget (JSONL unavailable).
+// For sessions without structured events: fire-and-forget (JSONL unavailable).
 async function cmdSend(args) {
   const id = args.shift();
+  if (!id) fail('usage: pretty send <id> [--no-wait] [--timeout Ns] [--file path] <text...>');
 
   // Strip send-specific flags before joining the remaining tokens as text.
   const noWait = args.includes('--no-wait');
@@ -442,14 +534,28 @@ async function cmdSend(args) {
     args.splice(tIdx, 2);
   }
 
-  const text = args.join(' ');
-  if (!id || !text) fail('usage: pretty send <id> [--no-wait] [--timeout Ns] <text...>');
+  let filePath = null;
+  const fIdx = args.indexOf('--file');
+  if (fIdx >= 0) {
+    if (!args[fIdx + 1]) fail('--file needs a path', 1);
+    filePath = args[fIdx + 1];
+    args.splice(fIdx, 2);
+  }
 
-  const result = await sendAndConfirm(id, text, { timeoutMs, noWait });
+  let text = args.join(' ');
+  if (filePath) {
+    if (args.length > 0) fail('--file cannot be combined with inline text', 1);
+    try { text = fs.readFileSync(filePath, 'utf8'); }
+    catch (err) { fail(`could not read --file '${filePath}': ${err.message}`, 1); }
+  }
+  if (!text) fail('usage: pretty send <id> [--no-wait] [--timeout Ns] [--file path] <text...>');
 
-  // ── Fire-and-forget path (--no-wait or non-claude tool) ─────────────
+  const resolvedId = await resolveSessionId(id);
+  const result = await sendAndConfirm(resolvedId, text, { timeoutMs, noWait });
+
+  // ── Fire-and-forget path (--no-wait or non-confirmable tool) ─────────
   if (result.confirmed === null) {
-    if (result.tool !== 'claude-code') {
+    if (!isConfirmableTool(result.tool)) {
       if (wantJson) {
         process.stdout.write(JSON.stringify({ submitted: null, tool: result.tool }) + '\n');
       } else {
@@ -458,7 +564,7 @@ async function cmdSend(args) {
         );
       }
     }
-    // For --no-wait on a claude-code session: silent success like old behavior.
+    // For --no-wait on a confirmable session: silent success like old behavior.
     return;
   }
 
@@ -484,6 +590,9 @@ async function cmdSend(args) {
     }) + '\n');
   } else {
     process.stderr.write(`pretty send: could not confirm submission after ${timeoutMs}ms\n`);
+    process.stderr.write(
+      '  sent but not confirmed — the session may still be starting; retry, or use `pretty wait` first\n'
+    );
     if (result.textStillInComposer) {
       process.stderr.write(
         '  the message is still in the composer (Enter did not submit)\n'
@@ -493,7 +602,7 @@ async function cmdSend(args) {
         '  message is no longer in the composer but no JSONL user event appeared yet\n'
       );
       process.stderr.write(
-        '  (Claude may still be picking it up, or the session may be confused)\n'
+        '  (the tool may still be picking it up, or the session may be confused)\n'
       );
     }
     if (result.composerTail) {
@@ -508,10 +617,10 @@ async function cmdSend(args) {
 
 // `pretty last <id> [--role user|assistant] [-n N]`
 //
-// Reads the last message(s) from the session's Claude JSONL event log and
+// Reads the last message(s) from the session's structured JSONL event log and
 // prints them. Default: the most recent user message + most recent assistant
 // message in chronological order. Useful for agents verifying receipt and
-// reading Claude's reply without attaching to the terminal stream.
+// reading the reply without attaching to the terminal stream.
 async function cmdLast(args) {
   const id = args.shift();
   if (!id) fail('usage: pretty last <id> [--role user|assistant] [-n N]');
@@ -535,10 +644,12 @@ async function cmdLast(args) {
     args.splice(nIdx, 2);
   }
 
+  const resolvedId = await resolveSessionId(id);
+
   // Fetch enough events to find the last N of each role. A tail of
   // max(n*20, 100) is a generous heuristic that covers typical conversations.
   const tail = Math.max(n * 20, 100);
-  const evData = await getJson(`/api/sessions/${encodeURIComponent(id)}/events?tail=${tail}`);
+  const evData = await getJson(`/api/sessions/${encodeURIComponent(resolvedId)}/events?tail=${tail}`);
   const events = (evData && evData.events) || [];
 
   // Collect (event, originalIndex, role) triples to preserve chronological order.
@@ -581,21 +692,76 @@ async function cmdLast(args) {
   }
 }
 
+// `pretty transcript <id>`
+//
+// Prints the user/assistant turns from the structured event log as readable
+// text. This intentionally uses JSONL events, not terminal snapshots.
+async function cmdTranscript(args) {
+  const id = args.shift();
+  if (!id) fail('usage: pretty transcript <id>');
+  const resolvedId = await resolveSessionId(id);
+
+  const evData = await getJson(`/api/sessions/${encodeURIComponent(resolvedId)}/events`);
+  const events = (evData && evData.events) || [];
+  const turns = [];
+
+  for (const ev of events) {
+    const isUser = isRealUserEvent(ev);
+    const isAsst = ev.type === 'assistant' &&
+                   ev.message && typeof ev.message === 'object' &&
+                   ev.message.role === 'assistant';
+    if (!isUser && !isAsst) continue;
+
+    const role = isUser ? 'user' : 'assistant';
+    const text = extractEventText(ev);
+    const toolCalls = isAsst ? extractEventToolCalls(ev) : [];
+    if (!text && toolCalls.length === 0) continue;
+
+    const turn = {
+      role,
+      text,
+      timestamp: ev.timestamp !== undefined ? ev.timestamp : null
+    };
+    if (toolCalls.length > 0) turn.toolCalls = toolCalls;
+    turns.push(turn);
+  }
+
+  if (wantJson) {
+    process.stdout.write(JSON.stringify(turns, null, 2) + '\n');
+    return;
+  }
+
+  if (turns.length === 0) {
+    process.stdout.write('(no messages)\n');
+    return;
+  }
+
+  turns.forEach((turn, i) => {
+    process.stdout.write(`[${turn.role}]\n`);
+    const body = (turn.text || '').trimEnd();
+    if (body) process.stdout.write(body + '\n');
+    if (turn.toolCalls && turn.toolCalls.length > 0) {
+      for (const name of turn.toolCalls) process.stdout.write(`⚙ ${name}\n`);
+    }
+    if (i !== turns.length - 1) process.stdout.write('\n');
+  });
+}
+
 // `pretty ask <id> [--timeout Ns] [--idle Ns] [--wait-timeout Ns] <text...>`
 //
 // Convenience command for agent loops: send a message (with JSONL
-// confirmation), wait for Claude to finish its reply (working→idle),
+// confirmation), wait for the tool to finish its reply (working→idle),
 // then print the last assistant message. A single synchronous
 // request→reply round-trip.
 //
-// Only works for claude-code sessions (JSONL required for confirmation
-// and working-state detection). For other tools use send + wait + last.
+// Works for tools with structured events (Claude/Codex). For other tools use
+// send + wait.
 async function cmdAsk(args) {
   const id = args.shift();
   if (!id) fail('usage: pretty ask <id> [--timeout Ns] [--idle Ns] [--wait-timeout Ns] <text...>');
 
   let timeoutMs     = 10_000;   // max wait for JSONL confirmation of send
-  let idleMs        = 2_000;    // idle threshold for "Claude finished replying"
+  let idleMs        = 2_000;    // idle threshold for "tool finished replying"
   let waitTimeoutMs = 120_000;  // max time waiting for the reply
 
   // Scan backwards so splice doesn't mess up upcoming indices.
@@ -615,11 +781,13 @@ async function cmdAsk(args) {
   const text = args.join(' ');
   if (!text) fail('usage: pretty ask <id> [options] <text...>');
 
+  const resolvedId = await resolveSessionId(id);
+
   // ── 1. Send and confirm ──────────────────────────────────────────────
-  const sendResult = await sendAndConfirm(id, text, { timeoutMs, noWait: false });
+  const sendResult = await sendAndConfirm(resolvedId, text, { timeoutMs, noWait: false });
 
   if (sendResult.confirmed === null) {
-    // Non-claude session — JSONL not available.
+    // Non-confirmable session — JSONL not available.
     const tool = sendResult.tool;
     if (wantJson) {
       process.stdout.write(JSON.stringify({ submitted: null, tool }) + '\n');
@@ -627,7 +795,7 @@ async function cmdAsk(args) {
       process.stderr.write(
         `pretty ask: submission confirmation not available for tool '${tool}'\n`
       );
-      process.stderr.write("  use 'pretty send' + 'pretty wait' + 'pretty last' instead\n");
+      process.stderr.write("  use 'pretty send' + 'pretty wait' instead\n");
     }
     process.exit(1);
   }
@@ -643,6 +811,9 @@ async function cmdAsk(args) {
       process.stderr.write(
         `pretty ask: message not confirmed submitted (${sendResult.reason})\n`
       );
+      process.stderr.write(
+        '  the session may still be starting; retry, or use `pretty wait` first\n'
+      );
       if (sendResult.composerTail) {
         process.stderr.write(sendResult.composerTail + '\n');
       }
@@ -650,8 +821,8 @@ async function cmdAsk(args) {
     process.exit(1);
   }
 
-  // ── 2. Wait for Claude to go working → idle ──────────────────────────
-  // Give Claude a moment to start working before the first poll so we
+  // ── 2. Wait for the tool to go working → idle ─────────────────────────
+  // Give the tool a moment to start working before the first poll so we
   // don't exit immediately on a still-false working flag.
   await new Promise((r) => setTimeout(r, 500));
 
@@ -662,7 +833,7 @@ async function cmdAsk(args) {
 
   while (true) {
     const { sessions } = await getJson('/api/sessions');
-    const s2 = sessions.find((x) => x.id === id);
+    const s2 = sessions.find((x) => x.id === resolvedId);
     if (!s2) break; // session gone — treat as done
 
     if (s2.working) {
@@ -674,7 +845,7 @@ async function cmdAsk(args) {
 
     const idleFor = notWorkingSince !== null ? Date.now() - notWorkingSince : 0;
     // Declare idle only once working was seen (so we don't exit before
-    // Claude even starts) OR after a grace period (in case working flipped
+    // the tool even starts) OR after a grace period (in case working flipped
     // so fast we missed it).
     const grace = 3_000;
     const elapsed = Date.now() - waitStart;
@@ -699,7 +870,7 @@ async function cmdAsk(args) {
   }
 
   // ── 3. Print last assistant message ──────────────────────────────────
-  const evData = await getJson(`/api/sessions/${encodeURIComponent(id)}/events?tail=50`);
+  const evData = await getJson(`/api/sessions/${encodeURIComponent(resolvedId)}/events?tail=50`);
   const events = (evData && evData.events) || [];
   const assistantEvents = events.filter(
     (ev) => ev.type === 'assistant' &&
@@ -751,6 +922,7 @@ async function cmdKeys(id, key) {
   if (!id || !key) fail('usage: pretty keys <id> <esc|up|down|left|right|^c|^d|enter|tab>');
   const bytes = KEY_BYTES[key.toLowerCase()];
   if (!bytes) fail(`unknown key '${key}'. valid: ${Object.keys(KEY_BYTES).join(', ')}`);
+  id = await resolveSessionId(id);
   await postJson(`/api/sessions/${encodeURIComponent(id)}/input`, { data: bytes });
 }
 
@@ -863,12 +1035,13 @@ async function cmdKill(ids) {
   // (`pretty kill a1b2 c3d4 …`). Each kill is reported individually;
   // exit 1 if any id was unknown.
   let anyFailed = false;
-  for (const id of ids) {
+  for (const idArg of ids) {
+    const id = await resolveSessionId(idArg);
     const ok = await del(`/api/sessions/${encodeURIComponent(id)}`);
     if (ok) {
       process.stdout.write(`killed ${id}\n`);
     } else {
-      process.stderr.write(`unknown session: ${id}\n`);
+      process.stderr.write(unknownSessionMessage(idArg) + '\n');
       anyFailed = true;
     }
   }
@@ -899,9 +1072,9 @@ async function cmdTail(args) {
       if (!Number.isFinite(n) || n < 1) fail('--lines must be a positive integer', 1);
     }
   }
+  const resolvedId = await resolveSessionId(id);
   // Print the current buffer's last N lines (clean, normalized).
-  const text = await getText(`/api/sessions/${encodeURIComponent(id)}/snapshot`);
-  if (text === null) fail(`unknown session: ${id}`, 1);
+  const text = await getText(`/api/sessions/${encodeURIComponent(resolvedId)}/snapshot`);
   const cleaned = normalize(text).replace(ANSI_RE, '');
   const lines = cleaned.split('\n');
   // Trim trailing blank rows xterm pads to fill the buffer to its row count.
@@ -924,7 +1097,7 @@ async function cmdTail(args) {
   // WS auth uses query param — browsers cannot set WS headers (contract #1/#5).
   const wsTok = readToken();
   const wsTokParam = wsTok ? `&token=${encodeURIComponent(wsTok)}` : '';
-  const sock = new ws(`ws://${HOST}:${PORT}/ws?sessionId=${encodeURIComponent(id)}${wsTokParam}`);
+  const sock = new ws(`ws://${HOST}:${PORT}/ws?sessionId=${encodeURIComponent(resolvedId)}${wsTokParam}`);
   sock.on('message', (raw) => {
     let m;
     try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -948,22 +1121,22 @@ async function cmdWait(args) {
     if (args[i] === '--idle' && args[i + 1]) idleMs = parseDuration(args[i + 1]);
     if (args[i] === '--timeout' && args[i + 1]) timeoutMs = parseDuration(args[i + 1]);
   }
-  // "Done with its turn" detection. For Claude Code sessions we key off
-  // the `working` flag, which the daemon derives from Claude's own
-  // "esc to interrupt" / live spinner footer — NOT byte rate. This is the
-  // honest signal: a custom statusline (e.g. `/goal active (3d)◎`)
-  // repaints forever and keeps `lastDataAt` fresh, so the old
-  // lastDataAt-based wait would never return for an idle Claude session.
+  const resolvedId = await resolveSessionId(id);
+  // "Done with its turn" detection. For structured-event tools (Claude Code
+  // and Codex) we key off the `working` flag — NOT byte rate. This is the
+  // honest signal: a custom statusline (e.g. `/goal active (3d)◎`) repaints
+  // forever and keeps `lastDataAt` fresh, so the old lastDataAt-based wait
+  // would never return for an idle agent session.
   // We return once `working` has stayed false for idleMs continuously.
   //
-  // Non-Claude sessions (bash, codex, …) have no such footer, so we fall
-  // back to the byte-rate lastDataAt heuristic.
+  // Other sessions (bash, …) have no such flag, so we fall back to the
+  // byte-rate lastDataAt heuristic.
   const start = Date.now();
   const pollInterval = Math.max(100, Math.min(idleMs / 4, 500));
-  let notWorkingSince = null; // claude path: when `working` last went false
+  let notWorkingSince = null; // structured-event path: when `working` last went false
   while (true) {
     const { sessions } = await getJson('/api/sessions');
-    const s = sessions.find((x) => x.id === id);
+    const s = sessions.find((x) => x.id === resolvedId);
     if (!s) {
       // Treat "session gone" as an exit — the user's caller usually wants
       // to know the session is no longer running, not error out.
@@ -972,7 +1145,7 @@ async function cmdWait(args) {
       return;
     }
     let idleFor;
-    if (s.tool === 'claude-code') {
+    if (isConfirmableTool(toolOfSession(s))) {
       if (s.working) notWorkingSince = null;
       else if (notWorkingSince === null) notWorkingSince = Date.now();
       idleFor = notWorkingSince === null ? 0 : Date.now() - notWorkingSince;
@@ -997,6 +1170,7 @@ async function cmdWait(args) {
 
 async function cmdAttach(id) {
   if (!id) fail('usage: pretty attach <id>  (Ctrl+Q to detach)');
+  id = await resolveSessionId(id);
   const WebSocket = (() => {
     try { return require(path.resolve(__dirname, '..', 'node_modules', 'ws')); }
     catch { fail('attach needs `ws` installed in prettyd/node_modules', 2); }
@@ -1164,30 +1338,37 @@ ${envEntries}
 function help() {
   process.stdout.write([
     'pretty — prettyd CLI',
+    'Session ids may be full ids or unique prefixes from `pretty ls`.',
     '',
     'Subcommands:',
     '  ls [-a | --include-exited]  list sessions (default: hides exited)',
     '  snap <id> [--raw]        print current buffer (default: clean text)',
     '  tail <id> [-f] [-n N]    print last N (default 50) lines; -f to follow',
     '  wait <id> [--idle Ns] [--timeout Ns]',
-    '                           block until session has been idle for Ns',
-    '                           (default --idle 2s, --timeout 30s)',
-    '  send <id> [--timeout Ns] [--no-wait] <text...>',
+    '                           block until session has been idle for Ns.',
+    '                           Default --idle 2s, default --timeout 30s;',
+    '                           --timeout is tunable/uncapped (e.g. 30m).',
+    '                           Background use: pretty wait <id> --timeout 1800s &',
+    '                           so an orchestrating agent can be re-invoked on completion.',
+    '  send <id> [--timeout Ns] [--no-wait] [--file path] <text...>',
     '                           send text + Enter (alias: `input`).',
-    '                           For claude-code sessions: blocks until the',
-    '                           JSONL confirms receipt (default --timeout 10s).',
+    '                           For Claude/Codex sessions: blocks until the',
+    '                           event log confirms receipt (default --timeout 10s).',
     '                           Re-presses Enter only when text is still visible',
     '                           in the composer (anti-duplicate guard).',
+    '                           --file reads the message body from UTF-8 file.',
     '                           --no-wait: fire-and-forget (old behavior).',
     '                           Exits non-zero if confirmation times out.',
     '  input <id> <text...>     same as send',
     '  last <id> [--role user|assistant] [-n N]',
     '                           print the last message(s) from the JSONL log.',
     '                           Default: last user + last assistant message.',
+    '  transcript <id>          print all user/assistant turns from the event log',
+    '                           (clean text; --json emits structured turns).',
     '  ask <id> [--timeout Ns] [--idle Ns] [--wait-timeout Ns] <text...>',
-    '                           send (with JSONL confirmation), wait for Claude',
+    '                           send (with event confirmation), wait for the tool',
     '                           to finish its reply (working→idle), then print',
-    '                           the last assistant message. claude-code only.',
+    '                           the last assistant message. Claude/Codex only.',
     '  keys <id> <key>          send esc|up|down|left|right|^c|^d|enter|tab',
     '  new --tool <claude|codex|shell> [--cwd P] [--no-skip-perms] [extra args]',
     '  new [--cwd P] [--cmd C] [args...]',
@@ -1219,6 +1400,7 @@ function help() {
     case 'input':  // alias — same operation, more intuitive for agent loops
       return cmdSend(argv.slice()); // argv still has id + text + flags
     case 'last': return cmdLast(argv.slice());
+    case 'transcript': return cmdTranscript(argv.slice());
     case 'ask':  return cmdAsk(argv.slice());
     case 'keys': return cmdKeys(argv[0], argv[1]);
     case 'new':  return cmdNew(argv);

@@ -19,8 +19,10 @@ export const config = {
   defaultRows: 50
 };
 
+export const PRETTYD_STATE_DIR = nodePath.join(os.homedir(), '.local', 'state', 'pretty-PTY');
+
 // ~/.local/state/pretty-PTY/token — 64 hex chars (32 random bytes).
-const TOKEN_PATH = nodePath.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'token');
+const TOKEN_PATH = nodePath.join(PRETTYD_STATE_DIR, 'token');
 
 /**
  * Returns the daemon's auth token, creating it on first call.

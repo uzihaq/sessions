@@ -419,6 +419,19 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         dataDisp = term.onData((d) => {
           channel?.sendInput(d);
         });
+        // macOS line-editing: xterm doesn't map Cmd+Backspace, so ⌘⌫
+        // silently does nothing in the terminal (it works in tmux/iTerm only
+        // because the native terminal maps it). Send Ctrl+U — the universal
+        // "delete to start of line" — so ⌘⌫ wipes the current input line like
+        // it does everywhere else on macOS. Return false so xterm doesn't
+        // also process the key; everything else falls through untouched.
+        term.attachCustomKeyEventHandler((e) => {
+          if (e.type === 'keydown' && e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'Backspace') {
+            channel?.sendInput('\x15');
+            return false;
+          }
+          return true;
+        });
         window.addEventListener('resize', onResize);
         ro = new ResizeObserver(onResize);
         const c = containerElRef.current;

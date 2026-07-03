@@ -768,7 +768,7 @@ button:active:not(:disabled),
   top: calc(100% + 4px);
   right: 0;
   z-index: 50;
-  min-width: 200px;
+  min-width: 260px;
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -824,6 +824,18 @@ button:active:not(:disabled),
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+.settings-menu-toggle {
+  align-items: flex-start;
+}
+.settings-menu-toggle .settings-menu-label {
+  line-height: 1.3;
+}
+.settings-menu-status {
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.35;
+  padding: 0 4px 6px 32px;
 }
 .tab-new,
 .tab-resume {
@@ -897,58 +909,35 @@ button:active:not(:disabled),
 .mn-btn {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 4px;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg-elev-2);
-  color: var(--fg-dim);
-  font-size: 11px;
+  background: var(--bg-elev-3);
+  color: var(--fg);
+  font-size: 12px;
   cursor: pointer;
   user-select: none;
 }
-.mn-btn.mn-side { max-width: 22%; }
 .mn-btn.mn-hero {
-  flex: 2;
-  min-width: 0;
-  background: var(--bg-elev-3);
-  color: var(--fg);
   position: relative;
 }
-.mn-glyph { font-size: 16px; line-height: 1; }
-.mn-hero-top {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 10px;
-  color: var(--fg-faint);
-}
-.mn-hero-label { font-weight: 600; color: var(--fg-dim); }
 .mn-hero-name {
   font-family: var(--font-mono);
-  font-size: 12px;
   color: var(--fg);
   max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mn-badge {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  background: var(--accent);
-  color: #0a0a0a;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 0 5px;
-  border-radius: 999px;
-}
 .mn-status-dot {
   width: 8px;
   height: 8px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--fg-faint);
 }
@@ -977,6 +966,7 @@ button:active:not(:disabled),
   gap: 10px;
   overflow-y: auto;
 }
+.bottom-sheet:focus { outline: none; }
 .bottom-sheet-handle {
   width: 36px;
   height: 4px;
@@ -987,17 +977,57 @@ button:active:not(:disabled),
 .bottom-sheet-title { margin: 0; font-size: 14px; }
 .bottom-sheet-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .bottom-sheet-row {
+  width: 100%;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
+  text-align: left;
   padding: 10px 12px;
   background: var(--bg-elev-2);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
+  color: var(--fg);
   cursor: pointer;
 }
+.bottom-sheet-row:hover { background: var(--bg-elev-3); }
 .bottom-sheet-row.is-active { background: var(--bg-elev-3); border: 1px solid var(--accent); }
-.bottom-sheet-name { font-family: var(--font-mono); font-size: 13px; }
-.bottom-sheet-cmd { color: var(--fg-faint); font-size: 11px; }
+.bottom-sheet-icon,
+.bottom-sheet-action-icon {
+  width: 20px;
+  display: inline-flex;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bottom-sheet-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bottom-sheet-name {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottom-sheet-cwd {
+  color: var(--fg-faint);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bottom-sheet-action { color: var(--fg-dim); }
+.bottom-sheet-action .bottom-sheet-name { font-family: inherit; }
+.bottom-sheet-status-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.bottom-sheet-status-dot.working { background: var(--ok); animation: pulse 1.2s ease-in-out infinite; }
 .bottom-sheet-empty { color: var(--fg-faint); padding: 12px; text-align: center; }
 
 /* Buttons — pretty-tmux design language: 8px radius, 0.15s ease
@@ -3281,6 +3311,9 @@ details[open] > summary > .pretty-command-disclosure {
    * is part of the layout, not floating above it. */
   .mobile-nav { display: flex; }
   .app-brand { display: none; }
+  .tabs-strip,
+  .tab-new,
+  .tab-resume { display: none; }
   .conn-status .conn-label { display: none; }
 
   /* Prevent ANY child from overflowing the viewport horizontally.

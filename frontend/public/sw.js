@@ -61,6 +61,54 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('push', (event) => {
+  var payload = {};
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch {
+      payload = { title: 'Session finished', body: event.data.text() };
+    }
+  }
+  var data = payload && typeof payload.data === 'object' && payload.data
+    ? payload.data
+    : {};
+  var sessionId = typeof data.sessionId === 'string' ? data.sessionId : undefined;
+  event.waitUntil(
+    self.registration.showNotification(
+      typeof payload.title === 'string' ? payload.title : 'Session finished',
+      {
+        body: typeof payload.body === 'string' ? payload.body : undefined,
+        data: data,
+        icon: '/icon.svg',
+        tag: sessionId
+      }
+    )
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  var data = event.notification.data && typeof event.notification.data === 'object'
+    ? event.notification.data
+    : {};
+  var sessionId = typeof data.sessionId === 'string' ? data.sessionId : null;
+  var message = sessionId ? { type: 'push-open-session', sessionId: sessionId } : null;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      if (clients.length > 0) {
+        return clients[0].focus().then((client) => {
+          if (message) client.postMessage(message);
+        });
+      }
+      return self.clients.openWindow('/').then((client) => {
+        if (client && message) client.postMessage(message);
+      });
+    })
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return; // POST/DELETE always hit network

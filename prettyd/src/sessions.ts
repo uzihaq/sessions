@@ -15,6 +15,8 @@ import { bootstrapRunner, bootoutRunner, cleanupOrphanPlists } from './launchd.j
 import type { CreateSessionRequest, SessionInfo } from './types.js';
 import { watchSessionFile, type SessionFileWatcher, type ClaudeSessionEvent } from './sessionFileWatcher.js';
 import { claudeWorkingFromSnapshot } from './claudeActivity.js';
+import { watchCodexRollout } from './codexWatcher.js';
+import { sendPush } from './push.js';
 
 // Same trick runner.ts uses to bypass @xterm/headless's broken ESM facade.
 const xtermRequire = createRequire(import.meta.url);
@@ -43,11 +45,15 @@ interface SessionInternal {
   exitSignal: string | null;
   exitSeq: number | null;
   recentBytes: number;
-  // JSONL watcher for Claude Code sessions. Reads structured events
-  // from ~/.claude/projects/<encoded-cwd>/<id>.jsonl and re-emits
-  // through `emitter.emit('claudeEvent', ev)`. Null for non-Claude
-  // sessions or before Claude initializes its session file.
+  // JSONL watcher for Claude Code sessions and Codex rollouts. Reads
+  // structured events and re-emits the canonical Claude-shaped stream
+  // through `emitter.emit('claudeEvent', ev)`. Null for terminal
+  // sessions or before the backing file is resolved.
   fileWatcher: SessionFileWatcher | null;
+  // Codex's rollout lifecycle is the source of truth once observed.
+  // Until then, fall back to the old byte-rate signal so sessions still
+  // show activity while the rollout file is being created.
+  codexLifecycleWorking: boolean | null;
   // History of events seen so far on this session. Lets new WS
   // connections replay everything Claude has emitted since this
   // prettyd started, same shape as how OutputEvent replay works.
@@ -57,6 +63,10 @@ interface SessionInternal {
   // WS ?claudeEventsSince= / HTTP ?since= are absolute indices, so without
   // this offset a reconnect after a trim would silently skip events.
   claudeEventBase: number;
+  // Push notifications should only fire on observed working true → false
+  // edges. The first detector sample after daemon start/register is just
+  // initialization, not a completion event.
+  pushWorkingObserved: boolean;
 }
 
 export type { OutputEvent };
@@ -74,20 +84,45 @@ const WORKING_DECAY_MS = 800;
 // "exit code 0" briefly without showing ghost sessions forever.
 const EXITED_GRACE_MS = 30_000;
 
+function sessionDisplayLabel(info: SessionInfo): string {
+  if (info.claudeCustomTitle) return info.claudeCustomTitle;
+  if (info.claudeAiTitle) return info.claudeAiTitle;
+  const cwdBase = info.cwd.split('/').filter(Boolean).pop();
+  if (cwdBase) return cwdBase;
+  if (info.cmd) return info.cmd;
+  return info.id.slice(0, 8);
+}
+
+function setWorkingState(internal: SessionInternal, nextWorking: boolean): void {
+  const previous = internal.info.working;
+  internal.info.working = nextWorking;
+  if (!internal.pushWorkingObserved) {
+    internal.pushWorkingObserved = true;
+    return;
+  }
+  if (previous && !nextWorking && !internal.exited) {
+    const label = sessionDisplayLabel(internal.info);
+    void sendPush({
+      title: `${label} finished`,
+      data: { sessionId: internal.info.id }
+    });
+  }
+}
+
 setInterval(() => {
   for (const s of sessions.values()) {
     if (s.exited) continue;
     s.recentBytes = Math.floor(s.recentBytes / 2);
     const byteWorking = s.recentBytes >= WORKING_BYTES_THRESHOLD;
+    let nextWorking: boolean;
     // Byte-rate lies for Claude Code: a custom statusline (e.g. the
     // user's `/goal active (3d)◎`) repaints continuously while idle, so
     // the PTY never goes quiet and `working` would be pinned true. JSONL
     // append-rate lies the other way (silent for minutes mid-turn). The
     // honest signal is Claude's own "· esc to interrupt" footer, which we
     // read off the headless mirror we already feed for snapshots. Fall
-    // back to byte-rate only if the mirror serialize hiccups, and for
-    // non-Claude sessions (bash spam, `cat huge.txt`, codex) where there
-    // is no such footer.
+    // back to byte-rate only if the mirror serialize hiccups. Codex
+    // uses rollout task_started/task_complete once those events are seen.
     if (s.info.tool === 'claude-code') {
       if (s.recentBytes <= 0) {
         // No PTY output since the last tick → the screen can't have changed,
@@ -97,17 +132,20 @@ setInterval(() => {
         // mirror (incl. the active 254×127 one) every tick regardless of
         // whether anything happened. A truly-working session keeps emitting
         // its spinner, so recentBytes stays > 0 and we still serialize it.
-        s.info.working = false;
+        nextWorking = false;
       } else {
         try {
-          s.info.working = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
+          nextWorking = claudeWorkingFromSnapshot(s.mirrorSerialize.serialize({ scrollback: 0 }));
         } catch {
-          s.info.working = byteWorking;
+          nextWorking = byteWorking;
         }
       }
+    } else if (s.info.tool === 'codex') {
+      nextWorking = s.codexLifecycleWorking ?? byteWorking;
     } else {
-      s.info.working = byteWorking;
+      nextWorking = byteWorking;
     }
+    setWorkingState(s, nextWorking);
   }
 }, WORKING_DECAY_MS).unref();
 
@@ -168,6 +206,40 @@ function extractClaudeSessionId(args: string[]): string | undefined {
     }
   }
   return undefined;
+}
+
+function recordStructuredSessionEvent(internal: SessionInternal, ev: ClaudeSessionEvent): void {
+  internal.claudeEventLog.push(ev);
+  // Bound the log so a long-running session doesn't grow unbounded.
+  // 5000 events ≈ several days of typical use. Track how many we drop
+  // from the front so absolute indices (used by WS replay + HTTP
+  // /events?since=) stay correct across the trim.
+  if (internal.claudeEventLog.length > 5000) {
+    const removed = internal.claudeEventLog.length - 5000;
+    internal.claudeEventLog.splice(0, removed);
+    internal.claudeEventBase += removed;
+  }
+  // Track when the user last actually typed something — the staleness
+  // signal `pretty ls` surfaces so old sessions can be culled.
+  // Timestamps come from the event itself (watchers replay history from
+  // byte 0 on attach, so Date.now() would stamp every historical
+  // message as "just now").
+  if (isRealUserMessage(ev) && typeof ev.timestamp === 'string') {
+    const ts = Date.parse(ev.timestamp);
+    if (Number.isFinite(ts) && ts > (internal.info.lastUserMessageAt ?? 0)) {
+      internal.info.lastUserMessageAt = ts;
+    }
+  }
+  // Surface Claude's own session titles. Codex simply won't emit these.
+  const t = (ev as { type?: string }).type;
+  if (t === 'custom-title') {
+    const v = (ev as { customTitle?: string }).customTitle;
+    if (typeof v === 'string' && v.length > 0) internal.info.claudeCustomTitle = v;
+  } else if (t === 'ai-title') {
+    const v = (ev as { aiTitle?: string }).aiTitle;
+    if (typeof v === 'string' && v.length > 0) internal.info.claudeAiTitle = v;
+  }
+  internal.emitter.emit('claudeEvent', ev);
 }
 
 function resolveRunnerProgramArguments(): string[] {
@@ -444,8 +516,10 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
     exitSeq: null,
     recentBytes: 0,
     fileWatcher: null,
+    codexLifecycleWorking: null,
     claudeEventLog: [],
-    claudeEventBase: 0
+    claudeEventBase: 0,
+    pushWorkingObserved: false
   };
   sessions.set(hello.id, internal);
 
@@ -474,44 +548,31 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
         }
         internal.fileWatcher = watcher;
         watcher.emitter.on('event', (ev: ClaudeSessionEvent) => {
-          internal.claudeEventLog.push(ev);
-          // Bound the log so a long-running session doesn't grow
-          // unbounded. 5000 events ≈ several days of typical use. Track
-          // how many we drop from the front so absolute indices (used by
-          // WS replay + HTTP /events?since=) stay correct across the trim.
-          if (internal.claudeEventLog.length > 5000) {
-            const removed = internal.claudeEventLog.length - 5000;
-            internal.claudeEventLog.splice(0, removed);
-            internal.claudeEventBase += removed;
-          }
-          // Surface Claude's own session titles. The TUI writes two
-          // event types into the JSONL:
-          //   {"type":"ai-title","aiTitle":"<auto-generated>","sessionId":...}
-          //   {"type":"custom-title","customTitle":"<user via /rename>","sessionId":...}
-          // We keep the most recent of each on the session info so the
-          // frontend tab strip can match the official label without
-          // shipping the whole event log. custom-title wins over
-          // ai-title because /rename is explicit user intent.
-          // Track when the user last actually typed something — the
-          // staleness signal `pretty ls` surfaces so old sessions can be
-          // culled. Timestamps come from the event itself (the watcher
-          // replays history from byte 0 on attach, so Date.now() would
-          // stamp every historical message as "just now").
-          if (isRealUserMessage(ev) && typeof ev.timestamp === 'string') {
-            const ts = Date.parse(ev.timestamp);
-            if (Number.isFinite(ts) && ts > (internal.info.lastUserMessageAt ?? 0)) {
-              internal.info.lastUserMessageAt = ts;
-            }
-          }
-          const t = (ev as { type?: string }).type;
-          if (t === 'custom-title') {
-            const v = (ev as { customTitle?: string }).customTitle;
-            if (typeof v === 'string' && v.length > 0) internal.info.claudeCustomTitle = v;
-          } else if (t === 'ai-title') {
-            const v = (ev as { aiTitle?: string }).aiTitle;
-            if (typeof v === 'string' && v.length > 0) internal.info.claudeAiTitle = v;
-          }
-          emitter.emit('claudeEvent', ev);
+          recordStructuredSessionEvent(internal, ev);
+        });
+        watcher.emitter.on('error', () => { /* swallow — non-fatal */ });
+      })
+      .catch(() => { /* swallow — non-fatal */ });
+  }
+
+  if (internal.info.tool === 'codex' && hello.cwd) {
+    void watchCodexRollout({
+      cwd: hello.cwd,
+      args: hello.args,
+      createdAt: hello.createdAt
+    })
+      .then((watcher) => {
+        if (internal.exited) {
+          watcher.close();
+          return;
+        }
+        internal.fileWatcher = watcher;
+        watcher.emitter.on('event', (ev: ClaudeSessionEvent) => {
+          recordStructuredSessionEvent(internal, ev);
+        });
+        watcher.emitter.on('working', (working: boolean) => {
+          internal.codexLifecycleWorking = working;
+          setWorkingState(internal, working);
         });
         watcher.emitter.on('error', () => { /* swallow — non-fatal */ });
       })

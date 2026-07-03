@@ -1,32 +1,53 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState, type TouchEvent } from 'react';
 import type { SessionInfo } from '../types';
 import { getTabLabel, useTabLabel, sessionLabel } from '../lib/tabLabels';
+import { ParserIcon } from './ParserIcon';
+
+type MobileTabStatus = 'working' | 'finished' | 'idle';
 
 interface Props {
   sessions: SessionInfo[];
   activeId: string | null;
-  isWorking: boolean;
+  statusBySession: Record<string, MobileTabStatus>;
+  iconBySession: Record<string, string>;
   onSwitch: (id: string) => void;
   onNew: () => void;
+  onResume: () => void;
 }
 
-// Bottom navigation for ≤720px screens. Hero "Sessions" button in the
-// center accepts a horizontal swipe to cycle prev/next. Tap (no swipe)
-// pops the session sheet listing all sessions.
+// Bottom navigation for ≤720px screens. The single lane button accepts
+// a horizontal swipe to cycle prev/next. Tap (no swipe) pops the session
+// sheet listing all sessions plus new/resume actions.
 //
 // Heuristic for swipe vs tap:
 //   • dx ≥ 50px AND |dx| > |dy|*1.4 → swipe
 //   • else → tap
 // 600ms upper bound on the gesture so a slow scroll doesn't get
 // misinterpreted as a swipe.
-export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Props): JSX.Element {
+export function MobileNav({
+  sessions,
+  activeId,
+  statusBySession,
+  iconBySession,
+  onSwitch,
+  onNew,
+  onResume
+}: Props): JSX.Element {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const laneButtonRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
   const active = sessions.find((s) => s.id === activeId);
   const idx = activeId ? sessions.findIndex((s) => s.id === activeId) : -1;
   // Use the shared label chain (user override > Claude titles > cwd > cmd)
   // so the hero button matches what SessionTabs shows for the same session.
   const activeUserLabel = useTabLabel(active?.id ?? '');
-  const activeLabel = activeUserLabel ?? (active ? sessionLabel(active) : '—');
+  const activeLabel = activeUserLabel ?? (active ? sessionLabel(active) : 'No sessions');
+  const activeIsWorking = activeId ? statusBySession[activeId] === 'working' : false;
+
+  useEffect(() => {
+    if (!sheetOpen) return;
+    window.requestAnimationFrame(() => sheetRef.current?.focus());
+  }, [sheetOpen]);
 
   // Tiny haptic helper. Mirrors pretty-tmux: 10ms for taps, 14ms for
   // swipes — short enough to feel like an "ack" not a buzz, long
@@ -49,14 +70,14 @@ export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Pr
 
   const touchRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const swipedRef = useRef(false);
-  const onTouchStart = (e: React.TouchEvent): void => {
+  const onTouchStart = (e: TouchEvent): void => {
     if (e.touches.length !== 1) { touchRef.current = null; return; }
     const t = e.touches[0];
     if (!t) return;
     touchRef.current = { x: t.clientX, y: t.clientY, t: Date.now() };
     swipedRef.current = false;
   };
-  const onTouchEnd = (e: React.TouchEvent): void => {
+  const onTouchEnd = (e: TouchEvent): void => {
     const start = touchRef.current;
     touchRef.current = null;
     if (!start) return;
@@ -71,6 +92,12 @@ export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Pr
       swipe(dx < 0 ? 1 : -1);
     }
   };
+  const closeSheet = (restoreFocus = true): void => {
+    setSheetOpen(false);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => laneButtonRef.current?.focus());
+    }
+  };
   const onHeroClick = (): void => {
     if (swipedRef.current) {
       swipedRef.current = false;
@@ -79,61 +106,88 @@ export function MobileNav({ sessions, activeId, isWorking, onSwitch, onNew }: Pr
     haptic(10);
     setSheetOpen(true);
   };
+  const rowLabel = (s: SessionInfo): string => getTabLabel(s.id) ?? sessionLabel(s);
+  const compactCwd = (cwd: string): string => cwd.replace(/^\/(Users|home)\/[^/]+/, '~');
+  const openNew = (): void => {
+    haptic(10);
+    closeSheet(false);
+    onNew();
+  };
+  const openResume = (): void => {
+    haptic(10);
+    closeSheet(false);
+    onResume();
+  };
 
   return (
     <>
       <nav className="mobile-nav" role="navigation" aria-label="Quick navigation">
         <button
-          type="button"
-          className="mn-btn mn-side"
-          onClick={() => { haptic(10); onNew(); }}
-          aria-label="New session"
-        >
-          <span className="mn-glyph">+</span>
-          <span>New</span>
-        </button>
-
-        <button
+          ref={laneButtonRef}
           type="button"
           className="mn-btn mn-hero"
           onClick={onHeroClick}
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
-          aria-label="Open session list (swipe left/right to switch)"
+          aria-label={`Open session list for ${activeLabel}${activeIsWorking ? ', working' : ''}`}
         >
-          <div className="mn-hero-top">
-            <span aria-hidden>‹</span>
-            <span className="mn-hero-label">Sessions</span>
-            <span aria-hidden>›</span>
-          </div>
+          {activeIsWorking ? <span className="mn-status-dot working" aria-hidden /> : null}
           <div className="mn-hero-name">{activeLabel}</div>
-          {sessions.length > 0 ? <span className="mn-badge">{sessions.length}</span> : null}
-        </button>
-
-        <button type="button" className="mn-btn mn-side" onClick={() => { haptic(10); setSheetOpen(true); }} aria-label="Status">
-          <span className={`mn-status-dot${isWorking ? ' working' : ''}`} aria-hidden />
-          <span>{isWorking ? 'Working' : 'Idle'}</span>
         </button>
       </nav>
 
       {sheetOpen ? (
-        <div className="bottom-sheet-backdrop" onClick={() => setSheetOpen(false)}>
-          <div className="bottom-sheet" onClick={(e) => e.stopPropagation()}>
+        <div className="bottom-sheet-backdrop" onClick={() => closeSheet()}>
+          <div
+            ref={sheetRef}
+            className="bottom-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-session-sheet-title"
+            tabIndex={-1}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') closeSheet();
+            }}
+          >
             <div className="bottom-sheet-handle" />
-            <h3 className="bottom-sheet-title">Sessions</h3>
+            <h3 className="bottom-sheet-title" id="mobile-session-sheet-title">Sessions</h3>
             <ul className="bottom-sheet-list">
+              <li>
+                <button type="button" className="bottom-sheet-row bottom-sheet-action" onClick={openNew} aria-label="New session">
+                  <span className="bottom-sheet-action-icon" aria-hidden>＋</span>
+                  <span className="bottom-sheet-name">New session</span>
+                </button>
+              </li>
+              <li>
+                <button type="button" className="bottom-sheet-row bottom-sheet-action" onClick={openResume} aria-label="Resume session">
+                  <span className="bottom-sheet-action-icon" aria-hidden>⤴</span>
+                  <span className="bottom-sheet-name">Resume…</span>
+                </button>
+              </li>
               {sessions.map((s) => (
-                <li
-                  key={s.id}
-                  className={`bottom-sheet-row${s.id === activeId ? ' is-active' : ''}`}
-                  onClick={() => {
-                    haptic(10);
-                    onSwitch(s.id);
-                    setSheetOpen(false);
-                  }}
-                >
-                  <span className="bottom-sheet-name">{getTabLabel(s.id) ?? sessionLabel(s)}</span>
-                  <span className="bottom-sheet-cmd">{s.cmd}</span>
+                <li key={s.id}>
+                  <button
+                    type="button"
+                    className={`bottom-sheet-row${s.id === activeId ? ' is-active' : ''}`}
+                    onClick={() => {
+                      haptic(10);
+                      onSwitch(s.id);
+                      closeSheet();
+                    }}
+                    aria-label={`Switch to ${rowLabel(s)}${statusBySession[s.id] === 'working' ? ', working' : ''}`}
+                  >
+                    <span className="bottom-sheet-icon" aria-hidden>
+                      <ParserIcon icon={iconBySession[s.id] ?? '⬛'} size={18} />
+                    </span>
+                    <span className="bottom-sheet-main">
+                      <span className="bottom-sheet-name">{rowLabel(s)}</span>
+                      <span className="bottom-sheet-cwd">{compactCwd(s.cwd)}</span>
+                    </span>
+                    {statusBySession[s.id] === 'working' ? (
+                      <span className="bottom-sheet-status-dot working" aria-hidden />
+                    ) : null}
+                  </button>
                 </li>
               ))}
               {sessions.length === 0 ? <li className="bottom-sheet-empty">no sessions yet</li> : null}
