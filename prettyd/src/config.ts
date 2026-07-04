@@ -24,6 +24,15 @@ export const PRETTYD_STATE_DIR = nodePath.join(os.homedir(), '.local', 'state', 
 // ~/.local/state/pretty-PTY/token — 64 hex chars (32 random bytes).
 const TOKEN_PATH = nodePath.join(PRETTYD_STATE_DIR, 'token');
 
+// Operator escape hatch: `touch ~/.local/state/pretty-PTY/open` disables token
+// auth (trusted-network / Tailscale-only mode — how it ran before auth
+// shipped). Honored by BOTH the HTTP gate and the WS upgrade. The Origin
+// allowlist still applies, so cross-site (CSWSH) protection is unaffected.
+// Reversible: delete the file to re-enable tokens.
+export function isAuthOpen(): boolean {
+  return fs.existsSync(nodePath.join(PRETTYD_STATE_DIR, 'open'));
+}
+
 /**
  * Returns the daemon's auth token, creating it on first call.
  *

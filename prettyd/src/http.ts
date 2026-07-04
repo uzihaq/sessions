@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering, deepSessionDiagnostics } from './sessions.js';
 import { scanResumableSessions } from './claudeSessionScanner.js';
 import { listDirectoryCandidates } from './directories.js';
-import { config, getAuthToken, isAllowedOrigin } from './config.js';
+import { config, getAuthToken, isAllowedOrigin, isAuthOpen } from './config.js';
 import { addSubscription, getVapidPublicKey, removeSubscription } from './push.js';
 import type { CreateSessionRequest } from './types.js';
 
@@ -62,6 +62,11 @@ function verifyToken(provided: string, expected: string): boolean {
 // Returns true when the request carries a valid auth token — either the
 // `Authorization: Bearer <t>` header or the `?token=<t>` query param.
 function checkAuth(req: IncomingMessage, url: URL): boolean {
+  // Escape hatch: if ~/.local/state/pretty-PTY/open exists, skip token auth
+  // (trusted-network / Tailscale-only mode — how it ran before auth shipped).
+  // Fully reversible: delete the file to re-enable tokens. The Origin
+  // allowlist still applies, so cross-site (CSWSH) protection is unaffected.
+  if (isAuthOpen()) return true;
   const token = getAuthToken();
   const authHeader = req.headers.authorization ?? '';
   if (authHeader.startsWith('Bearer ')) {

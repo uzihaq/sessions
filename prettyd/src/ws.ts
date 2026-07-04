@@ -5,7 +5,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { getSession, writeInput, resize, type OutputEvent, type SessionHandle } from './sessions.js';
 import type { ClaudeSessionEvent } from './sessionFileWatcher.js';
 import { PROTOCOL_VERSION, type ClientMsg, type ServerMsg } from './types.js';
-import { config, getAuthToken, isAllowedOrigin } from './config.js';
+import { config, getAuthToken, isAllowedOrigin, isAuthOpen } from './config.js';
 
 // Cap inbound frames at 256 KB — plenty for any realistic input (keystrokes,
 // JSON control messages, paste). A client that exceeds it is either broken or
@@ -365,7 +365,7 @@ export function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer
   const tokenOk = qBuf.length > 0 &&
     qBuf.length === authBuf.length &&
     crypto.timingSafeEqual(qBuf, authBuf);
-  if (!tokenOk) {
+  if (!tokenOk && !isAuthOpen()) {
     // Respond with HTTP 401 before destroying the socket. Using close
     // code 4401 post-upgrade would require completing the WS handshake
     // first, which we avoid so the socket is never treated as live.
