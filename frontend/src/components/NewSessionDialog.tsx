@@ -2,12 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSessions } from '../store/sessions';
 import { DirectoryBrowser } from './DirectoryBrowser';
 import { fetchResumableSessions, type ResumableSession } from '../api/prettyd';
+import { readNewSessionDefaults, type NewSessionTool } from '../lib/newSessionDefaults';
 import { randomUUID } from '../lib/uuid';
 
-type Tool = 'claude-code' | 'codex' | 'shell';
-
 interface ToolDef {
-  id: Tool;
+  id: NewSessionTool;
   name: string;
   icon: string;
   hint: string;
@@ -56,7 +55,7 @@ interface Props {
 // `--resume <id>` so Claude continues that conversation. No fresh
 // uuid in that path.
 function resolveCommand(
-  tool: Tool,
+  tool: NewSessionTool,
   skipPerms: boolean,
   resumeSessionId: string | null
 ): { cmd: string | undefined; args: string[] | undefined } {
@@ -107,9 +106,10 @@ function extractClaudeSessionId(args: string[]): string | null {
 export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element {
   const create = useSessions((s) => s.create);
   const openSessions = useSessions((s) => s.sessions);
-  const [tool, setTool] = useState<Tool>('claude-code');
-  const [skipPerms, setSkipPerms] = useState(true);
-  const [cwd, setCwd] = useState('');
+  const [initialDefaults] = useState(readNewSessionDefaults);
+  const [tool, setTool] = useState<NewSessionTool>(initialDefaults.tool);
+  const [skipPerms, setSkipPerms] = useState(initialDefaults.skipPerms);
+  const [cwd, setCwd] = useState(initialDefaults.cwd);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -158,7 +158,9 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
       await create({
         cmd,
         args,
-        cwd: resumeCwd || undefined
+        cwd: resumeCwd || undefined,
+        cols: initialDefaults.cols,
+        rows: initialDefaults.rows
       });
       onClose();
     } catch (err) {
