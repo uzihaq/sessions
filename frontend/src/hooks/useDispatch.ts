@@ -91,6 +91,10 @@ export interface DispatchMessage {
   // by Claude's queue but not yet processed. Shown faded; replaced by
   // the real user_input event once Claude picks it off the queue.
   queued?: boolean;
+  // For failed user sends: one-line reason surfaced in the red status
+  // strip. Kept short because the actionable detail lives in RemoteView's
+  // off-path banner when the terminal snapshot shows a picker/prompt.
+  failureReason?: string;
   // For pending user sends: the number of JSONL occurrences of this exact
   // content that ALREADY existed when we sent it. The send is confirmed
   // only once the occurrence count EXCEEDS this baseline — so a re-send of
@@ -101,8 +105,9 @@ export interface DispatchMessage {
 
 const STORAGE_PREFIX = 'pretty-pty:dispatch:';
 const MAX_PER_SESSION = 200;       // localStorage budget cap
-const PENDING_TIMEOUT_MS = 15_000; // pending → failed after this
+const PENDING_TIMEOUT_MS = 6_000;  // pending → failed after this
 const SUFFIX_LEN = 30;             // chars at end-of-message used for matching
+const PENDING_TIMEOUT_REASON = 'no matching user event appeared within 6s';
 
 // Closed-loop Enter-retry: after the initial paste+Enter, if the parser
 // hasn't confirmed receipt by these offsets, send another `\r`. Each
@@ -111,7 +116,7 @@ const SUFFIX_LEN = 30;             // chars at end-of-message used for matching
 // until the user types again. We do NOT re-send the paste content
 // here — that would risk doubling whatever's still in Claude's input
 // buffer. Manual retry button (red bubble) does re-paste.
-const ENTER_RETRY_OFFSETS_MS = [2000, 4500, 8000];
+const ENTER_RETRY_OFFSETS_MS = [2000, 4500];
 
 function storageKey(serverId: string, sessionId: string): string {
   return `${STORAGE_PREFIX}${serverId}:${sessionId}`;
@@ -351,7 +356,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
             if (pendingIdxs.length === 0) pendingByTail.delete(tail);
             const m = next[idx]!;
             if (m.status === 'pending') {
-              next[idx] = { ...m, status: 'sent', confirmedAt: now, errorResponse, blockId: b.id };
+              next[idx] = { ...m, status: 'sent', confirmedAt: now, errorResponse, blockId: b.id, failureReason: undefined };
               consumedUserBlockIds.add(b.id);
               changed = true;
             }
@@ -439,7 +444,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
         const m = next[i]!;
         // Apply the fuzzy match to BOTH pending and already-failed
         // messages. The failed-recovery path matters: a message can
-        // tombstone at the 10s mark and only later have a matching
+        // tombstone at the timeout mark and only later have a matching
         // block appear (parser was lagging, or Claude rendered the
         // input belatedly). When the match shows up, flip back to
         // sent rather than leaving a permanent "not delivered" lie.
@@ -447,7 +452,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
         if (m.status !== 'pending' && m.status !== 'failed') continue;
         const matchedBlock = fuzzyCandidates.find((b) => fuzzyMatchPending(b.content, m.content));
         if (matchedBlock) {
-          next[i] = { ...m, status: 'sent', confirmedAt: now, blockId: matchedBlock.id };
+          next[i] = { ...m, status: 'sent', confirmedAt: now, blockId: matchedBlock.id, failureReason: undefined };
           consumedUserBlockIds.add(matchedBlock.id);
           // Remove from candidates so the next pending in the loop
           // doesn't also match the same block.
@@ -472,7 +477,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
           if (m.status !== 'pending' && m.status !== 'failed') continue;
           const have = eventUserContentCounts.get(m.content.trim()) ?? 0;
           if (have > (m.confirmBaseline ?? 0)) {
-            next[i] = { ...m, status: 'sent', confirmedAt: now };
+            next[i] = { ...m, status: 'sent', confirmedAt: now, failureReason: undefined };
             changed = true;
           }
         }
@@ -484,7 +489,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
       for (let i = 0; i < next.length; i++) {
         const m = next[i]!;
         if (m.role === 'user' && m.status === 'pending' && now - m.createdAt > PENDING_TIMEOUT_MS) {
-          next[i] = { ...m, status: 'failed' };
+          next[i] = { ...m, status: 'failed', failureReason: PENDING_TIMEOUT_REASON };
           changed = true;
         }
       }
@@ -513,7 +518,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
         const next = prev.map((m) => {
           if (m.role === 'user' && m.status === 'pending' && now - m.createdAt > PENDING_TIMEOUT_MS) {
             changed = true;
-            return { ...m, status: 'failed' as const };
+            return { ...m, status: 'failed' as const, failureReason: PENDING_TIMEOUT_REASON };
           }
           return m;
         });
@@ -622,7 +627,7 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
     ) {
       targetId = last.id;
       setMessages((p) =>
-        p.map((m) => (m.id === targetId ? { ...m, createdAt: now } : m))
+        p.map((m) => (m.id === targetId ? { ...m, createdAt: now, failureReason: undefined } : m))
       );
     } else {
       // Snapshot the confirmation baseline: how many JSONL occurrences of
@@ -663,9 +668,25 @@ export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, se
     // missing Enter.
     send('\x1b[200~' + target.content + '\x1b[201~');
     window.setTimeout(() => send('\r'), 50);
+    const trimmed = target.content.trim();
+    const jsonlCount = eventCountsRef.current?.get(trimmed) ?? 0;
+    const queuedAhead = messagesRef.current.filter(
+      (m) => m.id !== id
+        && m.role === 'user'
+        && (m.status === 'pending' || m.status === 'failed')
+        && m.content.trim() === trimmed
+    ).length;
     setMessages((prev) =>
       prev.map((m) =>
-        m.id === id ? { ...m, status: 'pending' as const, createdAt: Date.now() } : m
+        m.id === id
+          ? {
+              ...m,
+              status: 'pending' as const,
+              createdAt: Date.now(),
+              confirmBaseline: jsonlCount + queuedAhead,
+              failureReason: undefined
+            }
+          : m
       )
     );
     scheduleEnterRetries(id);

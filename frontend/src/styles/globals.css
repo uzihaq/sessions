@@ -1733,6 +1733,37 @@ button:active:not(:disabled),
   background: var(--bg-elev-1);
   flex-shrink: 0;
 }
+.remote-blocking-banner {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px;
+  border-top: 1px solid rgba(251, 146, 60, 0.35);
+  background: rgba(251, 146, 60, 0.1);
+  color: var(--fg);
+  font-size: 13px;
+}
+.remote-blocking-banner-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.remote-blocking-banner-action {
+  flex-shrink: 0;
+  border: 1px solid rgba(251, 146, 60, 0.65);
+  background: var(--bg-elev-2);
+  color: #fb923c;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.remote-blocking-banner-action:hover {
+  background: var(--bg-elev-3);
+  border-color: #fb923c;
+}
 
 /* "Refresh" — wipe Remote's owned log and re-derive from parser blocks.
  * Acknowledged not-great UI; ghost button in the top-right corner of

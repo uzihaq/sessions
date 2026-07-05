@@ -28,12 +28,104 @@ export interface MultiChoice {
   selectedIndex: number;
 }
 
+export type SnapshotComposerStateKind =
+  | 'normal-composer'
+  | 'numbered-picker'
+  | 'trust-prompt'
+  | 'update/notice-banner'
+  | 'unknown-blocking';
+
+export interface SnapshotComposerState {
+  kind: SnapshotComposerStateKind;
+  title: string;
+  description: string;
+}
+
 const FOOTER_RE = /Enter to select.*[↑↓].*to navigate/;
 const OPTION_RE = /^(\s*)([❯>])?\s*(\d+)\.\s+(.+?)\s*$/;
 const RULE_RE = /^\s*─{4,}\s*$/;
+const CURSOR_FORWARD_RE = /\x1b\[(\d+)C/g;
+const GENERIC_NUMBERED_OPTION_RE = /^\s*(?:[❯>]\s*)?\d+[\.)]\s+\S.+$/;
+const TRUST_PROMPT_RE = /\b(?:do you trust|trust (?:this|the)|trusted (?:folder|directory|workspace|project)|trust the files|only grant access to directories you trust)\b/i;
+const TRUST_CONTEXT_RE = /\b(?:folder|directory|workspace|project|files in this)\b/i;
+const UPDATE_NOTICE_RE = /\b(?:update available|new version|latest version|release notes|what'?s new|restart to update|install update|update now|press enter to continue|notice)\b/i;
+const BLOCKING_PROMPT_RE = /\b(?:press enter|hit enter|continue\?|confirm|are you sure|allow|deny|approve|permission|yes\/no|\[y\/n\]|\(y\/n\)|select|choose)\b/i;
 
 function stripAnsi(s: string): string {
-  return s.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
+  return s
+    .replace(CURSOR_FORWARD_RE, (_, n: string) => ' '.repeat(parseInt(n, 10)))
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07]*\x07/g, '');
+}
+
+function cleanSnapshot(rawSnapshot: string): string {
+  return stripAnsi(rawSnapshot).replace(/\r/g, '');
+}
+
+function tailLines(rawSnapshot: string, maxLines: number): string[] {
+  const lines = cleanSnapshot(rawSnapshot).split('\n');
+  while (lines.length > 0 && lines[lines.length - 1]!.trim() === '') lines.pop();
+  return lines.slice(-maxLines).map((line) => line.trimEnd());
+}
+
+function hasGenericNumberedMenu(rawSnapshot: string): boolean {
+  const lines = tailLines(rawSnapshot, 44);
+  let optionCount = 0;
+  let hasSelectionMarker = false;
+  let hasPickerLanguage = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (GENERIC_NUMBERED_OPTION_RE.test(trimmed)) optionCount++;
+    if (/^\s*[❯>]\s*\d+[\.)]\s+\S/.test(line)) hasSelectionMarker = true;
+    if (/\b(?:enter to select|navigate|select|choose|resume|continue|esc to cancel)\b/i.test(trimmed)) {
+      hasPickerLanguage = true;
+    }
+  }
+  return optionCount >= 2 && (hasSelectionMarker || hasPickerLanguage);
+}
+
+export function classifySnapshotComposerState(rawSnapshot: string): SnapshotComposerState {
+  const tail = tailLines(rawSnapshot, 44);
+  const tailText = tail.join('\n');
+  const fullText = cleanSnapshot(rawSnapshot);
+
+  if (detectMultiChoice(rawSnapshot) || hasGenericNumberedMenu(rawSnapshot)) {
+    return {
+      kind: 'numbered-picker',
+      title: 'Menu or picker is open',
+      description: 'This session is showing a menu or picker, not a text box.'
+    };
+  }
+
+  if (TRUST_PROMPT_RE.test(tailText) && TRUST_CONTEXT_RE.test(tailText)) {
+    return {
+      kind: 'trust-prompt',
+      title: 'Trust prompt is open',
+      description: 'This session is asking whether to trust a folder or workspace.'
+    };
+  }
+
+  if (UPDATE_NOTICE_RE.test(tailText)) {
+    return {
+      kind: 'update/notice-banner',
+      title: 'Notice banner is open',
+      description: 'This session is showing an update or notice banner before it will accept chat input.'
+    };
+  }
+
+  if (BLOCKING_PROMPT_RE.test(tailText) && fullText.trim().length > 0) {
+    return {
+      kind: 'unknown-blocking',
+      title: 'Interactive prompt is open',
+      description: 'This session appears to be waiting on a terminal prompt instead of accepting a chat message.'
+    };
+  }
+
+  return {
+    kind: 'normal-composer',
+    title: 'Composer appears available',
+    description: 'No blocking menu or prompt was detected in the terminal snapshot.'
+  };
 }
 
 export function detectMultiChoice(rawSnapshot: string): MultiChoice | null {

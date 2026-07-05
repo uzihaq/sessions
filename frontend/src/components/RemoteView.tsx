@@ -9,6 +9,8 @@ import { ScrollToBottomButton } from './ScrollToBottomButton';
 import StatusSidebar from './StatusSidebar';
 import { saveScrollPosition, readScrollPosition } from '../lib/scrollMemory';
 import { eventsToMessages } from '../lib/claudeEvents';
+import { snapshot as fetchServerSnapshot } from '../api/prettyd';
+import { classifySnapshotComposerState, type SnapshotComposerState } from '../lib/detectMultiChoice';
 import type { DispatchMessage } from '../hooks/useDispatch';
 
 interface Props {
@@ -28,6 +30,9 @@ interface Props {
   // Session cwd for vscode://file/... linkification inside Claude's
   // markdown responses.
   cwd?: string;
+  // Switches the parent SessionView to the raw terminal when the
+  // snapshot classifier sees a prompt/menu instead of a composer.
+  onOpenTerminal: () => void;
 }
 
 // Remote view — a chat-app abstraction OVER the terminal. Owns its own
@@ -43,7 +48,7 @@ interface Props {
 // state is gated on terminal stop_reasons rather than a guessed verb
 // cycle.
 
-export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, cwd }: Props): JSX.Element {
+export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, cwd, onOpenTerminal }: Props): JSX.Element {
   // Event-derived user contents — passed to useDispatch so pendings get
   // flipped to 'sent' when JSONL confirms them (instead of timing out
   // as 'failed'). Computed once per claudeEvents change; the Set is
@@ -115,6 +120,43 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
     return messages.slice(messages.length - visibleCount);
   }, [messages, visibleCount]);
   const hiddenCount = messages.length - visibleMessages.length;
+  const latestFailedSend = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === 'user' && m.status === 'failed') return m;
+    }
+    return null;
+  }, [messages]);
+  const recoverDraft = latestFailedSend
+    ? { id: latestFailedSend.id, text: latestFailedSend.content, version: latestFailedSend.createdAt }
+    : null;
+  const [blockingState, setBlockingState] = useState<SnapshotComposerState | null>(null);
+
+  useEffect(() => {
+    if (!latestFailedSend) {
+      setBlockingState(null);
+      return;
+    }
+
+    let alive = true;
+    const checkSnapshot = async (): Promise<void> => {
+      try {
+        const snap = await fetchServerSnapshot(sessionId);
+        if (!alive) return;
+        if (!snap) {
+          setBlockingState(null);
+          return;
+        }
+        const state = classifySnapshotComposerState(snap.text);
+        setBlockingState(state.kind === 'normal-composer' ? null : state);
+      } catch {
+        if (alive) setBlockingState(null);
+      }
+    };
+
+    void checkSnapshot();
+    return () => { alive = false; };
+  }, [sessionId, latestFailedSend?.id, latestFailedSend?.createdAt]);
 
   // Scroll-anchor preservation across window expansion. Prepending
   // older messages grows scrollHeight by ~the prepended block's
@@ -292,12 +334,28 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
         checklist={sidebar.checklist}
       />
 
+      {blockingState ? (
+        <div className="remote-blocking-banner" role="status" aria-live="polite">
+          <span className="remote-blocking-banner-text">
+            {blockingState.description} Open Terminal view to respond.
+          </span>
+          <button
+            type="button"
+            className="remote-blocking-banner-action"
+            onClick={onOpenTerminal}
+          >
+            Terminal
+          </button>
+        </div>
+      ) : null}
+
       <div className="remote-input-wrap">
         <InputBar
           send={send}
           connected={connected}
           sessionId={sessionId}
           onSubmitted={recordSent}
+          recoverDraft={recoverDraft}
         />
       </div>
     </div>
@@ -397,7 +455,7 @@ function RemoteMessageInner({
           ) : null}
           {m.status === 'failed' ? (
             <div className="remote-bubble-status remote-bubble-failed">
-              <span>not delivered</span>
+              <span>{m.failureReason ? `not delivered: ${m.failureReason}` : 'not delivered'}</span>
               <button
                 type="button"
                 className="remote-bubble-retry"
@@ -475,6 +533,7 @@ const RemoteMessage = memo(RemoteMessageInner, (a, b) => {
     ma.content === mb.content &&
     ma.status === mb.status &&
     ma.errorResponse === mb.errorResponse &&
+    ma.failureReason === mb.failureReason &&
     ma.queued === mb.queued &&
     ma.interrupted === mb.interrupted &&
     ma.hadThinking === mb.hadThinking &&
@@ -560,4 +619,3 @@ function ToolCallsPanel({
     </div>
   );
 }
-

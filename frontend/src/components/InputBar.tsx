@@ -16,6 +16,10 @@ interface Props {
   // view so the user sees their message land instantly, instead of
   // waiting for Claude's TUI redraw + parser throttle (~500ms-1s).
   onSubmitted?: (text: string) => void;
+  // Failed Remote sends restore their text here so the user's draft is
+  // recoverable without copy/pasting from the red bubble. The version
+  // changes per failed attempt.
+  recoverDraft?: { id: string; text: string; version: number } | null;
 }
 
 // Quote a path for safe shell-style insertion. Single quotes wrap the
@@ -46,7 +50,7 @@ const QUICK_KEYS: QuickKey[] = [
 // as xterm's onData; the PTY echoes them and the parser sees them on the
 // next snapshot. No "live-type diff" machinery from pretty-tmux: with a
 // real PTY, the echoed text just appears.
-export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JSX.Element {
+export function InputBar({ send, connected, sessionId, onSubmitted, recoverDraft }: Props): JSX.Element {
   const [text, setText] = useState('');
   // 'idle' | 'sent' — sent briefly turns the Send button green so the
   // user can see the bytes left this client. The button text stays
@@ -59,6 +63,8 @@ export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JS
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const handledRecoveryKeysRef = useRef<Set<string>>(new Set());
+  const restoredDraftRef = useRef<{ key: string; text: string } | null>(null);
 
   // Auto-dismiss the upload error after 8s — the user may have moved on
   // and it's annoying to have a persistent red stripe that they can't
@@ -68,6 +74,25 @@ export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JS
     const id = window.setTimeout(() => setUploadError(null), 8000);
     return () => window.clearTimeout(id);
   }, [uploadError]);
+
+  useEffect(() => {
+    if (!recoverDraft) {
+      const restored = restoredDraftRef.current;
+      if (restored && text === restored.text) {
+        setText('');
+      }
+      restoredDraftRef.current = null;
+      return;
+    }
+
+    const key = `${recoverDraft.id}:${recoverDraft.version}`;
+    if (handledRecoveryKeysRef.current.has(key)) return;
+    if (text.trim().length > 0) return;
+
+    handledRecoveryKeysRef.current.add(key);
+    restoredDraftRef.current = { key, text: recoverDraft.text };
+    setText(recoverDraft.text);
+  }, [recoverDraft, text]);
 
   const submit = (): void => {
     if (!connected) return;
@@ -94,6 +119,7 @@ export function InputBar({ send, connected, sessionId, onSubmitted }: Props): JS
     }
     if (text && onSubmitted) onSubmitted(text);
     setText('');
+    restoredDraftRef.current = null;
     setFeedback('sent');
     window.setTimeout(() => setFeedback('idle'), 500);
   };

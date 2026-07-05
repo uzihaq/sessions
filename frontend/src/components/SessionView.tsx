@@ -252,6 +252,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
             connected={term.status === 'open'}
             sidebar={sidebar}
             cwd={session?.cwd}
+            onOpenTerminal={() => setViewMode('terminal')}
           />
         </div>
       </div>

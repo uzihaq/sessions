@@ -282,6 +282,99 @@ function getComposerLines(snap) {
   return lines.slice(-8);
 }
 
+const SNAPSHOT_PICKER_FOOTER_RE = /Enter to select.*[↑↓].*to navigate/;
+const SNAPSHOT_NUMBERED_OPTION_RE = /^\s*(?:[❯>]\s*)?\d+[\.)]\s+\S.+$/;
+const SNAPSHOT_TRUST_PROMPT_RE = /\b(?:do you trust|trust (?:this|the)|trusted (?:folder|directory|workspace|project)|trust the files|only grant access to directories you trust)\b/i;
+const SNAPSHOT_TRUST_CONTEXT_RE = /\b(?:folder|directory|workspace|project|files in this)\b/i;
+const SNAPSHOT_UPDATE_NOTICE_RE = /\b(?:update available|new version|latest version|release notes|what'?s new|restart to update|install update|update now|press enter to continue|notice)\b/i;
+const SNAPSHOT_BLOCKING_PROMPT_RE = /\b(?:press enter|hit enter|continue\?|confirm|are you sure|allow|deny|approve|permission|yes\/no|\[y\/n\]|\(y\/n\)|select|choose)\b/i;
+
+function cleanSnapshotText(snap) {
+  return normalize(snap || '').replace(ANSI_RE, '').replace(/\r/g, '');
+}
+
+function snapshotTailLines(snap, maxLines) {
+  const lines = cleanSnapshotText(snap).split('\n');
+  while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+  return lines.slice(-maxLines).map((line) => line.trimEnd());
+}
+
+function hasNumberedPicker(snap) {
+  const lines = snapshotTailLines(snap, 44);
+  let optionCount = 0;
+  let hasSelectionMarker = false;
+  let hasPickerLanguage = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (SNAPSHOT_PICKER_FOOTER_RE.test(trimmed)) return true;
+    if (SNAPSHOT_NUMBERED_OPTION_RE.test(trimmed)) optionCount++;
+    if (/^\s*[❯>]\s*\d+[\.)]\s+\S/.test(line)) hasSelectionMarker = true;
+    if (/\b(?:enter to select|navigate|select|choose|resume|continue|esc to cancel)\b/i.test(trimmed)) {
+      hasPickerLanguage = true;
+    }
+  }
+
+  return optionCount >= 2 && (hasSelectionMarker || hasPickerLanguage);
+}
+
+function classifySnapshotComposerState(snap) {
+  const tail = snapshotTailLines(snap, 44);
+  const tailText = tail.join('\n');
+  const fullText = cleanSnapshotText(snap);
+
+  if (hasNumberedPicker(snap)) {
+    return {
+      kind: 'numbered-picker',
+      title: 'Menu or picker is open',
+      description: 'This session is showing a menu or picker, not a text box.'
+    };
+  }
+
+  if (SNAPSHOT_TRUST_PROMPT_RE.test(tailText) && SNAPSHOT_TRUST_CONTEXT_RE.test(tailText)) {
+    return {
+      kind: 'trust-prompt',
+      title: 'Trust prompt is open',
+      description: 'This session is asking whether to trust a folder or workspace.'
+    };
+  }
+
+  if (SNAPSHOT_UPDATE_NOTICE_RE.test(tailText)) {
+    return {
+      kind: 'update/notice-banner',
+      title: 'Notice banner is open',
+      description: 'This session is showing an update or notice banner before it will accept chat input.'
+    };
+  }
+
+  if (SNAPSHOT_BLOCKING_PROMPT_RE.test(tailText) && fullText.trim().length > 0) {
+    return {
+      kind: 'unknown-blocking',
+      title: 'Interactive prompt is open',
+      description: 'This session appears to be waiting on a terminal prompt instead of accepting a chat message.'
+    };
+  }
+
+  return {
+    kind: 'normal-composer',
+    title: 'Composer appears available',
+    description: 'No blocking menu or prompt was detected in the terminal snapshot.'
+  };
+}
+
+function isBlockingSnapshotState(state) {
+  return state && state.kind !== 'normal-composer';
+}
+
+function snapshotStateCliLabel(state) {
+  if (!state) return 'an interactive prompt';
+  if (state.kind === 'numbered-picker') return 'a picker/menu';
+  if (state.kind === 'trust-prompt') return 'a trust prompt';
+  if (state.kind === 'update/notice-banner') return 'an update/notice banner';
+  if (state.kind === 'unknown-blocking') return 'an interactive prompt';
+  return 'the normal composer';
+}
+
 // ── sendAndConfirm ───────────────────────────────────────────────────────
 //
 // Core of `pretty send` for structured-event sessions: fires text + Enter
@@ -378,9 +471,10 @@ async function sendAndConfirm(id, text, opts) {
       const snap = await getText(`/api/sessions/${encodeURIComponent(id)}/snapshot`);
       const composerLines = getComposerLines(snap);
       const composerTail = composerLines.join('\n');
+      const snapshotState = classifySnapshotComposerState(snap);
       const textStillInComposer =
         snippet.length > 0 && composerLines.some((l) => l.includes(snippet));
-      return { confirmed: false, reason: 'timeout', textStillInComposer, composerTail };
+      return { confirmed: false, reason: 'timeout', textStillInComposer, composerTail, snapshotState };
     }
 
     // Anti-duplicate check: should we re-press Enter?
@@ -585,19 +679,26 @@ async function cmdSend(args) {
     process.stdout.write(JSON.stringify({
       submitted: false,
       reason: result.reason,
+      sessionState: result.snapshotState ? result.snapshotState.kind : undefined,
+      sessionStateDescription: result.snapshotState ? result.snapshotState.description : undefined,
       textStillInComposer: result.textStillInComposer,
       composerTail: result.composerTail || ''
     }) + '\n');
   } else {
     process.stderr.write(`pretty send: could not confirm submission after ${timeoutMs}ms\n`);
-    process.stderr.write(
-      '  sent but not confirmed — the session may still be starting; retry, or use `pretty wait` first\n'
-    );
-    if (result.textStillInComposer) {
+    if (isBlockingSnapshotState(result.snapshotState)) {
+      process.stderr.write(
+        `  session is at ${snapshotStateCliLabel(result.snapshotState)} — not accepting a typed message; use \`pretty keys\` or the terminal view\n`
+      );
+      process.stderr.write(`  ${result.snapshotState.description}\n`);
+    } else if (result.textStillInComposer) {
       process.stderr.write(
         '  the message is still in the composer (Enter did not submit)\n'
       );
     } else {
+      process.stderr.write(
+        '  sent but not confirmed — the session may still be starting; retry, or use `pretty wait` first\n'
+      );
       process.stderr.write(
         '  message is no longer in the composer but no JSONL user event appeared yet\n'
       );
@@ -805,15 +906,24 @@ async function cmdAsk(args) {
       process.stdout.write(JSON.stringify({
         submitted: false,
         reason: sendResult.reason,
+        sessionState: sendResult.snapshotState ? sendResult.snapshotState.kind : undefined,
+        sessionStateDescription: sendResult.snapshotState ? sendResult.snapshotState.description : undefined,
         composerTail: sendResult.composerTail || ''
       }) + '\n');
     } else {
       process.stderr.write(
         `pretty ask: message not confirmed submitted (${sendResult.reason})\n`
       );
-      process.stderr.write(
-        '  the session may still be starting; retry, or use `pretty wait` first\n'
-      );
+      if (isBlockingSnapshotState(sendResult.snapshotState)) {
+        process.stderr.write(
+          `  session is at ${snapshotStateCliLabel(sendResult.snapshotState)} — not accepting a typed message; use \`pretty keys\` or the terminal view\n`
+        );
+        process.stderr.write(`  ${sendResult.snapshotState.description}\n`);
+      } else {
+        process.stderr.write(
+          '  the session may still be starting; retry, or use `pretty wait` first\n'
+        );
+      }
       if (sendResult.composerTail) {
         process.stderr.write(sendResult.composerTail + '\n');
       }
