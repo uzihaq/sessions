@@ -948,9 +948,9 @@ const TOOL_PRESETS = {
     // sandbox` — no sandbox, no approval prompts, full access. codex >=0.137
     // removed `--full-auto`, and the old `--sandbox workspace-write` still
     // boxed codex to the project; this matches Claude's full-access posture.
-    args: ['--dangerously-bypass-approvals-and-sandbox'],
+    args: ['-c', 'check_for_update_on_startup=false', '--dangerously-bypass-approvals-and-sandbox'],
     // --no-skip-perms → sandboxed to the workspace and prompts on request.
-    safeArgs: ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
+    safeArgs: ['-c', 'check_for_update_on_startup=false', '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
   },
   shell: {
     cmd: undefined, // prettyd default = $SHELL

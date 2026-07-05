@@ -28,6 +28,8 @@ const TOOLS: ToolDef[] = [
   { id: 'shell', name: 'Shell', icon: '⬛', hint: '$SHELL' }
 ];
 
+const CODEX_UPDATE_CHECK_ARGS = ['-c', 'check_for_update_on_startup=false'] as const;
+
 interface Props {
   onClose: () => void;
   // Open the dedicated ResumeDialog. The inline "you have N prior
@@ -80,8 +82,8 @@ function resolveCommand(
     return {
       cmd: 'codex',
       args: skipPerms
-        ? ['--dangerously-bypass-approvals-and-sandbox']
-        : ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
+        ? [...CODEX_UPDATE_CHECK_ARGS, '--dangerously-bypass-approvals-and-sandbox']
+        : [...CODEX_UPDATE_CHECK_ARGS, '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
     };
   }
   // shell — let prettyd default to $SHELL
