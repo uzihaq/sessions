@@ -5,8 +5,9 @@ import { RemoteView } from './RemoteView';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
 import { useSessions } from '../store/sessions';
 import { ParserIcon } from './ParserIcon';
-import { snapshot as fetchServerSnapshot } from '../api/prettyd';
+import { wsMuxUrl } from '../api/prettyd';
 import { detectMultiChoice } from '../lib/detectMultiChoice';
+import { requestSnapshot } from '../lib/wsMux';
 
 import type { ActiveStatus } from '../App';
 
@@ -144,7 +145,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
     let alive = true;
     const tick = async (): Promise<void> => {
       try {
-        const snap = await fetchServerSnapshot(sessionId);
+        const snap = await requestSnapshot(wsMuxUrl(), sessionId);
         if (!alive) return;
         const present = !!(snap && detectMultiChoice(snap.text));
         if (present && !lastPickerSeenRef.current) {

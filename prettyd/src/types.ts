@@ -73,7 +73,7 @@ export const PROTOCOL_VERSION = 2;
 //     client attaches (tmux-style: N sessions, 1 connection). attach/
 //     detach manage subscriptions; input/resize MUST carry sessionId.
 export type ClientMsg =
-  | { type: 'input'; data: string; sessionId?: string }
+  | { type: 'input'; data: string; sessionId?: string; requestId?: string }
   | { type: 'resize'; cols: number; rows: number; sessionId?: string }
   // outputReplay=false suppresses raw PTY bytes entirely for this attach
   // (no replay, no live output frames). Used by clients that only render
@@ -91,6 +91,8 @@ export type ClientMsg =
   // live-only and backfill when activated.
   | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean; claudeReplay?: boolean }
   | { type: 'detach'; sessionId: string }
+  | { type: 'snapshot'; requestId: string; sessionId: string; cols?: number }
+  | { type: 'events'; requestId: string; sessionId: string; since?: number; tail?: number }
   // Application-level keepalive: the browser can't send WS protocol pings,
   // so the client sends {type:'ping'} and the daemon replies {type:'pong'}.
   // Lets the client detect a silently-dead TCP link and force a reconnect.
@@ -126,6 +128,17 @@ export type ServerMsg =
   // unfreeze instead of hanging on a dead session.
   | { type: 'exit'; code: number | null; signal: string | null; seq: number; sessionId?: string; reason?: string }
   | { type: 'error'; message: string; sessionId?: string }
+  | { type: 'rpcError'; requestId: string; message: string; code?: string; sessionId?: string }
+  | { type: 'snapshot'; requestId: string; text: string; seq: number; sessionId: string }
+  | {
+      type: 'events';
+      requestId: string;
+      events: Record<string, unknown>[];
+      nextIndex: number;
+      totalCount: number;
+      sessionId: string;
+    }
+  | { type: 'inputAck'; requestId: string; ok: boolean; sessionId: string }
   | { type: 'pong' }
   // Claude Code's structured session events, sourced from
   // ~/.claude/projects/<encoded-cwd>/<id>.jsonl. Frontend consumers

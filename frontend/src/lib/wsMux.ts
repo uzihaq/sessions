@@ -15,7 +15,7 @@
 // registered session after a reconnect (asking each for its current
 // resume point so replays stay incremental).
 
-import type { ServerMsg, MuxClientMsg } from '../types';
+import type { ServerMsg, MuxClientMsg, ClaudeSessionEvent } from '../types';
 
 export type MuxStatus = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error';
 
@@ -43,6 +43,8 @@ const RECONNECT_BACKOFF_MS = [500, 1000, 2000, 4000, 8000] as const;
 // are tiny; this is seconds of furious typing. Bounded so a socket that
 // never comes back can't grow it without limit.
 const OUTBOX_CAP = 2000;
+const REQUEST_TIMEOUT_MS = 10_000;
+const IDLE_SHUTDOWN_MS = 15_000;
 
 // Application-level keepalive constants.  TCP RST from the peer is normally
 // visible, but silently-dead NAT/VPN tunnels and some Wi-Fi stacks drop the
@@ -52,6 +54,44 @@ const OUTBOX_CAP = 2000;
 const PING_INTERVAL_MS  = 20_000; // 20 s — send a ping this often
 const STALE_TIMEOUT_MS  = 30_000; // 30 s — declare connection dead if silent
 
+type RpcResponse = Extract<ServerMsg, { requestId: string }>;
+
+interface PendingRequest {
+  resolve: (msg: RpcResponse) => void;
+  reject: (err: Error) => void;
+  timer: number;
+}
+
+class MuxRpcError extends Error {
+  readonly code: string | undefined;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'MuxRpcError';
+    this.code = code;
+  }
+}
+
+let nextRequestSeq = 1;
+function newRequestId(): string {
+  const seq = nextRequestSeq++;
+  return `mux-${Date.now().toString(36)}-${seq.toString(36)}`;
+}
+
+function hasRequestId(msg: MuxClientMsg): msg is MuxClientMsg & { requestId: string } {
+  return typeof (msg as { requestId?: unknown }).requestId === 'string';
+}
+
+function isRpcResponse(msg: ServerMsg): msg is RpcResponse {
+  return typeof (msg as { requestId?: unknown }).requestId === 'string';
+}
+
+function isQueueableWhileClosed(msg: MuxClientMsg): boolean {
+  return msg.type === 'input' ||
+    msg.type === 'resize' ||
+    msg.type === 'snapshot' ||
+    msg.type === 'events';
+}
+
 class MuxManager {
   private ws: WebSocket | null = null;
   private status: MuxStatus = 'connecting';
@@ -60,6 +100,8 @@ class MuxManager {
   private pingInterval: number | null = null;
   private lastMessageAt = 0;   // epoch ms of most recent server-sent frame
   private readonly sessions = new Map<string, SessionHandlers>();
+  private readonly requests = new Map<string, PendingRequest>();
+  private idleShutdownTimer: number | null = null;
   // Input/resize typed while the socket isn't OPEN (initial connect, or a
   // reconnect blip after phone-sleep / network handoff). Without this they
   // were silently dropped — you'd click a terminal that LOOKS ready (the
@@ -70,7 +112,7 @@ class MuxManager {
     // Phone unlock / tab foreground: if the socket died while backgrounded,
     // reconnect immediately instead of waiting out the backoff timer.
     if (document.visibilityState !== 'visible') return;
-    if (this.sessions.size === 0) return;
+    if (this.sessions.size === 0 && this.requests.size === 0 && this.outbox.length === 0) return;
     if (!this.ws || this.ws.readyState >= WebSocket.CLOSING) {
       if (this.reconnectTimer !== null) {
         window.clearTimeout(this.reconnectTimer);
@@ -85,6 +127,7 @@ class MuxManager {
   }
 
   attach(sessionId: string, handlers: SessionHandlers): SessionChannel {
+    this.cancelIdleShutdown();
     this.sessions.set(sessionId, handlers);
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       handlers.onStatus('open');
@@ -99,9 +142,26 @@ class MuxManager {
       detach: () => {
         this.sessions.delete(sessionId);
         this.send({ type: 'detach', sessionId });
-        if (this.sessions.size === 0) this.shutdownSocket();
+        if (this.sessions.size === 0) this.scheduleIdleShutdown();
       }
     };
+  }
+
+  request(msg: MuxClientMsg & { requestId: string }, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RpcResponse> {
+    this.cancelIdleShutdown();
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.requests.delete(msg.requestId);
+        this.removeQueuedRequest(msg.requestId);
+        reject(new Error(`prettyd mux request timed out: ${msg.type}`));
+        this.scheduleIdleShutdown();
+      }, timeoutMs);
+      this.requests.set(msg.requestId, { resolve, reject, timer });
+      this.send(msg);
+      if (!this.ws || this.ws.readyState >= WebSocket.CLOSING) {
+        if (this.reconnectTimer === null) this.connect();
+      }
+    });
   }
 
   private send(msg: MuxClientMsg): void {
@@ -110,13 +170,14 @@ class MuxManager {
       return;
     }
     // Socket not OPEN. Queue input & resize so they're delivered on reopen
-    // instead of silently lost. attach/detach are NOT queued — they're
-    // rebuilt from the live `sessions` map on reconnect (sendAttach in
-    // onopen), so a stale queued attach/detach would only fight that.
-    if (msg.type === 'input' || msg.type === 'resize') {
+    // instead of silently lost. RPC frames queue the same way. attach/detach
+    // are NOT queued — they're rebuilt from the live `sessions` map on
+    // reconnect, so a stale queued attach/detach would only fight that.
+    if (isQueueableWhileClosed(msg)) {
       this.outbox.push(msg);
       if (this.outbox.length > OUTBOX_CAP) {
-        this.outbox.splice(0, this.outbox.length - OUTBOX_CAP);
+        const dropped = this.outbox.splice(0, this.outbox.length - OUTBOX_CAP);
+        this.rejectDroppedRequests(dropped);
       }
       // A queued keystroke means we WANT a live socket. If none is pending,
       // kick a connect now rather than waiting for the next backoff tick.
@@ -124,6 +185,57 @@ class MuxManager {
         if (this.reconnectTimer === null) this.connect();
       }
     }
+  }
+
+  private completeRequest(msg: RpcResponse): void {
+    const pending = this.requests.get(msg.requestId);
+    if (!pending) return;
+    window.clearTimeout(pending.timer);
+    this.requests.delete(msg.requestId);
+    if (msg.type === 'rpcError') {
+      pending.reject(new MuxRpcError(msg.message, msg.code));
+    } else {
+      pending.resolve(msg);
+    }
+    this.scheduleIdleShutdown();
+  }
+
+  private removeQueuedRequest(requestId: string): void {
+    for (let i = this.outbox.length - 1; i >= 0; i--) {
+      const msg = this.outbox[i];
+      if (msg && hasRequestId(msg) && msg.requestId === requestId) {
+        this.outbox.splice(i, 1);
+      }
+    }
+  }
+
+  private rejectDroppedRequests(dropped: MuxClientMsg[]): void {
+    for (const msg of dropped) {
+      if (!hasRequestId(msg)) continue;
+      const pending = this.requests.get(msg.requestId);
+      if (!pending) continue;
+      window.clearTimeout(pending.timer);
+      this.requests.delete(msg.requestId);
+      pending.reject(new Error(`prettyd mux request dropped while offline: ${msg.type}`));
+    }
+  }
+
+  private cancelIdleShutdown(): void {
+    if (this.idleShutdownTimer !== null) {
+      window.clearTimeout(this.idleShutdownTimer);
+      this.idleShutdownTimer = null;
+    }
+  }
+
+  private scheduleIdleShutdown(): void {
+    if (this.sessions.size > 0 || this.requests.size > 0 || this.outbox.length > 0) return;
+    if (this.idleShutdownTimer !== null) return;
+    this.idleShutdownTimer = window.setTimeout(() => {
+      this.idleShutdownTimer = null;
+      if (this.sessions.size === 0 && this.requests.size === 0 && this.outbox.length === 0) {
+        this.shutdownSocket();
+      }
+    }, IDLE_SHUTDOWN_MS);
   }
 
   private sendAttach(sessionId: string, handlers: SessionHandlers): void {
@@ -173,7 +285,8 @@ class MuxManager {
   // ─────────────────────────────────────────────────────────────────────────
 
   private connect(): void {
-    if (this.sessions.size === 0) return;
+    if (this.sessions.size === 0 && this.requests.size === 0 && this.outbox.length === 0) return;
+    this.cancelIdleShutdown();
     this.stopPing(); // clear any interval from the previous socket
     this.setStatus(this.attempt === 0 ? 'connecting' : 'reconnecting');
     const sock = new WebSocket(this.url);
@@ -213,6 +326,10 @@ class MuxManager {
         return;
       }
       // {type:'pong'} has no sessionId — silently consumed; lastMessageAt already updated.
+      if (isRpcResponse(msg)) {
+        this.completeRequest(msg);
+        return;
+      }
       const sid = (msg as { sessionId?: string }).sessionId;
       if (!sid) return; // mux frames are always tagged; pong / unknown frames stop here
       this.sessions.get(sid)?.onMessage(msg);
@@ -227,7 +344,7 @@ class MuxManager {
       if (sock !== this.ws) return;
       this.stopPing(); // stop sending pings into a closed socket
       this.ws = null;
-      if (this.sessions.size === 0) {
+      if (this.sessions.size === 0 && this.requests.size === 0 && this.outbox.length === 0) {
         this.setStatus('closed');
         return;
       }
@@ -243,6 +360,7 @@ class MuxManager {
 
   private shutdownSocket(): void {
     this.stopPing();
+    this.cancelIdleShutdown();
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -267,4 +385,91 @@ export function attachSession(muxUrl: string, sessionId: string, handlers: Sessi
     managers.set(muxUrl, m);
   }
   return m.attach(sessionId, handlers);
+}
+
+function managerFor(muxUrl: string): MuxManager {
+  let m = managers.get(muxUrl);
+  if (!m) {
+    m = new MuxManager(muxUrl);
+    managers.set(muxUrl, m);
+  }
+  return m;
+}
+
+function isNotFound(err: unknown): boolean {
+  return err instanceof MuxRpcError && err.code === 'not_found';
+}
+
+export interface MuxSnapshot {
+  text: string;
+  seq: number;
+}
+
+export async function requestSnapshot(
+  muxUrl: string,
+  sessionId: string,
+  opts?: { cols?: number }
+): Promise<MuxSnapshot | null> {
+  const requestId = newRequestId();
+  try {
+    const msg = await managerFor(muxUrl).request({
+      type: 'snapshot',
+      requestId,
+      sessionId,
+      cols: opts?.cols
+    });
+    if (msg.type !== 'snapshot') throw new Error(`unexpected mux response: ${msg.type}`);
+    return { text: msg.text, seq: msg.seq };
+  } catch (err) {
+    if (isNotFound(err)) return null;
+    throw err;
+  }
+}
+
+export interface MuxEventsResponse {
+  events: ClaudeSessionEvent[];
+  nextIndex: number;
+  totalCount: number;
+}
+
+export async function requestClaudeEvents(
+  muxUrl: string,
+  sessionId: string,
+  opts?: { tail?: number; since?: number }
+): Promise<MuxEventsResponse | null> {
+  const requestId = newRequestId();
+  try {
+    const msg = await managerFor(muxUrl).request({
+      type: 'events',
+      requestId,
+      sessionId,
+      tail: opts?.tail,
+      since: opts?.since
+    });
+    if (msg.type !== 'events') throw new Error(`unexpected mux response: ${msg.type}`);
+    return {
+      events: msg.events,
+      nextIndex: msg.nextIndex,
+      totalCount: msg.totalCount
+    };
+  } catch (err) {
+    if (isNotFound(err)) return null;
+    throw err;
+  }
+}
+
+export async function sendSessionInput(
+  muxUrl: string,
+  sessionId: string,
+  data: string
+): Promise<void> {
+  const requestId = newRequestId();
+  const msg = await managerFor(muxUrl).request({
+    type: 'input',
+    requestId,
+    sessionId,
+    data
+  });
+  if (msg.type !== 'inputAck') throw new Error(`unexpected mux response: ${msg.type}`);
+  if (!msg.ok) throw new Error(`unknown session ${sessionId}`);
 }

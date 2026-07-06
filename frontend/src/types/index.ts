@@ -72,6 +72,17 @@ export type ServerMsg =
   | { type: 'gap'; oldestAvailableSeq: number; currentSeq: number; sessionId?: string }
   | { type: 'exit'; code: number | null; signal: string | null; seq: number; sessionId?: string }
   | { type: 'error'; message: string; sessionId?: string }
+  | { type: 'rpcError'; requestId: string; message: string; code?: string; sessionId?: string }
+  | { type: 'snapshot'; requestId: string; text: string; seq: number; sessionId: string }
+  | {
+      type: 'events';
+      requestId: string;
+      events: ClaudeSessionEvent[];
+      nextIndex: number;
+      totalCount: number;
+      sessionId: string;
+    }
+  | { type: 'inputAck'; requestId: string; ok: boolean; sessionId: string }
   // Claude Code's structured session events. Sourced server-side from
   // ~/.claude/projects/<encoded-cwd>/<id>.jsonl. RemoteView consumes
   // these instead of the parser-derived blocks — far more reliable
@@ -95,8 +106,10 @@ export type MuxClientMsg =
   // page, laggy typing). Only the viewed session asks for history.
   | { type: 'attach'; sessionId: string; lastSeq?: number; claudeEventsSince?: number; outputReplay?: boolean; claudeReplay?: boolean }
   | { type: 'detach'; sessionId: string }
-  | { type: 'input'; data: string; sessionId: string }
-  | { type: 'resize'; cols: number; rows: number; sessionId: string };
+  | { type: 'input'; data: string; sessionId: string; requestId?: string }
+  | { type: 'resize'; cols: number; rows: number; sessionId: string }
+  | { type: 'snapshot'; requestId: string; sessionId: string; cols?: number }
+  | { type: 'events'; requestId: string; sessionId: string; since?: number; tail?: number };
 
 // Anthropic's persisted session event. Conservatively typed — we read
 // `type` and `message.*` for chat purposes; everything else is opaque.

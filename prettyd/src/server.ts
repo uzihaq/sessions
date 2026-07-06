@@ -28,6 +28,11 @@ const server = createServer((req, res) => {
   });
 });
 
+// Keep HTTP/1.1 sockets reusable long enough for polling CLI commands
+// (`pretty wait`) to stay on one TCP connection instead of cycling ports.
+server.keepAliveTimeout = 60_000;
+server.headersTimeout = 65_000;
+
 // Disable Nagle's algorithm on every TCP connection (HTTP + the WS upgrades
 // that ride the same sockets). A keystroke echo is a tiny lone packet;
 // with Nagle on, TCP holds it waiting to coalesce until an ACK arrives, and
