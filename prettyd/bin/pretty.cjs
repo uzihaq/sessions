@@ -3,14 +3,14 @@
 // to inspect and drive sessions without opening a WebSocket.
 //
 // Subcommands:
-//   pretty ls                       List sessions (id, tool, cwd, working, age).
+//   pretty ls                       List sessions (id, name, tool, cwd, working, age).
 //   pretty snap <id>                Print current xterm buffer (clean text).
 //   pretty snap <id> --raw          Print buffer with ANSI escapes preserved.
 //   pretty send <id> <text...>      Send text + Enter to the session.
 //   pretty send <id> --file P       Send UTF-8 file contents to the session.
 //   pretty transcript <id>          Print user/assistant turns from events.
 //   pretty keys <id> <key>          Send a control key: esc | up | down | ^c.
-//   pretty new [--cwd P] [--cmd C] [args...]
+//   pretty new [--cwd P] [--name L] [--on-idle C] [--wait-ready] [--cmd C] [args...]
 //                                   Create a new session.
 //   pretty kill <id>                Terminate the session's runner.
 //   pretty attach <id>              Stream the session to your terminal
@@ -174,6 +174,7 @@ function sessionIdFromApiPath(p) {
 
 function sessionLabel(s) {
   const parts = [shortToolName(toolOfSession(s))];
+  if (s.name) parts.push(String(s.name));
   if (s.cwd) parts.push(s.cwd.replace(process.env.HOME || '', '~'));
   if (s.exited) parts.push('exited');
   else parts.push(s.working ? 'working' : 'idle');
@@ -482,6 +483,7 @@ async function cmdLs(args) {
   };
   const cols = [
     ['ID', (s) => s.id.slice(0, 8)],
+    ['NAME', (s) => (s.name ? String(s.name).replace(/\s+/g, ' ').trim() : '-')],
     ['TOOL', (s) => s.tool || classifyTool(s.cmd, s.args)],
     ['CWD', (s) => s.cwd.replace(process.env.HOME || '', '~')],
     ['STATE', stateOf],
@@ -980,6 +982,20 @@ async function cmdNew(args) {
   const cwdVal = pluck('--cwd');
   if (cwdVal !== undefined) body.cwd = cwdVal;
 
+  const nameVal = pluck('--name');
+  if (nameVal !== undefined) {
+    if (nameVal.trim().length === 0) fail('--name needs a non-empty label', 1);
+    body.name = nameVal.trim();
+  }
+
+  const onIdleVal = pluck('--on-idle');
+  if (onIdleVal !== undefined) {
+    if (onIdleVal.trim().length === 0) fail('--on-idle needs a shell command', 1);
+    body.onIdle = onIdleVal;
+  }
+
+  if (hasFlag('--wait-ready')) body.waitReady = true;
+
   const toolVal = pluck('--tool');
   const noSkipPerms = hasFlag('--no-skip-perms');
   if (toolVal !== undefined) {
@@ -1370,12 +1386,16 @@ function help() {
     '                           to finish its reply (working→idle), then print',
     '                           the last assistant message. Claude/Codex only.',
     '  keys <id> <key>          send esc|up|down|left|right|^c|^d|enter|tab',
-    '  new --tool <claude|codex|shell> [--cwd P] [--no-skip-perms] [extra args]',
-    '  new [--cwd P] [--cmd C] [args...]',
+    '  new --tool <claude|codex|shell> [--cwd P] [--name L]',
+    '                           [--on-idle C] [--wait-ready] [--no-skip-perms] [extra args]',
+    '  new [--cwd P] [--name L] [--on-idle C] [--wait-ready] [--cmd C] [args...]',
     '                           create a session.  --tool is the easy path:',
     '                              pretty new --tool claude',
     '                              pretty new --tool claude --cwd ~/foo',
     '                              pretty new --tool codex --no-skip-perms',
+    '                           --name labels the session in `pretty ls`.',
+    '                           --on-idle runs a shell command on working→idle.',
+    '                           --wait-ready waits for tool startup before returning.',
     '                           or supply --cmd / a positional command directly.',
     '  kill <id> [<id>...]      terminate one or more sessions',
     '  attach <id>              raw two-way stream (Ctrl+Q to detach)',
