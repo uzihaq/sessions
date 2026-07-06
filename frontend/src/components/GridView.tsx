@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react';
 import type { SessionInfo } from '../types';
 import type { TabStatus } from './SessionTabs';
-import { fetchClaudeEvents, sendInput } from '../api/prettyd';
+import { wsMuxUrl } from '../api/prettyd';
+import { requestClaudeEvents, sendSessionInput } from '../lib/wsMux';
 import { useServers } from '../lib/servers';
 import { openSessionWindow } from '../lib/tauriBridge';
 import { keyToBytes } from '../lib/keyToBytes';
@@ -124,7 +125,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
         // tool_use + reply events). Used to pull the full ~15-20 MB
         // ring buffer every 2s per cell, which was the #1 phone perf
         // sink. tail=40 covers any reasonable rendered window.
-        const result = await fetchClaudeEvents(session.id, { tail: 40 });
+        const result = await requestClaudeEvents(wsMuxUrl(), session.id, { tail: 40 });
         if (!alive || result === null) return;
         // Nothing new since last poll → skip the parse + re-render.
         if (result.nextIndex === lastNextIndexRef.current) return;
@@ -198,7 +199,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
     const bytes = keyToBytes(e);
     if (bytes === null) return;
     e.preventDefault();
-    sendInput(session.id, bytes).catch(flagSendFailed);
+    sendSessionInput(wsMuxUrl(), session.id, bytes).catch(flagSendFailed);
 
     // Maintain the local visual buffer alongside.
     const k = e.key;
@@ -235,7 +236,7 @@ function GridCell({ session, status, icon, onPopOut, onExpand, onClose }: CellPr
     e.preventDefault();
     // Bracketed paste, no trailing Enter — user submits with Return
     // separately. Same protocol as InputBar's paste path.
-    sendInput(session.id, `\x1b[200~${text}\x1b[201~`).catch(flagSendFailed);
+    sendSessionInput(wsMuxUrl(), session.id, `\x1b[200~${text}\x1b[201~`).catch(flagSendFailed);
     // Local-buffer display marker.
     const newlines = (text.match(/\n/g) ?? []).length;
     let marker: string;

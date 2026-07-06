@@ -2,7 +2,7 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import crypto from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { getSession, writeInput, resize, type OutputEvent, type SessionHandle } from './sessions.js';
+import { getSession, writeInput, resize, snapshot, type OutputEvent, type SessionHandle } from './sessions.js';
 import type { ClaudeSessionEvent } from './sessionFileWatcher.js';
 import { PROTOCOL_VERSION, type ClientMsg, type ServerMsg } from './types.js';
 import { config, getAuthToken, isAllowedOrigin, isAuthOpen } from './config.js';
@@ -186,6 +186,58 @@ function clampedResize(sessionId: string, cols: number, rows: number): void {
   resize(sessionId, Math.max(40, Math.min(500, cols | 0)), Math.max(10, Math.min(200, rows | 0)));
 }
 
+function sendRpcError(
+  ws: WebSocket,
+  requestId: string,
+  message: string,
+  opts?: { code?: string; sessionId?: string }
+): void {
+  send(ws, {
+    type: 'rpcError',
+    requestId,
+    message,
+    code: opts?.code,
+    sessionId: opts?.sessionId
+  });
+}
+
+function sendEventsWindow(
+  ws: WebSocket,
+  requestId: string,
+  sessionId: string,
+  opts: { since?: number; tail?: number }
+): void {
+  const sess = getSession(sessionId);
+  if (!sess) {
+    sendRpcError(ws, requestId, `unknown session ${sessionId}`, {
+      code: 'not_found',
+      sessionId
+    });
+    return;
+  }
+
+  const log = sess.claudeEventLog;
+  const base = sess.claudeEventBase;
+  const len = log.length;
+  const total = base + len;
+  let start = 0;
+  if (opts.since != null && Number.isFinite(opts.since) && opts.since >= 0) {
+    start = Math.max(0, Math.min(opts.since - base, len));
+  }
+  if (opts.tail != null && Number.isFinite(opts.tail) && opts.tail > 0) {
+    start = Math.max(start, Math.max(0, len - Math.floor(opts.tail)));
+  }
+  const events = start === 0 ? log : log.slice(start);
+  send(ws, {
+    type: 'events',
+    requestId,
+    sessionId,
+    events,
+    nextIndex: total,
+    totalCount: total
+  });
+}
+
 // Multiplexed mode (`/ws?mux=1`): one socket, many sessions (tmux-style).
 // The client attaches/detaches sessions with tagged frames; every
 // server→client message carries sessionId. N sessions cost ONE connection
@@ -251,8 +303,53 @@ function handleMuxConnection(ws: WebSocket): void {
       if (parsed.sessionId) detach(parsed.sessionId);
       return;
     }
+    if (parsed.type === 'snapshot') {
+      const { requestId, sessionId } = parsed;
+      if (!requestId || !sessionId) return;
+      void (async (): Promise<void> => {
+        try {
+          const cols = parsed.cols && parsed.cols > 0 ? { cols: Math.floor(parsed.cols) } : undefined;
+          const result = await snapshot(sessionId, cols);
+          if (!result) {
+            sendRpcError(ws, requestId, `unknown session ${sessionId}`, {
+              code: 'not_found',
+              sessionId
+            });
+            return;
+          }
+          send(ws, {
+            type: 'snapshot',
+            requestId,
+            sessionId,
+            text: result.text,
+            seq: result.seq
+          });
+        } catch (err) {
+          sendRpcError(ws, requestId, (err as Error).message, { sessionId });
+        }
+      })();
+      return;
+    }
+    if (parsed.type === 'events') {
+      const { requestId, sessionId } = parsed;
+      if (!requestId || !sessionId) return;
+      sendEventsWindow(ws, requestId, sessionId, {
+        since: parsed.since,
+        tail: parsed.tail
+      });
+      return;
+    }
     if (parsed.type === 'input') {
-      if (parsed.sessionId) writeInput(parsed.sessionId, parsed.data);
+      if (!parsed.sessionId) return;
+      const ok = writeInput(parsed.sessionId, parsed.data);
+      if (parsed.requestId) {
+        send(ws, {
+          type: 'inputAck',
+          requestId: parsed.requestId,
+          sessionId: parsed.sessionId,
+          ok
+        });
+      }
       return;
     }
     if (parsed.type === 'resize') {

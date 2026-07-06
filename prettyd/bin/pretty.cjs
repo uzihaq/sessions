@@ -52,6 +52,45 @@ if (wantJson) argv.splice(argv.indexOf('--json'), 1);
 
 const sub = argv.shift();
 
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  maxSockets: 1,
+  maxFreeSockets: 1
+});
+const httpsAgent = new https.Agent({
+  keepAlive: true,
+  maxSockets: 1,
+  maxFreeSockets: 1
+});
+let apiAgentsDestroyed = false;
+function destroyApiAgents() {
+  if (apiAgentsDestroyed) return;
+  apiAgentsDestroyed = true;
+  httpAgent.destroy();
+  httpsAgent.destroy();
+}
+process.once('exit', destroyApiAgents);
+
+function apiTarget(p) {
+  if (/^https?:\/\//i.test(HOST)) {
+    const u = new URL(HOST);
+    const protocol = u.protocol === 'https:' ? 'https:' : 'http:';
+    const defaultPort = protocol === 'https:' ? 443 : 80;
+    return {
+      protocol,
+      hostname: u.hostname,
+      port: Number(u.port || PORT || defaultPort),
+      path: p
+    };
+  }
+  return {
+    protocol: 'http:',
+    hostname: HOST,
+    port: Number(PORT),
+    path: p
+  };
+}
+
 // Auth token for communicating with an auth-enabled daemon (contract #1).
 // The daemon writes a 32-byte hex token to this file on first start; the
 // CLI reads it on every request so it works immediately after daemon start
@@ -78,11 +117,12 @@ function api(method, p, body) {
       ? { 'content-type': 'application/json', 'content-length': data.length }
       : {};
     if (token) headers['authorization'] = `Bearer ${token}`;
-    const req = http.request({
+    const target = apiTarget(p);
+    const transport = target.protocol === 'https:' ? https : http;
+    const req = transport.request({
+      ...target,
       method,
-      host: HOST,
-      port: Number(PORT),
-      path: p,
+      agent: target.protocol === 'https:' ? httpsAgent : httpAgent,
       headers
     }, (res) => {
       const chunks = [];
@@ -1218,6 +1258,7 @@ async function cmdTail(args) {
     }
   });
   sock.on('close', () => process.exit(0));
+  destroyApiAgents();
   // Keep the process alive on the WS event loop. Don't return.
   await new Promise(() => {});
 }
@@ -1502,7 +1543,7 @@ function help() {
   ].join('\n'));
 }
 
-(async () => {
+async function dispatch() {
   switch (sub) {
     case 'ls': return cmdLs(argv);
     case 'snap': return cmdSnap(argv[0], argv.includes('--raw'));
@@ -1528,5 +1569,13 @@ function help() {
       return help();
     default:
       fail(`unknown command: ${sub}\n\nrun 'pretty help' for usage`);
+  }
+}
+
+(async () => {
+  try {
+    await dispatch();
+  } finally {
+    destroyApiAgents();
   }
 })().catch((err) => fail(err.message || String(err), 2));
