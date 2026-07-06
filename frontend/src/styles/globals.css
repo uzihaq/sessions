@@ -1814,6 +1814,10 @@ button:active:not(:disabled),
   border-color: var(--accent);
   background: var(--bg-elev-2);
 }
+.remote-load-earlier:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
 
 /* Multi-choice picker — shown when Claude's TUI presents a numbered
  * options prompt. Sits just above the activity strip + input row.

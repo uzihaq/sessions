@@ -24,6 +24,9 @@ interface Props {
   // keystrokes through the WS, and by retry() in useDispatch.
   send: (data: string) => void;
   connected: boolean;
+  hasEarlierClaudeEvents: boolean;
+  loadingEarlierClaudeEvents: boolean;
+  onLoadEarlierClaudeEvents: () => void;
   // Working / progress state computed from JSONL events (and the
   // daemon's byte-rate flag). Drives the activity strip + sidebar.
   sidebar: SessionSidebarState;
@@ -48,7 +51,18 @@ interface Props {
 // state is gated on terminal stop_reasons rather than a guessed verb
 // cycle.
 
-export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, cwd, onOpenTerminal }: Props): JSX.Element {
+export function RemoteView({
+  sessionId,
+  claudeEvents,
+  send,
+  connected,
+  hasEarlierClaudeEvents,
+  loadingEarlierClaudeEvents,
+  onLoadEarlierClaudeEvents,
+  sidebar,
+  cwd,
+  onOpenTerminal
+}: Props): JSX.Element {
   // Event-derived user contents — passed to useDispatch so pendings get
   // flipped to 'sent' when JSONL confirms them (instead of timing out
   // as 'failed'). Computed once per claudeEvents change; the Set is
@@ -165,22 +179,49 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
   // the layout effect below restores after React commits the larger
   // window.
   const anchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const beginAnchor = useCallback((): boolean => {
+    const el = scrollRef.current;
+    if (!el) return false;
+    anchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+    return true;
+  }, []);
+
   const expandWindow = useCallback((): void => {
     if (hiddenCount === 0) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    anchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+    if (!beginAnchor()) return;
     setVisibleCount((n) => n + TAIL_WINDOW_STEP);
-  }, [hiddenCount]);
+  }, [beginAnchor, hiddenCount]);
+  const loadEarlier = useCallback((): void => {
+    if (hiddenCount > 0) {
+      expandWindow();
+      return;
+    }
+    if (!hasEarlierClaudeEvents || loadingEarlierClaudeEvents) return;
+    if (!beginAnchor()) return;
+    setVisibleCount((n) => n + TAIL_WINDOW_STEP);
+    onLoadEarlierClaudeEvents();
+  }, [
+    expandWindow,
+    beginAnchor,
+    hasEarlierClaudeEvents,
+    hiddenCount,
+    loadingEarlierClaudeEvents,
+    onLoadEarlierClaudeEvents
+  ]);
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
     if (!anchor) return;
     const el = scrollRef.current;
     if (!el) return;
     const delta = el.scrollHeight - anchor.scrollHeight;
+    if (delta === 0 && hiddenCount === 0) {
+      if (loadingEarlierClaudeEvents) return;
+      anchorRef.current = null;
+      return;
+    }
     el.scrollTop = anchor.scrollTop + delta;
     anchorRef.current = null;
-  }, [visibleCount]);
+  }, [hiddenCount, loadingEarlierClaudeEvents, messages.length, visibleCount]);
 
   // Auto-stick to bottom — but only if the user wasn't scrolling up to
   // read history. Depends on the full messages array, not just length,
@@ -217,8 +258,9 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
     // older history. Expand the window so the next chunk of older
     // messages renders. Anchor preservation keeps them visually in
     // place — no perceptible jump.
-    if (el.scrollTop < TAIL_EXPAND_TRIGGER_PX && hiddenCount > 0 && anchorRef.current === null) {
-      expandWindow();
+    if (el.scrollTop < TAIL_EXPAND_TRIGGER_PX && anchorRef.current === null) {
+      if (hiddenCount > 0) expandWindow();
+      else if (hasEarlierClaudeEvents && !loadingEarlierClaudeEvents) loadEarlier();
     }
   };
 
@@ -296,14 +338,19 @@ export function RemoteView({ sessionId, claudeEvents, send, connected, sidebar, 
             </p>
           </div>
         ) : null}
-        {hiddenCount > 0 ? (
+        {hiddenCount > 0 || hasEarlierClaudeEvents ? (
           <button
             type="button"
             className="remote-load-earlier"
-            onClick={expandWindow}
-            title={`${hiddenCount} older messages hidden — click or scroll up to load`}
+            onClick={loadEarlier}
+            disabled={loadingEarlierClaudeEvents}
+            title={hiddenCount > 0
+              ? `${hiddenCount} older messages hidden — click or scroll up to load`
+              : 'Load the previous server-side history page'}
           >
-            ↑ Load {Math.min(hiddenCount, TAIL_WINDOW_STEP)} earlier {hiddenCount === 1 ? 'message' : 'messages'} ({hiddenCount} hidden)
+            {hiddenCount > 0
+              ? `↑ Load ${Math.min(hiddenCount, TAIL_WINDOW_STEP)} earlier ${hiddenCount === 1 ? 'message' : 'messages'} (${hiddenCount} hidden)`
+              : (loadingEarlierClaudeEvents ? 'Loading earlier history…' : '↑ Load earlier history')}
           </button>
         ) : null}
         {visibleMessages.map((m, i) => (

@@ -418,8 +418,10 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   //   ?since=<n>   start at index n in the server-side log (incremental
   //                polling — client tracks the previous nextIndex and
   //                fetches only what it hasn't seen).
-  //   ?tail=<n>    return only the last n events (cheap for chat
-  //                previews; the GridView cells use tail=20).
+  //   ?tail=<n>    return only the last n events in the selected window
+  //                (cheap for chat previews; the GridView cells use tail=40).
+  //   ?before=<n>  end the window before absolute index n, so clients can
+  //                page older history without fetching the full ring.
   //
   // Default (no params) preserves the original behavior — returns the
   // entire log. The response always includes `nextIndex` so the client
@@ -428,7 +430,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
   //
   // Sizing context: live sessions hit 10-20 MB of JSONL events. The
   // GridView cells polling this every 2s with no params would blow
-  // through a phone's CPU + bandwidth. With ?tail=20 they fetch ~50KB.
+  // through a phone's CPU + bandwidth. With ?tail=40 they fetch ~50KB.
   const eventsMatch = /^\/api\/sessions\/([^/]+)\/events$/.exec(path);
   if (eventsMatch && method === 'GET') {
     const id = eventsMatch[1]!;
@@ -443,23 +445,36 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     const total = base + len;                 // absolute count ever seen
     const sinceRaw = url.searchParams.get('since');
     const tailRaw = url.searchParams.get('tail');
+    const beforeRaw = url.searchParams.get('before');
     // Local array offset. `since` is an ABSOLUTE index (matches nextIndex
-    // and the WS counter) → map through base. `tail` caps the result to the
-    // last N. With both, take the max so the response is at most N events
-    // AND only those after `since` — the bandwidth cap still holds on an
-    // incremental poll (the old code silently ignored tail when since was
-    // present, defeating the cap).
+    // and the WS counter) → map through base. `before` caps the window end,
+    // and `tail` then caps the result to the last N before that end. With
+    // since+tail, take the max so the response is at most N events AND only
+    // those after `since` — the bandwidth cap still holds on incremental
+    // polls (the old code silently ignored tail when since was present).
+    let end = len;
+    if (beforeRaw != null) {
+      const n = Number(beforeRaw);
+      if (Number.isFinite(n) && n >= 0) end = Math.max(0, Math.min(n - base, len));
+    }
     let start = 0;
     if (sinceRaw != null) {
       const n = Number(sinceRaw);
-      if (Number.isFinite(n) && n >= 0) start = Math.max(0, Math.min(n - base, len));
+      if (Number.isFinite(n) && n >= 0) start = Math.max(0, Math.min(n - base, end));
     }
     if (tailRaw != null) {
       const n = Number(tailRaw);
-      if (Number.isFinite(n) && n > 0) start = Math.max(start, Math.max(0, len - Math.floor(n)));
+      if (Number.isFinite(n) && n > 0) start = Math.max(start, Math.max(0, end - Math.floor(n)));
     }
-    const events = start === 0 ? log : log.slice(start);
-    reply(200, { events, nextIndex: total, totalCount: total });
+    if (start > end) start = end;
+    const events = start === 0 && end === len ? log : log.slice(start, end);
+    reply(200, {
+      events,
+      nextIndex: total,
+      totalCount: total,
+      startIndex: base + start,
+      endIndex: base + end
+    });
     return;
   }
 
