@@ -26,9 +26,10 @@ export interface SessionHandlers {
   // session's client-side state is, so the server replays only deltas.
   // outputReplay=false means "no raw PTY bytes at all" (no terminal is
   // mounted for this session; only claudeEvents are consumed).
-  // claudeReplay=false means "no Claude history replay" (this session is
-  // hidden; only the viewed session loads its conversation history).
-  getResume: () => { lastSeq: number; claudeEventsSince: number; outputReplay: boolean; claudeReplay: boolean };
+  // claudeReplay=false means "no Claude history replay". claudeLive=false
+  // means "no live Claude event frames"; hidden sessions backfill when
+  // activated instead of receiving frames they will drop.
+  getResume: () => { lastSeq: number; claudeEventsSince: number; outputReplay: boolean; claudeReplay: boolean; claudeLive: boolean };
 }
 
 export interface SessionChannel {
@@ -133,6 +134,7 @@ class MuxManager {
     if (r.claudeEventsSince > 0) msg.claudeEventsSince = r.claudeEventsSince;
     if (!r.outputReplay) msg.outputReplay = false;
     if (!r.claudeReplay) msg.claudeReplay = false;
+    if (!r.claudeLive) msg.claudeLive = false;
     this.send(msg);
   }
 

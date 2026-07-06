@@ -62,15 +62,20 @@ async function attachSessionStream(
     // and hello still flow. See the attach message in types.ts.
     includeOutput?: boolean;
     // When false, the on-attach replay of Claude JSONL *history* is
-    // suppressed (hello + LIVE claudeEvents still flow). Hidden sessions
+    // suppressed. Hidden sessions
     // attach this way so page load doesn't replay every session's
     // conversation at once. See the attach message in types.ts.
     includeClaudeReplay?: boolean;
+    // When false, live structured claudeEvent frames are suppressed too.
+    // Hidden sessions backfill with HTTP tail pages on activation, so
+    // sending frames they immediately drop is pure background cost.
+    includeClaudeLive?: boolean;
   }
 ): Promise<(() => void) | null> {
   const tag = opts.tagSessionId !== undefined ? { sessionId: opts.tagSessionId } : {};
   const includeOutput = opts.includeOutput !== false;
   const includeClaudeReplay = opts.includeClaudeReplay !== false;
+  const includeClaudeLive = opts.includeClaudeLive !== false;
   const replay = session.log.since(opts.lastSeq);
 
   // Claude-event replay window. Indices are ABSOLUTE (claudeEventBase +
@@ -85,7 +90,8 @@ async function attachSessionStream(
   const claudeEventsCount = base + len;
   // When history replay is suppressed, start the window at the current end
   // (localStart === len) so nothing historical is sent and the client's
-  // counter is reported as already caught up — live events take it forward.
+  // counter is reported as already caught up. If live events are enabled,
+  // they take it forward from there.
   const localStart = !includeClaudeReplay
     ? len
     : opts.claudeEventsSince > 0
@@ -162,13 +168,13 @@ async function attachSessionStream(
   };
   if (includeOutput) session.emitter.on('output', onOutput);
   session.emitter.on('exit', onExit);
-  session.emitter.on('claudeEvent', onClaudeEvent);
+  if (includeClaudeLive) session.emitter.on('claudeEvent', onClaudeEvent);
   session.emitter.on('runner-lost', onRunnerLost);
 
   return () => {
     if (includeOutput) session.emitter.off('output', onOutput);
     session.emitter.off('exit', onExit);
-    session.emitter.off('claudeEvent', onClaudeEvent);
+    if (includeClaudeLive) session.emitter.off('claudeEvent', onClaudeEvent);
     session.emitter.off('runner-lost', onRunnerLost);
   };
 }
@@ -231,6 +237,7 @@ function handleMuxConnection(ws: WebSocket): void {
           tagSessionId: id,
           includeOutput: attachMsg.outputReplay !== false,
           includeClaudeReplay: attachMsg.claudeReplay !== false,
+          includeClaudeLive: attachMsg.claudeLive !== false,
           // On PTY exit only this session detaches — the socket stays up
           // for every other attached session.
           onExited: () => detach(id)

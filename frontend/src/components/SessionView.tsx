@@ -117,6 +117,10 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
     term.focusTerminalRef.current();
   }, [term.focusTerminalRef]);
 
+  const loadEarlierClaudeEvents = useCallback((): void => {
+    term.loadEarlierClaudeEventsRef.current();
+  }, [term.loadEarlierClaudeEventsRef]);
+
   // Put the cursor in the terminal when this tab becomes the active,
   // terminal-viewed session. Tab switches are a CSS display toggle (no
   // socket reconnect → no 'open'-status focus), so without this you'd
@@ -250,6 +254,9 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
             claudeEvents={term.claudeEvents}
             send={sendInput}
             connected={term.status === 'open'}
+            hasEarlierClaudeEvents={term.hasEarlierClaudeEvents}
+            loadingEarlierClaudeEvents={term.loadingEarlierClaudeEvents}
+            onLoadEarlierClaudeEvents={loadEarlierClaudeEvents}
             sidebar={sidebar}
             cwd={session?.cwd}
           />

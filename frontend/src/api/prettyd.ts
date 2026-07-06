@@ -145,25 +145,29 @@ export interface EventsResponse {
   events: import('../types').ClaudeSessionEvent[];
   nextIndex: number;
   totalCount: number;
+  startIndex: number;
+  endIndex: number;
 }
 
 // Fetch Claude JSONL events for a session, with optional windowing.
 //
-//   tail: only return the last N events (cheap chat preview)
+//   tail: only return the last N events in the selected window
 //   since: return events from server-side log index N onwards
 //          (incremental polling — pass previous nextIndex to fetch
 //          only what's new since last time)
+//   before: end the selected window before absolute index N
 //
 // Without params: returns the full ring buffer. Avoid this — live
 // sessions hold ~15-20 MB of JSONL in memory. Every response carries
 // nextIndex so the caller can resume from there.
 export async function fetchClaudeEvents(
   sessionId: string,
-  opts?: { tail?: number; since?: number }
+  opts?: { tail?: number; since?: number; before?: number }
 ): Promise<EventsResponse | null> {
   const params = new URLSearchParams();
   if (opts?.tail != null) params.set('tail', String(opts.tail));
   if (opts?.since != null) params.set('since', String(opts.since));
+  if (opts?.before != null) params.set('before', String(opts.before));
   const qs = params.toString();
   const url = `${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/events${qs ? '?' + qs : ''}`;
   const r = await apiFetch(url);

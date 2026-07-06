@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // On a fresh Android install over cellular, this is the difference
 // between "instant tap-to-content" and "wait for the terminal lib to
 // download even though you didn't open Terminal view."
-import { wsMuxUrl, snapshot as fetchServerSnapshot } from '../api/prettyd';
+import { wsMuxUrl, snapshot as fetchServerSnapshot, fetchClaudeEvents } from '../api/prettyd';
 import { attachSession, type SessionChannel, type MuxStatus } from '../lib/wsMux';
 import { useServers } from '../lib/servers';
 import type { ServerMsg, ClaudeSessionEvent } from '../types';
@@ -45,15 +45,18 @@ interface UseTerminalResult {
   // derived blocks — UUIDs are stable, content is structured, no
   // regex required. Empty for non-Claude sessions.
   claudeEvents: ClaudeSessionEvent[];
+  hasEarlierClaudeEvents: boolean;
+  loadingEarlierClaudeEvents: boolean;
+  loadEarlierClaudeEventsRef: { current: () => void };
 }
 
-// Cap the in-memory claudeEvents array. The server's ring caps at 5000;
-// without a matching client cap a days-long tab kept open accumulates tens
-// of MB (tool_results carry full command/file output) and RemoteView's
-// eventsToMessages re-walks the whole array on every batch. Keep the most
-// recent N — the client counter (claudeEventsSeen) stays absolute, so
-// reconnect resume is unaffected.
-const CLAUDE_EVENT_CAP = 5000;
+// Bounded Pretty history. A RemoteView renders ~50 recent messages; 300
+// structured events covers that tail generously without walking weeks of
+// JSONL on every switch. Older chunks are paged in explicitly, and the hard
+// cap prevents an intentionally expanded session from becoming unbounded.
+const CLAUDE_EVENT_TAIL = 300;
+const CLAUDE_EVENT_PAGE = 300;
+const CLAUDE_EVENT_HELD_CAP = 1200;
 
 // Connection model: every session in this window shares ONE multiplexed
 // WebSocket (lib/wsMux) — frames are sessionId-tagged, tmux-style. This
@@ -65,25 +68,22 @@ const CLAUDE_EVENT_CAP = 5000;
 //
 // `mountTerminal=true` enables full xterm rendering: dynamic import,
 // term.open(container), FitAddon resize, snapshot prefill, the works.
-// When `false`, the hook still attaches to the mux socket and ingests
-// claudeEvents (so Remote view stays live) — but skips the ~250KB xterm
-// instance, its DOM tree, and the FitAddon ResizeObserver.
+// When `false`, the hook still attaches to the mux socket so InputBar can
+// send bytes and Remote can receive active-session events — but skips the
+// ~250KB xterm instance, its DOM tree, and the FitAddon ResizeObserver.
 //
 // `isActive` is whether this is the session the user is currently viewing.
-// Only the active session replays Claude conversation *history* on attach;
-// hidden sessions attach live-only. Otherwise every mounted session dumps
-// ~300 events on page load (32 sessions ≈ 20MB at once → frozen page,
-// laggy typing). Read through a ref (not an effect dependency) so flipping
-// active doesn't tear down + rebuild xterm on every tab switch — the burst
-// only matters at page-load attach, and each session attaches once with
-// its mount-time isActive. (Trade-off: a session hidden at load backfills
-// its Pretty history only on the next reconnect, not instantly on switch —
-// fine; the terminal view doesn't use this path at all.)
+// Only the active session loads Claude conversation history. Activation
+// fetches a bounded HTTP tail, then the WS resumes from that tail's end so
+// only race deltas replay. Hidden sessions attach without output or Claude
+// event frames and backfill when activated.
 export function useTerminal(sessionId: string | null, mountTerminal: boolean = true, isActive: boolean = true): UseTerminalResult {
   const [status, setStatus] = useState<Status>('connecting');
   const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null);
   const [resumedFromSeq, setResumedFromSeq] = useState<number | null>(null);
   const [claudeEvents, setClaudeEvents] = useState<ClaudeSessionEvent[]>([]);
+  const [hasEarlierClaudeEvents, setHasEarlierClaudeEvents] = useState(false);
+  const [loadingEarlierClaudeEvents, setLoadingEarlierClaudeEvents] = useState(false);
   const containerElRef = useRef<HTMLDivElement | null>(null);
   // Current activeness, readable from the attach closure without making it
   // an effect dependency. Updated every render below.
@@ -92,6 +92,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
   const sendInputRef = useRef<(data: string) => void>(() => {});
   const scrollTerminalToBottomRef = useRef<() => void>(() => {});
   const focusTerminalRef = useRef<() => void>(() => {});
+  const loadEarlierClaudeEventsRef = useRef<() => void>(() => {});
   // Re-subscribe this session's mux stream with flags recomputed for the
   // current activeness, and re-fit the terminal — invoked when isActive
   // flips (tab switch). Set inside the mount effect once the channel
@@ -209,9 +210,11 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
 
       setExitInfo(null);
       setResumedFromSeq(null);
-      // Fresh session: start from empty event list. The server's replay
-      // on attach will push every historical event back in.
+      // Fresh session: start from an empty bounded window. Activation loads
+      // an HTTP tail first; the WS then only replays small race deltas.
       setClaudeEvents([]);
+      setHasEarlierClaudeEvents(false);
+      setLoadingEarlierClaudeEvents(false);
 
       let ptyExited = false;
       // Microtask-batched buffer for incoming claudeEvent messages.
@@ -232,6 +235,103 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       // manager reads it via getResume() on every (re)attach so the
       // server skips events we already have.
       let claudeEventsSeen = 0;
+      // Absolute index of claudeEvents[0] in the daemon's event ring, plus
+      // local length/total tracking for bounded prepend/append operations.
+      let claudeEventsStart = 0;
+      let claudeEventsLoadedLength = 0;
+      let claudeEventsTotal = 0;
+      let loadingEarlier = false;
+
+      const normalizeStartIndex = (startIndex: number, eventCount: number, nextIndex: number): number => {
+        return Number.isFinite(startIndex) ? startIndex : Math.max(0, nextIndex - eventCount);
+      };
+
+      const updateEarlierAvailability = (): void => {
+        setHasEarlierClaudeEvents(claudeEventsStart > 0 && claudeEventsLoadedLength < CLAUDE_EVENT_HELD_CAP);
+      };
+
+      const replaceClaudeWindow = (
+        events: ClaudeSessionEvent[],
+        startIndex: number,
+        totalCount: number,
+        nextIndex: number
+      ): void => {
+        const overflow = Math.max(0, events.length - CLAUDE_EVENT_HELD_CAP);
+        const kept = overflow > 0 ? events.slice(overflow) : events;
+        claudeEventsStart = startIndex + overflow;
+        claudeEventsLoadedLength = kept.length;
+        claudeEventsTotal = totalCount;
+        claudeEventsSeen = nextIndex;
+        pendingClaudeEvents.length = 0;
+        setClaudeEvents(kept);
+        updateEarlierAvailability();
+      };
+
+      const loadClaudeTail = async (): Promise<boolean> => {
+        try {
+          const result = await fetchClaudeEvents(sessionId, { tail: CLAUDE_EVENT_TAIL });
+          if (disposed || result === null || !isActiveRef.current) return false;
+          const startIndex = normalizeStartIndex(result.startIndex, result.events.length, result.nextIndex);
+          replaceClaudeWindow(result.events, startIndex, result.totalCount, result.nextIndex);
+          return true;
+        } catch {
+          // Fall back to the WS initial replay cap if HTTP is transiently
+          // unavailable. Keep the resume point at 0 so the server sends a tail,
+          // not "nothing".
+          claudeEventsSeen = 0;
+          claudeEventsStart = 0;
+          claudeEventsLoadedLength = 0;
+          claudeEventsTotal = 0;
+          setClaudeEvents([]);
+          setHasEarlierClaudeEvents(false);
+          return false;
+        }
+      };
+
+      const loadEarlierClaudeEvents = async (): Promise<void> => {
+        if (loadingEarlier || disposed || !isActiveRef.current) return;
+        if (claudeEventsStart <= 0 || claudeEventsLoadedLength >= CLAUDE_EVENT_HELD_CAP) {
+          updateEarlierAvailability();
+          return;
+        }
+        const remainingCapacity = CLAUDE_EVENT_HELD_CAP - claudeEventsLoadedLength;
+        if (remainingCapacity <= 0) {
+          updateEarlierAvailability();
+          return;
+        }
+        loadingEarlier = true;
+        setLoadingEarlierClaudeEvents(true);
+        try {
+          const result = await fetchClaudeEvents(sessionId, {
+            before: claudeEventsStart,
+            tail: Math.min(CLAUDE_EVENT_PAGE, remainingCapacity)
+          });
+          if (disposed || result === null || !isActiveRef.current) return;
+          if (result.events.length === 0) {
+            setHasEarlierClaudeEvents(false);
+            return;
+          }
+          let events = result.events;
+          let startIndex = normalizeStartIndex(result.startIndex, result.events.length, result.nextIndex);
+          if (events.length > remainingCapacity) {
+            const dropped = events.length - remainingCapacity;
+            events = events.slice(dropped);
+            startIndex += dropped;
+          }
+          claudeEventsStart = startIndex;
+          claudeEventsLoadedLength += events.length;
+          claudeEventsTotal = Math.max(claudeEventsTotal, result.totalCount);
+          setClaudeEvents((prev) => [...events, ...prev]);
+          updateEarlierAvailability();
+        } catch {
+          // Leave the existing tail alone; the user can retry.
+        } finally {
+          loadingEarlier = false;
+          setLoadingEarlierClaudeEvents(false);
+        }
+      };
+
+      loadEarlierClaudeEventsRef.current = (): void => { void loadEarlierClaudeEvents(); };
 
       // Output coalescing: a busy TUI emits MANY small PTY frames per
       // keystroke (each ~1KB). Writing each one to xterm separately multiplies
@@ -300,7 +400,12 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           // received 5000 events when we received 300, and the next
           // reconnect would skip 4700 events the server still wants
           // to push.
-          claudeEventsSeen = msg.claudeReplayStart ?? claudeEventsSeen;
+          const replayStart = msg.claudeReplayStart ?? claudeEventsSeen;
+          if (claudeEventsLoadedLength === 0 && pendingClaudeEvents.length === 0) {
+            claudeEventsStart = replayStart;
+            updateEarlierAvailability();
+          }
+          claudeEventsSeen = replayStart;
           if (term) {
             // First chance to fit the terminal to the visible container.
             requestAnimationFrame(() => {
@@ -374,19 +479,13 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
           return;
         }
         if (msg.type === 'claudeEvent') {
-          // Only the viewed session folds events into React state. A hidden
-          // session's RemoteView isn't on screen, and without this guard a
-          // few busy background sessions (e.g. the sw-lanes builders) storm
-          // React — 35 invisible RemoteViews re-rendering per event — which
-          // starves the active terminal's main thread and shows up as
-          // laggy input echo. claudeEventsSeen is NOT advanced for dropped
-          // events, so when the tab is reactivated reattach() asks the
-          // server to replay from where we left off and the Pretty view
-          // catches up. (Live output is already gated the same way.)
+          // Only the viewed session folds events into React state. Hidden
+          // sessions ask the daemon not to send live claudeEvent frames; this
+          // guard is the fallback for an older daemon or an in-flight frame
+          // during reattach.
           if (!isActiveRef.current) return;
-          // Batch appends via a microtask. The server ships history on
-          // attach (could be thousands of events); we don't want each
-          // one to schedule its own re-render.
+          // Batch appends via a microtask so a replay delta does not schedule
+          // one React render per event.
           pendingClaudeEvents.push(msg.event);
           claudeEventsSeen += 1;
           if (!claudeFlushScheduled) {
@@ -395,12 +494,15 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
               claudeFlushScheduled = false;
               const batch = pendingClaudeEvents.slice();
               pendingClaudeEvents.length = 0;
+              const overflow = Math.max(0, claudeEventsLoadedLength + batch.length - CLAUDE_EVENT_HELD_CAP);
+              claudeEventsLoadedLength = claudeEventsLoadedLength + batch.length - overflow;
+              claudeEventsStart += overflow;
+              claudeEventsTotal = Math.max(claudeEventsTotal, claudeEventsSeen);
               setClaudeEvents((prev) => {
                 const merged = [...prev, ...batch];
-                return merged.length > CLAUDE_EVENT_CAP
-                  ? merged.slice(-CLAUDE_EVENT_CAP)
-                  : merged;
+                return overflow > 0 ? merged.slice(overflow) : merged;
               });
+              updateEarlierAvailability();
             });
           }
           return;
@@ -438,7 +540,13 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         if (c) ro.observe(c);
       }
 
-      const getResume = (): { lastSeq: number; claudeEventsSince: number; outputReplay: boolean; claudeReplay: boolean } => ({
+      const getResume = (): {
+        lastSeq: number;
+        claudeEventsSince: number;
+        outputReplay: boolean;
+        claudeReplay: boolean;
+        claudeLive: boolean;
+      } => ({
         lastSeq,
         claudeEventsSince: claudeEventsSeen,
         // Raw PTY bytes (replay AND live) only for the session the user is
@@ -449,10 +557,11 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         // No terminal mounted (Pretty-only) → no bytes at all. A hidden
         // session catches up via snapshot-prefill when it's reactivated.
         outputReplay: term !== null && isActiveRef.current,
-        // Likewise only the viewed session replays Claude history (the
-        // 20MB page-load burst this already fixed). Ref, not the prop, so
-        // tab switches re-attach via reattach() instead of re-mounting.
-        claudeReplay: isActiveRef.current
+        // Likewise only the viewed session replays Claude history and live
+        // Claude event frames. Hidden sessions are refreshed from a bounded
+        // HTTP tail when activated.
+        claudeReplay: isActiveRef.current,
+        claudeLive: isActiveRef.current
       });
 
       // Snapshot-prefill: instead of attaching at seq=0 and watching xterm
@@ -462,21 +571,34 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       // only receive deltas. Visually: the buffer is just THERE on first
       // paint. Reused on reactivation (a hidden terminal had output
       // suppressed, so it's stale — reset + reprime from the snapshot).
-      const attachNow = async (doPrefill: boolean): Promise<void> => {
+      const prefillTerminalSnapshot = async (): Promise<void> => {
+        if (!term) return;
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            applyFit();
+            resolve();
+          });
+        });
+        try {
+          const snap = await fetchServerSnapshot(sessionId);
+          if (disposed || !isActiveRef.current) return;
+          if (snap && snap.seq > 0) {
+            term.reset();
+            term.write(snap.text, () => {
+              try { term?.scrollToBottom(); } catch { /* ignore */ }
+            });
+            lastSeq = snap.seq;
+          }
+        } catch { /* fall through to plain attach — full replay */ }
+      };
+
+      const attachNow = async (active: boolean): Promise<void> => {
         if (disposed) return;
         channel?.detach();
         channel = null;
-        if (doPrefill && term) {
-          try {
-            const snap = await fetchServerSnapshot(sessionId);
-            if (disposed) return;
-            if (snap && snap.seq > 0) {
-              term.reset();
-              term.write(snap.text);
-              lastSeq = snap.seq;
-            }
-          } catch { /* fall through to plain attach — full replay */ }
-        }
+        const tailPromise = active ? loadClaudeTail() : Promise.resolve(false);
+        if (active && term) await prefillTerminalSnapshot();
+        if (active) await tailPromise;
         if (disposed) return;
         channel = attachSession(wsMuxUrl(), sessionId, { onMessage, onStatus, getResume });
       };
@@ -484,8 +606,8 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
       // active → prefill (the terminal was frozen while hidden) + the
       // server starts streaming output again; going inactive → re-attach
       // output-less so the server stops sending this session's bytes.
-      reattachRef.current = (active: boolean): void => { void attachNow(active && term !== null); };
-      void attachNow(true);
+      reattachRef.current = (active: boolean): void => { void attachNow(active); };
+      void attachNow(isActiveRef.current);
 
       // Wire up the cleanup closure now that all locals exist. The
       // outer-effect cleanup invokes this if it's set.
@@ -497,6 +619,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         dataDisp?.dispose();
         scrollDisp?.dispose();
         channel?.detach();
+        loadEarlierClaudeEventsRef.current = (): void => {};
         term?.dispose();
       };
     })();
@@ -537,6 +660,9 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
     scrollTerminalToBottomRef,
     focusTerminalRef,
     fitTerminalRef,
-    claudeEvents
+    claudeEvents,
+    hasEarlierClaudeEvents,
+    loadingEarlierClaudeEvents,
+    loadEarlierClaudeEventsRef
   };
 }
