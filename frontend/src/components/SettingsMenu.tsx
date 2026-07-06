@@ -6,6 +6,15 @@ import {
 } from '../lib/tauriBridge';
 import { getPushVapidPublicKey, subscribePush, unsubscribePush } from '../api/prettyd';
 import { type TextSize, nextSize, sizeLabel, writeTextSize } from '../lib/textSize';
+import {
+  NEW_SESSION_DIMENSIONS,
+  isNewSessionTool,
+  normalizeNewSessionDefaults,
+  readNewSessionDefaults,
+  type NewSessionDefaults,
+  type NewSessionTool,
+  writeNewSessionDefaults
+} from '../lib/newSessionDefaults';
 import { ServerSelector } from './ServerSelector';
 
 interface Props {
@@ -15,6 +24,12 @@ interface Props {
 }
 
 const PUSH_ENABLED_KEY = 'pretty-pty:push-enabled';
+
+const NEW_SESSION_TOOL_OPTIONS: { id: NewSessionTool; label: string }[] = [
+  { id: 'claude-code', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'shell', label: 'Shell' }
+];
 
 function readPushEnabled(): boolean {
   try {
@@ -62,6 +77,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
   const [pushEnabled, setPushEnabled] = useState(readPushEnabled);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
+  const [sessionDefaults, setSessionDefaults] = useState<NewSessionDefaults>(readNewSessionDefaults);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -95,6 +111,14 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
     const next = nextSize(textSize);
     writeTextSize(next);
     onTextSizeChange(next);
+  };
+
+  const saveSessionDefaults = (patch: Partial<NewSessionDefaults>): void => {
+    setSessionDefaults((current) => {
+      const next = normalizeNewSessionDefaults({ ...current, ...patch });
+      writeNewSessionDefaults(next);
+      return next;
+    });
   };
 
   const enablePush = async (): Promise<void> => {
@@ -207,6 +231,72 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
             <span className="settings-menu-label">Text size</span>
             <span className="settings-menu-value">{sizeLabel(textSize)}</span>
           </button>
+          <div className="settings-menu-divider" />
+          <div className="settings-menu-section" aria-label="Default new-session options">
+            <div className="settings-menu-section-title">Default new-session options</div>
+            <label className="settings-menu-field">
+              <span>Tool</span>
+              <select
+                className="settings-menu-input"
+                value={sessionDefaults.tool}
+                onChange={(e) => {
+                  if (isNewSessionTool(e.currentTarget.value)) {
+                    saveSessionDefaults({ tool: e.currentTarget.value });
+                  }
+                }}
+              >
+                {NEW_SESSION_TOOL_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-menu-row settings-menu-toggle settings-menu-default-toggle">
+              <input
+                type="checkbox"
+                checked={sessionDefaults.skipPerms}
+                onChange={(e) => saveSessionDefaults({ skipPerms: e.currentTarget.checked })}
+              />
+              <span className="settings-menu-label">Skip permissions by default</span>
+              <span className="settings-menu-value">{sessionDefaults.skipPerms ? 'On' : 'Off'}</span>
+            </label>
+            <label className="settings-menu-field">
+              <span>Default cwd</span>
+              <input
+                className="settings-menu-input settings-menu-path-input"
+                type="text"
+                value={sessionDefaults.cwd}
+                onChange={(e) => saveSessionDefaults({ cwd: e.currentTarget.value })}
+                placeholder="Server default"
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+              />
+            </label>
+            <div className="settings-menu-field-row">
+              <label className="settings-menu-field">
+                <span>Cols</span>
+                <input
+                  className="settings-menu-input"
+                  type="number"
+                  min={NEW_SESSION_DIMENSIONS.minCols}
+                  max={NEW_SESSION_DIMENSIONS.maxCols}
+                  value={sessionDefaults.cols}
+                  onChange={(e) => saveSessionDefaults({ cols: e.currentTarget.valueAsNumber })}
+                />
+              </label>
+              <label className="settings-menu-field">
+                <span>Rows</span>
+                <input
+                  className="settings-menu-input"
+                  type="number"
+                  min={NEW_SESSION_DIMENSIONS.minRows}
+                  max={NEW_SESSION_DIMENSIONS.maxRows}
+                  value={sessionDefaults.rows}
+                  onChange={(e) => saveSessionDefaults({ rows: e.currentTarget.valueAsNumber })}
+                />
+              </label>
+            </div>
+          </div>
           {tauri ? (
             <label className="settings-menu-row">
               <input
