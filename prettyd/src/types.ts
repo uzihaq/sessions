@@ -2,6 +2,9 @@ export type SessionTool = 'claude-code' | 'codex' | 'terminal';
 
 export interface SessionInfo {
   id: string;
+  // Optional user-facing label set at create time. This is distinct
+  // from Claude's own titles: it is a caller-supplied job name.
+  name?: string;
   cmd: string;
   args: string[];
   cwd: string;
@@ -39,6 +42,8 @@ export interface SessionInfo {
   // and the user's manual rename overrides all of these.
   claudeCustomTitle?: string;
   claudeAiTitle?: string;
+  // Optional shell command to fire on observed working true → false edges.
+  onIdle?: string;
 }
 
 export function classifyTool(cmd: string): SessionTool {
@@ -56,6 +61,9 @@ export interface CreateSessionRequest {
   cols?: number;
   rows?: number;
   env?: Record<string, string>;
+  name?: string;
+  onIdle?: string;
+  waitReady?: boolean;
 }
 
 // Wire-protocol version. Bump whenever message shapes change so a

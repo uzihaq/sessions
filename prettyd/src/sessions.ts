@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -74,17 +74,21 @@ export type SessionHandle = SessionInternal;
 
 const STATE_DIR = process.env.PRETTYD_STATE_DIR
   ?? path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'runners');
+const IDLE_DIR = path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'idle');
 
 const sessions = new Map<string, SessionInternal>();
 
 const WORKING_BYTES_THRESHOLD = 80;
 const WORKING_DECAY_MS = 800;
+const READY_WAIT_MS = 30_000;
+const READY_SETTLE_MS = 800;
 // How long an exited session stays visible to /api/sessions before being
 // dropped. Lets `pretty ls --include-exited` and the UI tab strip show
 // "exit code 0" briefly without showing ghost sessions forever.
 const EXITED_GRACE_MS = 30_000;
 
 function sessionDisplayLabel(info: SessionInfo): string {
+  if (info.name) return info.name;
   if (info.claudeCustomTitle) return info.claudeCustomTitle;
   if (info.claudeAiTitle) return info.claudeAiTitle;
   const cwdBase = info.cwd.split('/').filter(Boolean).pop();
@@ -93,20 +97,105 @@ function sessionDisplayLabel(info: SessionInfo): string {
   return info.id.slice(0, 8);
 }
 
+function removeIdleSentinel(id: string): void {
+  try { fs.unlinkSync(path.join(IDLE_DIR, id)); } catch { /* absent or unreadable — non-fatal */ }
+}
+
+function writeIdleSentinel(info: SessionInfo): void {
+  try {
+    fs.mkdirSync(IDLE_DIR, { recursive: true, mode: 0o700 });
+    const body = {
+      id: info.id,
+      name: sessionDisplayLabel(info),
+      at: new Date().toISOString()
+    };
+    fs.writeFileSync(path.join(IDLE_DIR, info.id), JSON.stringify(body) + '\n', { mode: 0o600 });
+  } catch {
+    // Completion markers are best-effort. Never let filesystem state
+    // interfere with session activity tracking.
+  }
+}
+
+function runOnIdleHook(info: SessionInfo): void {
+  if (!info.onIdle) return;
+  try {
+    const child = spawn('/bin/sh', ['-c', info.onIdle], {
+      cwd: info.cwd,
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        PRETTY_SESSION_ID: info.id,
+        PRETTY_SESSION_NAME: sessionDisplayLabel(info)
+      }
+    });
+    child.on('error', () => { /* fire-and-forget hook failed to spawn */ });
+    child.unref();
+  } catch {
+    // Hooks are user-supplied and must not throw into session handling.
+  }
+}
+
 function setWorkingState(internal: SessionInternal, nextWorking: boolean): void {
   const previous = internal.info.working;
   internal.info.working = nextWorking;
+  if (!previous && nextWorking) {
+    removeIdleSentinel(internal.info.id);
+  }
   if (!internal.pushWorkingObserved) {
     internal.pushWorkingObserved = true;
     return;
   }
   if (previous && !nextWorking && !internal.exited) {
     const label = sessionDisplayLabel(internal.info);
+    writeIdleSentinel(internal.info);
+    runOnIdleHook(internal.info);
     void sendPush({
       title: `${label} finished`,
       data: { sessionId: internal.info.id }
     });
   }
+}
+
+function normalizedOptionalString(value: string | undefined): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function structuredEventsCanSignalReady(info: SessionInfo): boolean {
+  return info.tool === 'claude-code' || info.tool === 'codex';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForSessionReady(internal: SessionInternal): Promise<void> {
+  if (internal.claudeEventLog.length > 0 || !structuredEventsCanSignalReady(internal.info)) {
+    await sleep(READY_SETTLE_MS);
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(settleTimer);
+      clearTimeout(capTimer);
+      internal.emitter.off('claudeEvent', finish);
+      internal.emitter.off('exit', finish);
+      internal.emitter.off('runner-lost', finish);
+      resolve();
+    };
+    const settleTimer = setTimeout(finish, READY_SETTLE_MS);
+    const capTimer = setTimeout(finish, READY_WAIT_MS);
+    internal.emitter.on('claudeEvent', finish);
+    internal.emitter.on('exit', finish);
+    internal.emitter.on('runner-lost', finish);
+    if (internal.claudeEventLog.length > 0 || internal.exited) finish();
+  });
 }
 
 setInterval(() => {
@@ -310,6 +399,8 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
   const cwd = req.cwd ?? config.defaultCwd;
   const cols = req.cols ?? config.defaultCols;
   const rows = req.rows ?? config.defaultRows;
+  const name = normalizedOptionalString(req.name);
+  const onIdle = normalizedOptionalString(req.onIdle);
 
   // Surface a useful error early when the user typed a cwd that doesn't
   // exist (deleted folder, moved project, typo). Without this guard,
@@ -447,6 +538,11 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
   }
 
   const session = await registerRunner(sockPath);
+  if (name !== undefined) session.info.name = name;
+  if (onIdle !== undefined) session.info.onIdle = onIdle;
+  if (req.waitReady === true) {
+    await waitForSessionReady(session);
+  }
   return session.info;
 }
 
