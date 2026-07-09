@@ -1100,15 +1100,44 @@ const TOOL_PRESETS = {
     // sandbox` — no sandbox, no approval prompts, full access. codex >=0.137
     // removed `--full-auto`, and the old `--sandbox workspace-write` still
     // boxed codex to the project; this matches Claude's full-access posture.
-    args: ['--dangerously-bypass-approvals-and-sandbox'],
+    // `-c check_for_update_on_startup=false` also kills codex's full-screen
+    // "update available" prompt, which takes over the TUI and swallows input
+    // (another silent hang mode). Orthogonal to approvals, so it's in both.
+    args: ['-c', 'check_for_update_on_startup=false', '--dangerously-bypass-approvals-and-sandbox'],
     // --no-skip-perms → sandboxed to the workspace and prompts on request.
-    safeArgs: ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
+    safeArgs: ['-c', 'check_for_update_on_startup=false', '--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
   },
   shell: {
     cmd: undefined, // prettyd default = $SHELL
     args: undefined
   }
 };
+
+// When a session's command IS a known tool (codex/claude) — regardless of
+// whether it arrived via --tool, --cmd, or as a positional — inject that
+// tool's default args so skip-perms/full-access is the default for BOTH
+// tools, every entry path. Idempotent: if the caller already passed the
+// bypass/safe flags (or extra `-c` config), we don't double-add.
+function applyToolDefault(body, noSkipPerms) {
+  if (!body.cmd) return;
+  const base = String(body.cmd).split('/').pop().toLowerCase();
+  const preset = TOOL_PRESETS[base];
+  if (!preset || !preset.args) return;
+  const existing = body.args || [];
+  const alreadyChoseMode = existing.some((a) =>
+    a === '--dangerously-bypass-approvals-and-sandbox' ||
+    a === '--dangerously-skip-permissions' ||
+    a === '--sandbox' || a === '--ask-for-approval' || a === '--full-auto');
+  if (alreadyChoseMode) return; // caller was explicit — respect it
+  const def = (noSkipPerms ? preset.safeArgs : preset.args) || [];
+  // Preset default args first, then any extra args the caller passed.
+  body.args = def.slice().concat(existing);
+  // Pin a Claude session id (prettyd's only JSONL locator) as --tool does,
+  // so positional `pretty new claude` also gets a working Pretty view.
+  if (base === 'claude' && !body.args.some((x) => x === '--session-id' || x === '--resume')) {
+    body.args.push('--session-id', randomUUID());
+  }
+}
 
 async function cmdNew(args) {
   const body = {};
@@ -1186,6 +1215,12 @@ async function cmdNew(args) {
       body.cmd = args[0];
       body.args = args.slice(1);
     }
+    // Even WITHOUT --tool: if the command itself is a known tool
+    // (`pretty new codex`, `--cmd codex`, `pretty new claude`), apply that
+    // tool's skip-perms default so it's full-access by default — exactly
+    // like `--tool codex`. Without this, `pretty new codex` ran bare codex
+    // with its per-command approval layer ON and agents hung/crashed.
+    applyToolDefault(body, noSkipPerms);
   }
   const info = await postJson('/api/sessions', body);
   if (wantJson) {
