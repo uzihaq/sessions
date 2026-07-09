@@ -392,10 +392,42 @@ function scheduleRunnerReconnect(id: string, sockPath: string, delays: number[])
   }, delay).unref();
 }
 
+// Skip-permissions is the product default for BOTH agent tools, on EVERY
+// entry path (CLI, web UI, raw API). The CLI and dialog already inject the
+// right flags, but a bare POST {cmd:"codex"} used to spawn codex with its
+// per-command approval layer ON — sessions that silently hang on every
+// action. This is the daemon-side guarantee: if the command IS a known
+// tool and the caller expressed no explicit approval/sandbox choice,
+// inject that tool's full-access default. Callers that pass any explicit
+// mode flag are respected untouched.
+const TOOL_DEFAULT_ARGS: Record<string, string[]> = {
+  claude: ['--dangerously-skip-permissions'],
+  codex: ['-c', 'check_for_update_on_startup=false', '--dangerously-bypass-approvals-and-sandbox']
+};
+const EXPLICIT_MODE_FLAGS = new Set([
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--dangerously-skip-permissions',
+  '--sandbox', '-s',
+  '--ask-for-approval', '-a',
+  '--full-auto'
+]);
+
+function withToolDefaultArgs(cmd: string, args: string[]): string[] {
+  const base = cmd.split('/').pop()?.toLowerCase() ?? '';
+  const defaults = TOOL_DEFAULT_ARGS[base];
+  if (!defaults) return args;
+  if (args.some((a) => EXPLICIT_MODE_FLAGS.has(a))) return args;
+  // APPEND the defaults: codex's flags are accepted after a subcommand
+  // (`codex resume <uuid> --dangerously-bypass…` — verified) but NOT
+  // reliably before one, so defaults-last is the order that works for
+  // both `codex` and `codex resume …` (and is harmless for claude).
+  return [...args, ...defaults];
+}
+
 export async function createSession(req: CreateSessionRequest): Promise<SessionInfo> {
   const id = randomUUID();
   const cmd = req.cmd ?? config.defaultShell;
-  const args = req.args ?? [];
+  const args = withToolDefaultArgs(cmd, req.args ?? []);
   const cwd = req.cwd ?? config.defaultCwd;
   const cols = req.cols ?? config.defaultCols;
   const rows = req.rows ?? config.defaultRows;
