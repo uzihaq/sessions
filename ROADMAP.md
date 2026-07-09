@@ -1,8 +1,17 @@
 # pretty-PTY Roadmap
 
-Last verified: 2026-07-05.
+Last verified: 2026-07-08.
 
 This file is a strategic handoff for agents that do not have repo access. The live work queue is the somewhere task board project `pretty-pty`; treat that board as canonical for task status, ownership, and priority. This roadmap explains direction and sequencing.
+
+## Status as of 2026-07-08
+
+Phase 1 send-reliability and Pretty-view speed both took a concrete step: the send confirm-or-fail path, the bounded tail-load + bottom-up paging, terminal snapshot-prefill, CLI keepAlive, completion hooks, and settings defaults are all **merged and deployed** on `pty-runner-architecture` (see STATE.md "Deployed 2026-07-08"). The repo has just two branches: the deployed line and `codex-app-server`.
+
+Next in priority order:
+1. **Apply the host sysctl safety-net** (operator sudo) — the only remaining guard against the 2026-07-06 port-exhaustion incident recurring. Code-side churn fix is live; host guard is not.
+2. **Wire `codex-app-server` into the session lifecycle** — the strategic "drive contracts, not pixels" fix. Foundation built + smoke-proven; not yet the runtime path for codex sessions.
+3. Codex reattach/existing-session parity bug; finish push activation.
 
 ## Product Direction
 

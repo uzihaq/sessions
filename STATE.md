@@ -1,8 +1,23 @@
 # pretty-PTY Current State
 
-Last verified: 2026-07-05 on branch `docs-roadmap`.
+Last verified: 2026-07-08 on branch `pty-runner-architecture` (the deployed line).
 
-This file is for agents without repo access. The live work queue is the somewhere task board project `pretty-pty`. At verification time it had 6 active tasks: 1 in progress and 5 open.
+This file is for agents without repo access. The live work queue is the somewhere task board project `pretty-pty`.
+
+## Deployed 2026-07-08 (verified live)
+
+A batch of previously-branched work was merged into `pty-runner-architecture`, the daemon was restarted once (all 11 live sessions reattached via launchd — none lost), and these are now live:
+
+- **Send reliability**: browser send now confirms-or-fails visibly (JSONL `lastUserMessageAt` reconciliation) instead of silently sitting in the composer. This was the #1 reason the Pretty view fell out of favor. (frontend + CLI; shipped via HMR, no restart.)
+- **Loading overhaul**: activation fetches a bounded 300-event tail (`/api/sessions/:id/events?tail=300`) instead of the full log (verified: `tail=10`→10 events, not 2531), renders bottom-up, and pages older events on scroll via `?before=<idx>`/`startIndex`/`endIndex`. Client caps held events at 1200; hidden tabs attach `claudeLive=false`.
+- **Terminal**: shows the current buffer immediately on switch (snapshot-prefill) instead of blank-until-next-output.
+- **CLI keepAlive agent**: `pretty wait`/follow reuse one connection (connection-churn hygiene).
+- **Completion hooks**: `pretty new --on-idle / --wait-ready / --name`.
+- **Settings**: default new-session options (tool, skip-perms, cwd, size) persisted.
+
+**OPEN ACTION (not yet done — protection against the 2026-07-06 port-exhaustion incident):** the host sysctl safety-net is NOT applied. `net.inet.ip.portrange.first` is still 49152 and `net.inet.tcp.msl` still 15000; no `/Library/LaunchDaemons/tech.pretty-pty.sysctl.plist`. Until an operator runs the two `sudo sysctl` lines (+ installs the LaunchDaemon), ephemeral-port exhaustion from aggregate load can recur. The code-side churn fix is live; the host-level guard is not.
+
+**Not merged (own deploy):** `codex-app-server` branch — the app-server reliability spine (JSON-RPC contract: acked `turn/start`, structured event stream, standard TUI attachable via `codex --remote`). Smoke-proven end-to-end but NOT yet wired into the session lifecycle. This is the next major initiative.
 
 ## What Is Live
 
