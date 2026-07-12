@@ -10,8 +10,11 @@
 //   pretty send <id> --file P       Send UTF-8 file contents to the session.
 //   pretty transcript <id>          Print user/assistant turns from events.
 //   pretty keys <id> <key>          Send a control key: esc | up | down | ^c.
-//   pretty new [--cwd P] [--name L] [--on-idle C] [--wait-ready] [--cmd C] [args...]
+//   pretty new [--cwd P] [--name L] [--model M] [--effort L] [--fast]
+//              [--on-idle C] [--wait-ready] [--cmd C] [args...]
 //                                   Create a new session.
+//   pretty model <id> <model> [--effort L]
+//                                   Switch an idle Claude session.
 //   pretty kill <id>                Terminate the session's runner.
 //   pretty attach <id>              Stream the session to your terminal
 //                                   (raw bytes, two-way; Ctrl+Q to detach).
@@ -1139,6 +1142,49 @@ function applyToolDefault(body, noSkipPerms) {
   }
 }
 
+function hasArgValue(args, names) {
+  return args.some((arg, i) => names.includes(arg) && typeof args[i + 1] === 'string');
+}
+
+function hasConfigValue(args, key) {
+  return args.some((arg, i) =>
+    (arg === '-c' || arg === '--config') &&
+    typeof args[i + 1] === 'string' &&
+    args[i + 1].startsWith(key + '='));
+}
+
+// Apply Pretty's tool-neutral controls after every command-resolution path
+// (--tool, --cmd, and positional) has converged on body.cmd/body.args.
+// Existing native flags win so callers can mix these controls with explicit
+// tool arguments without receiving duplicates.
+function applyAgentControls(body, controls) {
+  const requested = controls.model !== undefined || controls.effort !== undefined || controls.fast;
+  if (!requested) return;
+
+  const base = body.cmd ? String(body.cmd).split('/').pop().toLowerCase() : 'shell';
+  if (base !== 'claude' && base !== 'codex') {
+    fail('--model, --effort, and --fast are only for claude/codex', 1);
+  }
+  if (base === 'claude' && controls.fast) {
+    fail('--fast is not supported for claude (claude has no service tier)', 1);
+  }
+
+  const nativeArgs = body.args || (body.args = []);
+  if (controls.model !== undefined && !hasArgValue(nativeArgs, ['--model', '-m'])) {
+    nativeArgs.push('--model', controls.model);
+  }
+  if (controls.effort !== undefined) {
+    if (base === 'claude' && !hasArgValue(nativeArgs, ['--effort'])) {
+      nativeArgs.push('--effort', controls.effort);
+    } else if (base === 'codex' && !hasConfigValue(nativeArgs, 'model_reasoning_effort')) {
+      nativeArgs.push('-c', `model_reasoning_effort="${controls.effort}"`);
+    }
+  }
+  if (controls.fast && !hasConfigValue(nativeArgs, 'service_tier')) {
+    nativeArgs.push('-c', 'service_tier="priority"');
+  }
+}
+
 async function cmdNew(args) {
   const body = {};
   // Strip flags one at a time; recompute indices after each splice so
@@ -1158,6 +1204,18 @@ async function cmdNew(args) {
     args.splice(i, 1);
     return true;
   }
+  function pluckControl(name) {
+    const i = args.indexOf(name);
+    if (i < 0) return undefined;
+    const value = args[i + 1];
+    if (value === undefined || value.startsWith('--')) fail(`${name} needs a value`, 1);
+    args.splice(i, 2);
+    return value;
+  }
+  const model = pluckControl('--model');
+  const effort = pluckControl('--effort');
+  const fast = hasFlag('--fast');
+
   const cwdVal = pluck('--cwd');
   if (cwdVal !== undefined) body.cwd = cwdVal;
 
@@ -1222,11 +1280,52 @@ async function cmdNew(args) {
     // with its per-command approval layer ON and agents hung/crashed.
     applyToolDefault(body, noSkipPerms);
   }
+  applyAgentControls(body, { model, effort, fast });
   const info = await postJson('/api/sessions', body);
   if (wantJson) {
     process.stdout.write(JSON.stringify(info, null, 2) + '\n');
   } else {
     process.stdout.write(info.id + '\n');
+  }
+}
+
+async function cmdModel(args) {
+  const idArg = args.shift();
+  const model = args.shift();
+  if (!idArg || !model) fail('usage: pretty model <session> <model> [--effort <level>]', 1);
+
+  let effort;
+  const effortIdx = args.indexOf('--effort');
+  if (effortIdx >= 0) {
+    effort = args[effortIdx + 1];
+    if (!effort) fail('--effort needs a value', 1);
+    args.splice(effortIdx, 2);
+  }
+  if (args.length > 0) fail('usage: pretty model <session> <model> [--effort <level>]', 1);
+
+  const id = await resolveSessionId(idArg);
+  const { sessions } = await getJson('/api/sessions?include_exited=1');
+  const session = sessions.find((candidate) => candidate.id === id);
+  if (!session) fail(unknownSessionMessage(idArg), 1);
+  if (session.working) fail(`session is mid-turn; try when idle (pretty wait ${id})`, 1);
+
+  const tool = toolOfSession(session);
+  if (tool === 'codex') {
+    fail('live model switch for codex requires an app-server-backed session (coming); use /model in the Terminal view, or respin with: pretty new --tool codex --model <m>', 1);
+  }
+  if (tool !== 'claude-code') {
+    fail('live model switch is only supported for claude sessions', 1);
+  }
+
+  const inputPath = `/api/sessions/${encodeURIComponent(id)}/input`;
+  const modelCommand = `/model ${model}`;
+  await postJson(inputPath, { data: modelCommand + '\r' });
+  process.stdout.write(`sent ${modelCommand}\n`);
+  if (effort !== undefined) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const effortCommand = `/effort ${effort}`;
+    await postJson(inputPath, { data: effortCommand + '\r' });
+    process.stdout.write(`sent ${effortCommand}\n`);
   }
 }
 
@@ -1573,8 +1672,10 @@ function help() {
     '                           the last assistant message. Claude/Codex only.',
     '  keys <id> <key>          send esc|up|down|left|right|^c|^d|enter|tab',
     '  new --tool <claude|codex|shell> [--cwd P] [--name L]',
+    '                           [--model M] [--effort L] [--fast]',
     '                           [--on-idle C] [--wait-ready] [--no-skip-perms] [extra args]',
-    '  new [--cwd P] [--name L] [--on-idle C] [--wait-ready] [--cmd C] [args...]',
+    '  new [--cwd P] [--name L] [--model M] [--effort L] [--fast]',
+    '                           [--on-idle C] [--wait-ready] [--cmd C] [args...]',
     '                           create a session.  --tool is the easy path:',
     '                              pretty new --tool claude',
     '                              pretty new --tool claude --cwd ~/foo',
@@ -1583,6 +1684,8 @@ function help() {
     '                           --on-idle runs a shell command on working→idle.',
     '                           --wait-ready waits for tool startup before returning.',
     '                           or supply --cmd / a positional command directly.',
+    '  model <id> <model> [--effort L]',
+    '                           switch model/effort on an idle Claude session.',
     '  kill <id> [<id>...]      terminate one or more sessions',
     '  attach <id>              raw two-way stream (Ctrl+Q to detach)',
     '  doctor                   per-session health: QoS (throttled?), spawn',
@@ -1610,6 +1713,7 @@ async function dispatch() {
     case 'ask':  return cmdAsk(argv.slice());
     case 'keys': return cmdKeys(argv[0], argv[1]);
     case 'new':  return cmdNew(argv);
+    case 'model': return cmdModel(argv.slice());
     case 'kill': return cmdKill(argv);
     case 'tail': return cmdTail(argv);
     case 'wait': return cmdWait(argv);

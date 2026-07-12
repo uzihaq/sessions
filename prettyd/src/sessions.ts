@@ -75,6 +75,31 @@ export type SessionHandle = SessionInternal;
 const STATE_DIR = process.env.PRETTYD_STATE_DIR
   ?? path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'runners');
 const IDLE_DIR = path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'idle');
+const GLOBAL_HOOKS_FILE = path.join(os.homedir(), '.config', 'pretty', 'hooks.json');
+
+interface GlobalHooksConfig {
+  onIdle?: string;
+}
+
+function loadGlobalHooks(): GlobalHooksConfig {
+  if (!fs.existsSync(GLOBAL_HOOKS_FILE)) return {};
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(GLOBAL_HOOKS_FILE, 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error('expected an object');
+    }
+    const onIdle = (parsed as { onIdle?: unknown }).onIdle;
+    if (onIdle !== undefined && (typeof onIdle !== 'string' || onIdle.trim().length === 0)) {
+      throw new Error('onIdle must be a non-empty string');
+    }
+    return typeof onIdle === 'string' ? { onIdle } : {};
+  } catch (err) {
+    console.warn(`[hooks] ignoring malformed ${GLOBAL_HOOKS_FILE}: ${(err as Error).message}`);
+    return {};
+  }
+}
+
+const globalHooks = loadGlobalHooks();
 
 const sessions = new Map<string, SessionInternal>();
 
@@ -136,6 +161,36 @@ function runOnIdleHook(info: SessionInfo): void {
   }
 }
 
+function runGlobalOnIdleHook(info: SessionInfo): void {
+  if (!globalHooks.onIdle) return;
+  try {
+    const child = spawn('/bin/sh', ['-c', globalHooks.onIdle], {
+      cwd: info.cwd,
+      detached: true,
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        PRETTY_SESSION_ID: info.id,
+        PRETTY_SESSION_NAME: sessionDisplayLabel(info),
+        PRETTY_SESSION_TOOL: info.tool,
+        PRETTY_SESSION_CWD: info.cwd
+      }
+    });
+    const killTimer = setTimeout(() => {
+      try { child.kill(); } catch { /* hook already exited */ }
+    }, 30_000);
+    killTimer.unref();
+    child.once('exit', () => clearTimeout(killTimer));
+    child.once('error', (err) => {
+      clearTimeout(killTimer);
+      console.warn(`[hooks] global onIdle failed to spawn: ${err.message}`);
+    });
+    child.unref();
+  } catch (err) {
+    console.warn(`[hooks] global onIdle failed to spawn: ${(err as Error).message}`);
+  }
+}
+
 function setWorkingState(internal: SessionInternal, nextWorking: boolean): void {
   const previous = internal.info.working;
   internal.info.working = nextWorking;
@@ -150,6 +205,7 @@ function setWorkingState(internal: SessionInternal, nextWorking: boolean): void 
     const label = sessionDisplayLabel(internal.info);
     writeIdleSentinel(internal.info);
     runOnIdleHook(internal.info);
+    runGlobalOnIdleHook(internal.info);
     void sendPush({
       title: `${label} finished`,
       data: { sessionId: internal.info.id }
@@ -161,6 +217,36 @@ function normalizedOptionalString(value: string | undefined): string | undefined
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function argValue(args: string[], names: string[]): string | undefined {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (names.includes(args[i]!)) return args[i + 1];
+  }
+  return undefined;
+}
+
+function configArgValue(args: string[], key: string): string | undefined {
+  for (let i = 0; i < args.length - 1; i++) {
+    if (args[i] !== '-c' && args[i] !== '--config') continue;
+    const value = args[i + 1]!;
+    if (!value.startsWith(key + '=')) continue;
+    return value.slice(key.length + 1).replace(/^(["'])(.*)\1$/, '$2');
+  }
+  return undefined;
+}
+
+function spawnControls(tool: SessionInfo['tool'], args: string[]): Pick<SessionInfo, 'model' | 'effort' | 'fast'> {
+  const model = argValue(args, ['--model', '-m']);
+  const effort = tool === 'codex'
+    ? configArgValue(args, 'model_reasoning_effort')
+    : argValue(args, ['--effort']);
+  const fast = tool === 'codex' && configArgValue(args, 'service_tier') === 'priority';
+  return {
+    ...(model !== undefined ? { model } : {}),
+    ...(effort !== undefined ? { effort } : {}),
+    ...(fast ? { fast: true } : {})
+  };
 }
 
 function structuredEventsCanSignalReady(info: SessionInfo): boolean {
@@ -614,6 +700,7 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
   });
   const mirrorSerialize = new SerializeAddon();
   mirrorTerm.loadAddon(mirrorSerialize);
+  const tool = classifyTool(hello.cmd);
   const internal: SessionInternal = {
     info: {
       id: hello.id,
@@ -624,7 +711,8 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
       rows: hello.rows,
       createdAt: hello.createdAt,
       pid: hello.pid,
-      tool: classifyTool(hello.cmd),
+      tool,
+      ...spawnControls(tool, hello.args),
       working: false,
       lastDataAt: Date.now(),
       lastUserMessageAt: null,
