@@ -66,6 +66,12 @@ export function getAuthToken(): string {
  * configured bind host — enabling the web UI when prettyd is bound to a
  * Tailscale address without opening it to arbitrary cross-origin sites.
  */
+// The hosted onboarding/setup page on somewhere. Matched as an EXACT serialized
+// origin (scheme+host+port) — never a hostname — so plain http://, another port,
+// or a look-alike subdomain (pretty-pty.somewhere.tech.evil.test) is rejected.
+// Lets the hosted walkthrough's "is my daemon reachable?" check call this daemon.
+const HOSTED_SHELL_ORIGINS = new Set(['https://pretty-pty.somewhere.tech']);
+
 export function isAllowedOrigin(origin: string | undefined, host: string): boolean {
   // No origin = non-browser client (curl, CLI) — always allow.
   if (!origin) return true;
@@ -76,6 +82,9 @@ export function isAllowedOrigin(origin: string | undefined, host: string): boole
   } catch {
     return false; // malformed origin — reject
   }
+
+  // Fixed hosted origin — exact serialized-origin match, not a hostname rule.
+  if (HOSTED_SHELL_ORIGINS.has(parsed.origin)) return true;
 
   const oh = parsed.hostname;
   // Loopback: standard browser localhost variants.

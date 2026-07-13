@@ -26,6 +26,7 @@ function send(res: ServerResponse, status: number, body: unknown, corsOrigin?: s
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json');
   if (corsOrigin) res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+  res.setHeader('Vary', 'Origin'); // response varies by Origin — don't let a cache cross-serve it
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
   res.end(JSON.stringify(body));
