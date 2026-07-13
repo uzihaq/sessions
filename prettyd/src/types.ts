@@ -44,6 +44,10 @@ export interface SessionInfo {
   claudeAiTitle?: string;
   // Optional shell command to fire on observed working true → false edges.
   onIdle?: string;
+  // Spawn-time controls requested through the tool's native arguments.
+  model?: string;
+  effort?: string;
+  fast?: boolean;
 }
 
 export function classifyTool(cmd: string): SessionTool {
