@@ -208,6 +208,7 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
       ok: true,
       name: 'prettyd',
       version: '0.1.0',
+      listen: { host: config.host, port: config.port },
       discovering: isDiscovering(),
       sessionsLoaded: listSessions({ includeExited: true }).length
     });
