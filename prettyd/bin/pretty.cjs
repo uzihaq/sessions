@@ -16,6 +16,8 @@
 //   pretty model <id> <model> [--effort L]
 //                                   Switch an idle Claude session.
 //   pretty kill <id>                Terminate the session's runner.
+//   pretty remote enable|disable|status
+//                                   Manage tailnet-only HTTPS access.
 //   pretty attach <id>              Stream the session to your terminal
 //                                   (raw bytes, two-way; Ctrl+Q to detach).
 //   pretty help                     This.
@@ -1709,6 +1711,69 @@ ${envEntries}
   process.stdout.write(`  Logs:  ${logFile}\n`);
 }
 
+function requestHealthAt(target) {
+  return new Promise((resolve, reject) => {
+    const transport = target.protocol === 'https:' ? https : http;
+    const req = transport.request({
+      protocol: target.protocol,
+      hostname: target.host,
+      port: target.port,
+      path: '/api/health',
+      method: 'GET',
+      headers: { accept: 'application/json' },
+      timeout: 2_000
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.once('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }));
+    });
+    req.once('timeout', () => req.destroy(Object.assign(new Error('request timed out'), { code: 'ETIMEDOUT' })));
+    req.once('error', reject);
+    req.end();
+  });
+}
+
+async function cmdRemote(action, extraArgs) {
+  if (extraArgs.length > 0) fail('usage: pretty remote <enable|disable|status>');
+  const { runRemote } = require('./remote.cjs');
+  await runRemote(action, {
+    fail,
+    wantJson,
+    getDaemonListen: async (tailscaleStatus) => {
+      const resolved = apiTarget('/api/health');
+      const candidates = [{
+        protocol: resolved.protocol,
+        host: resolved.hostname,
+        port: resolved.port
+      }];
+      for (const host of tailscaleStatus.Self.TailscaleIPs || []) {
+        if (!candidates.some((candidate) => candidate.host === host && candidate.port === Number(PORT))) {
+          candidates.push({ protocol: 'http:', host, port: Number(PORT) });
+        }
+      }
+
+      for (const candidate of candidates) {
+        let response;
+        try {
+          response = await requestHealthAt(candidate);
+        } catch {
+          continue;
+        }
+        if (response.status !== 200) continue;
+        let health;
+        try { health = JSON.parse(response.body.toString('utf8')); }
+        catch { continue; }
+        if (!health || health.ok !== true || health.name !== 'prettyd') continue;
+        if (health.listen && typeof health.listen.host === 'string') return health.listen;
+        return { host: candidate.host, port: candidate.port };
+      }
+
+      const attempted = candidates.map((candidate) => `${candidate.host}:${candidate.port}`).join(', ');
+      fail(`cannot reach prettyd at ${attempted}. Start it first with \`pretty install\`.`, 2);
+    }
+  });
+}
+
 function help() {
   process.stdout.write([
     'pretty — prettyd CLI',
@@ -1765,6 +1830,9 @@ function help() {
     '                           path (dist/tsx), flags sessions needing recreate',
     '  token                    print the daemon auth token (paste into web UI)',
     '  install                  register prettyd as a macOS LaunchAgent and start it',
+    '  remote enable            expose the daemon over tailnet-only Tailscale HTTPS',
+    '  remote disable           remove Pretty\'s Tailscale Serve HTTPS root handler',
+    '  remote status            verify the Serve endpoint and /api/health',
     '',
     'Global flags:',
     '  --json   machine-friendly output',
@@ -1803,6 +1871,7 @@ async function dispatch() {
     case '--version':
     case '-v':
       return cmdVersion();
+    case 'remote':  return cmdRemote(argv.shift(), argv);
     case undefined:
     case 'help':
     case '--help':

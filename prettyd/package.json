@@ -43,12 +43,14 @@
     "prepack": "npm run build && npm --prefix ../frontend run build && node scripts/package-assets.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/fix-spawn-helper.cjs",
-    "setup": "npm run build && pretty install"
+    "setup": "npm run build && pretty install",
+    "test:remote": "node --test scripts/test-remote.cjs"
   },
   "dependencies": {
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "node-pty": "^1.0.0",
+    "qrcode-terminal": "^0.12.0",
     "web-push": "^3.6.7",
     "ws": "^8.21.0"
   },
