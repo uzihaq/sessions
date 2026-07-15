@@ -1,7 +1,26 @@
 {
-  "name": "prettyd",
+  "name": "pretty-pty",
   "version": "0.1.0",
-  "description": "Pretty PTY daemon — owns node-pty sessions, exposes them over HTTP + WS.",
+  "description": "Persistent PTY daemon, web UI, and CLI for AI coding sessions.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uzihaq/pretty-pty.git",
+    "directory": "prettyd"
+  },
+  "keywords": [
+    "pty",
+    "terminal",
+    "daemon",
+    "claude-code",
+    "codex"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
   "type": "module",
   "main": "dist/server.js",
   "bin": {
@@ -10,7 +29,10 @@
   "files": [
     "bin/",
     "dist/",
+    "web/",
+    "LICENSE",
     "src/",
+    "scripts/package-assets.cjs",
     "scripts/fix-spawn-helper.cjs",
     "tsconfig.json"
   ],
@@ -18,6 +40,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build && npm --prefix ../frontend run build && node scripts/package-assets.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/fix-spawn-helper.cjs",
     "setup": "npm run build && pretty install"

@@ -13,7 +13,10 @@ import type { CreateSessionRequest } from './types.js';
 
 const MODULE_DIR = nodePath.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WEB_DIR = nodePath.resolve(MODULE_DIR, '../../frontend/dist');
-const WEB_DIR = nodePath.resolve(process.env.PRETTYD_WEB_DIR ?? DEFAULT_WEB_DIR);
+const BUNDLED_WEB_DIR = nodePath.resolve(MODULE_DIR, '../web');
+const WEB_DIR = nodePath.resolve(
+  process.env.PRETTYD_WEB_DIR ?? (fs.existsSync(DEFAULT_WEB_DIR) ? DEFAULT_WEB_DIR : BUNDLED_WEB_DIR)
+);
 let loggedMissingWebDir = false;
 
 // Reflect the request origin back as ACAO only when it is on the

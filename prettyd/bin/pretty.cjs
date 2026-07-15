@@ -110,7 +110,7 @@ function fail(msg, code = 1) {
   process.exit(code);
 }
 
-function api(method, p, body) {
+function api(method, p, body, timeoutMs) {
   return new Promise((resolve, reject) => {
     const data = body !== undefined ? Buffer.from(JSON.stringify(body)) : null;
     // Include auth token on every request; null token = older daemon without
@@ -136,6 +136,9 @@ function api(method, p, body) {
       });
     });
     req.on('error', reject);
+    if (timeoutMs) {
+      req.setTimeout(timeoutMs, () => req.destroy(new Error(`request timed out after ${timeoutMs}ms`)));
+    }
     if (data) req.write(data);
     req.end();
   });
@@ -554,6 +557,30 @@ async function cmdDoctor() {
   const fs = require('node:fs');
   const os = require('node:os');
   const { execFileSync } = require('node:child_process');
+  let nodePty;
+  try {
+    nodePty = require('node-pty');
+    await new Promise((resolve, reject) => {
+      const pty = nodePty.spawn('/usr/bin/true', [], {
+        name: 'xterm-color',
+        cols: 80,
+        rows: 24,
+        cwd: process.cwd(),
+        env: process.env
+      });
+      const timer = setTimeout(() => {
+        try { pty.kill(); } catch { /* best effort */ }
+        reject(new Error('test PTY timed out'));
+      }, 3_000);
+      pty.onExit(({ exitCode }) => {
+        clearTimeout(timer);
+        if (exitCode === 0) resolve();
+        else reject(new Error(`test PTY exited with status ${exitCode}`));
+      });
+    });
+  } catch (err) {
+    fail(`node-pty preflight failed: ${err.message || String(err)}; run xcode-select --install`, 2);
+  }
   const agents = path.join(os.homedir(), 'Library', 'LaunchAgents');
   const ps1 = (fmt, pid) => {
     try { return execFileSync('ps', ['-o', fmt, '-p', String(pid)], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
@@ -1533,7 +1560,7 @@ function cmdToken() {
 }
 
 // `pretty install` — register prettyd as a macOS LaunchAgent daemon and
-// start it. Safe to re-run: launchctl tolerates "already loaded" (status 17).
+// start it. Safe to re-run: an already-loaded agent is kickstarted.
 // All paths are resolved at runtime from __dirname so the installed CLI
 // works wherever the repo was cloned — no hardcoded paths.
 async function cmdInstall() {
@@ -1542,6 +1569,7 @@ async function cmdInstall() {
   // __dirname = prettyd/bin/ → prettyd/ is one level up.
   const prettydDir = path.resolve(__dirname, '..');
   const serverJs  = path.join(prettydDir, 'dist', 'server.js');
+  const webIndex  = path.join(prettydDir, 'web', 'index.html');
   const logDir    = path.join(os.homedir(), 'Library', 'Logs', 'pretty-pty');
   const logFile   = path.join(logDir, 'daemon.log');
   const agentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
@@ -1550,6 +1578,25 @@ async function cmdInstall() {
   // PATH must include both Homebrew roots so bare 'claude'/'codex'/'node'
   // resolve on Apple Silicon (/opt/homebrew/bin) and Intel (/usr/local/bin).
   const daemonPath = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin';
+
+  function executableIn(searchPath, name) {
+    for (const dir of searchPath.split(':')) {
+      const candidate = path.join(dir, name);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch { /* keep looking */ }
+    }
+    return null;
+  }
+
+  // Validate the package and host before writing a plist or invoking launchd.
+  if (!fs.existsSync(serverJs)) fail(`install is incomplete: missing daemon at ${serverJs}; reinstall pretty-pty`, 2);
+  if (!fs.existsSync(webIndex)) fail(`install is incomplete: missing bundled frontend at ${webIndex}; reinstall pretty-pty`, 2);
+  const launchctl = executableIn('/bin:/usr/bin', 'launchctl');
+  if (!launchctl) fail('install requires launchctl, but it was not found in /bin or /usr/bin', 2);
+  const nodeBinary = executableIn(daemonPath, 'node');
+  if (!nodeBinary) fail(`install requires a node binary on the daemon PATH (${daemonPath})`, 2);
 
   // Propagate any user-pinned bind host/port into the daemon environment.
   const envVars = { PATH: daemonPath };
@@ -1606,26 +1653,52 @@ ${envEntries}
   try { fs.chmodSync(plistPath, 0o600); } catch { /* best effort */ }
   process.stdout.write(`wrote plist: ${plistPath}\n`);
 
-  // Bootstrap the daemon. Tolerate status 17 / "already loaded" — safe to
-  // re-run install after an upgrade without first unloading the old plist.
+  // Bootstrap the daemon. On upgrade, restart an already-loaded agent so it
+  // picks up the newly installed package without requiring a manual unload.
   const uid = process.getuid?.() ?? 0;
-  const r = spawnSync('launchctl', ['bootstrap', `gui/${uid}`, plistPath], {
+  const serviceTarget = `gui/${uid}/tech.pretty-pty.daemon`;
+  const r = spawnSync(launchctl, ['bootstrap', `gui/${uid}`, plistPath], {
     stdio: ['ignore', 'pipe', 'pipe']
   });
   if (r.status !== 0) {
-    const err = ((r.stderr) || Buffer.alloc(0)).toString().trim();
+    const err = (r.stderr || Buffer.alloc(0)).toString().trim();
     const alreadyLoaded = r.status === 17 || /already (loaded|bootstrapped)/i.test(err);
-    if (!alreadyLoaded) {
-      process.stderr.write(`warning: launchctl bootstrap failed (status=${r.status}): ${err}\n`);
-      process.stderr.write(`         to retry: launchctl bootstrap gui/${uid} ${plistPath}\n`);
+    if (alreadyLoaded) {
+      const kick = spawnSync(launchctl, ['kickstart', '-k', serviceTarget], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      if (kick.status !== 0) {
+        const kickErr = (kick.stderr || Buffer.alloc(0)).toString().trim();
+        fail(`launchctl kickstart failed (status=${kick.status}): ${kickErr || 'unknown error'}`, 2);
+      }
+    } else {
+      fail(`launchctl bootstrap failed (status=${r.status}): ${err || r.error?.message || 'unknown error'}`, 2);
     }
   }
 
   const daemonHost = process.env.PRETTYD_HOST || '127.0.0.1';
   const daemonPort = process.env.PRETTYD_PORT || '8787';
+  const healthDeadline = Date.now() + 15_000;
+  let lastHealthError = 'no response';
+  while (Date.now() < healthDeadline) {
+    try {
+      const health = await api('GET', '/api/health', undefined, 1_000);
+      if (health.status === 200) {
+        lastHealthError = '';
+        break;
+      }
+      lastHealthError = `HTTP ${health.status}`;
+    } catch (err) {
+      lastHealthError = err.message || String(err);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (lastHealthError) {
+    fail(`daemon did not become healthy at http://${daemonHost}:${daemonPort}/api/health within 15s (${lastHealthError}); see ${logFile}`, 2);
+  }
   const tok = readToken();
 
-  process.stdout.write('\nprettyd daemon registered and started.\n');
+  process.stdout.write('\nprettyd daemon registered, started, and healthy.\n');
   process.stdout.write(`  URL:   http://${daemonHost}:${daemonPort}\n`);
   if (tok) {
     process.stdout.write(`  Token: ${tok}\n`);
@@ -1701,6 +1774,11 @@ function help() {
   ].join('\n'));
 }
 
+function cmdVersion() {
+  const pkg = require(path.resolve(__dirname, '..', 'package.json'));
+  process.stdout.write(`${pkg.version}\n`);
+}
+
 async function dispatch() {
   switch (sub) {
     case 'ls': return cmdLs(argv);
@@ -1721,6 +1799,10 @@ async function dispatch() {
     case 'doctor':  return cmdDoctor();
     case 'token':   return cmdToken();
     case 'install': return cmdInstall();
+    case 'version':
+    case '--version':
+    case '-v':
+      return cmdVersion();
     case undefined:
     case 'help':
     case '--help':
