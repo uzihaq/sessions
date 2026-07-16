@@ -40,6 +40,7 @@ const https = require('node:https');
 const path = require('node:path');
 const url = require('node:url');
 const { randomUUID } = require('node:crypto');
+const { execFile } = require('node:child_process');
 const os = require('node:os');
 const fs = require('node:fs');
 
@@ -104,6 +105,9 @@ function apiTarget(p) {
 // without restarting the CLI process. Returns null if the file is absent
 // (older daemon without auth — safe to proceed unauthenticated).
 const TOKEN_FILE = path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'token');
+const RUNNER_STATE_DIR = process.env.PRETTYD_STATE_DIR
+  || process.env.RUNNER_STATE_DIR
+  || path.join(os.homedir(), '.local', 'state', 'pretty-PTY', 'runners');
 function readToken() {
   try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim(); }
   catch { return null; }
@@ -231,19 +235,27 @@ function sessionLabel(s) {
   return parts.join(' ');
 }
 
-async function resolveSessionId(idOrPrefix) {
-  const { sessions } = await getJson('/api/sessions?include_exited=1');
+function resolveSessionFromList(idOrPrefix, sessions) {
   const exact = sessions.find((s) => s.id === idOrPrefix);
-  if (exact) return exact.id;
+  if (exact) return exact;
 
   const matches = sessions.filter((s) => typeof s.id === 'string' && s.id.startsWith(idOrPrefix));
-  if (matches.length === 1) return matches[0].id;
+  if (matches.length === 1) return matches[0];
   if (matches.length === 0) fail(unknownSessionMessage(idOrPrefix), 1);
 
   const lines = matches
     .map((s) => `  ${s.id.slice(0, 8)}  ${sessionLabel(s)}`)
     .join('\n');
   fail(`ambiguous session prefix '${idOrPrefix}' — matches:\n${lines}\nrun \`pretty ls\``, 1);
+}
+
+async function resolveSession(idOrPrefix) {
+  const { sessions } = await getJson('/api/sessions?include_exited=1');
+  return resolveSessionFromList(idOrPrefix, sessions);
+}
+
+async function resolveSessionId(idOrPrefix) {
+  return (await resolveSession(idOrPrefix)).id;
 }
 
 // Small ANSI stripper — same regex used everywhere in pretty-PTY.
@@ -1444,9 +1456,280 @@ async function cmdTail(args) {
   await new Promise(() => {});
 }
 
+function readRunnerMetadata() {
+  let names;
+  try { names = fs.readdirSync(RUNNER_STATE_DIR); }
+  catch { return []; }
+
+  const sessions = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(RUNNER_STATE_DIR, name), 'utf8'));
+      if (parsed && typeof parsed.id === 'string' && typeof parsed.cwd === 'string') {
+        sessions.push(parsed);
+      }
+    } catch { /* A partial/stale runner metadata file is not a session. */ }
+  }
+  return sessions;
+}
+
+function resolveRunnerMetadata(idOrPrefix) {
+  const sessions = readRunnerMetadata();
+  const exact = sessions.find((session) => session.id === idOrPrefix);
+  if (exact) return exact;
+  const matches = sessions.filter((session) => session.id.startsWith(idOrPrefix));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    const lines = matches
+      .map((session) => `  ${session.id.slice(0, 8)}  ${sessionLabel(session)}`)
+      .join('\n');
+    fail(`ambiguous session prefix '${idOrPrefix}' in runner metadata — matches:\n${lines}`, 1);
+  }
+  return null;
+}
+
+async function resolveCommitWaitTarget(idOrPrefix, cwdOverride) {
+  try {
+    // One daemon call resolves the id and supplies cwd. Nothing in the
+    // predicate below depends on the daemon after this initial lookup.
+    const session = await resolveSession(idOrPrefix);
+    return { session: session.id, cwd: cwdOverride || session.cwd };
+  } catch (daemonError) {
+    // Runners outlive prettyd, so their metadata is the durable lookup path
+    // while the daemon is restarting or unavailable.
+    const metadata = resolveRunnerMetadata(idOrPrefix);
+    if (metadata) return { session: metadata.id, cwd: cwdOverride || metadata.cwd };
+    if (cwdOverride) return { session: idOrPrefix, cwd: cwdOverride };
+    throw new Error(
+      `cannot resolve session '${idOrPrefix}' while prettyd is unavailable; ` +
+      `no matching runner metadata exists in ${RUNNER_STATE_DIR} and no --cwd was supplied ` +
+      `(${daemonError.message || daemonError})`
+    );
+  }
+}
+
+function git(cwd, args) {
+  return new Promise((resolve) => {
+    execFile('git', ['-C', cwd, ...args], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024
+    }, (error, stdout, stderr) => {
+      resolve({
+        code: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+        stdout: stdout || '',
+        stderr: stderr || (error ? error.message : '')
+      });
+    });
+  });
+}
+
+async function commitWaitBaseline(cwd) {
+  const repo = await git(cwd, ['rev-parse', '--is-inside-work-tree']);
+  if (repo.code !== 0 || repo.stdout.trim() !== 'true') {
+    throw new Error(`cwd is not a git repository: ${cwd}`);
+  }
+
+  const head = await git(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (head.code !== 0) {
+    throw new Error(`git repository has no commit at HEAD: ${cwd}`);
+  }
+
+  const refResult = await git(cwd, ['symbolic-ref', '--quiet', 'HEAD']);
+  const checkedOutRef = refResult.code === 0 ? refResult.stdout.trim() : 'HEAD';
+  const gitDirResult = await git(cwd, ['rev-parse', '--absolute-git-dir']);
+  if (gitDirResult.code !== 0) {
+    throw new Error(`cannot resolve git directory for cwd: ${cwd}`);
+  }
+
+  return {
+    baseline: head.stdout.trim(),
+    checkedOutRef,
+    reflogPath: path.join(gitDirResult.stdout.trim(), 'logs', 'HEAD')
+  };
+}
+
+async function readCommitChange(cwd, baseline) {
+  const head = await git(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (head.code !== 0) return null;
+  const commit = head.stdout.trim();
+  if (!commit || commit === baseline) return null;
+
+  const [subjectResult, ancestorResult] = await Promise.all([
+    git(cwd, ['log', '-1', '--format=%s', commit]),
+    git(cwd, ['merge-base', '--is-ancestor', baseline, commit])
+  ]);
+  return {
+    commit,
+    subject: subjectResult.code === 0 ? subjectResult.stdout.replace(/\r?\n$/, '') : '',
+    history_rewritten: ancestorResult.code !== 0
+  };
+}
+
+function waitForCommitChange(cwd, baselineInfo, timeoutMs) {
+  return new Promise((resolve) => {
+    let watcher = null;
+    let checking = false;
+    let checkPending = false;
+    let deadlineReached = false;
+    let settled = false;
+
+    const startedAt = Date.now();
+    let pollTimer = null;
+    let timeoutTimer = null;
+
+    function finish(result) {
+      if (settled) return;
+      settled = true;
+      if (watcher) watcher.close();
+      if (pollTimer) clearInterval(pollTimer);
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      resolve({ ...result, elapsed_ms: Date.now() - startedAt });
+    }
+
+    async function checkTruth() {
+      if (settled) return;
+      if (checking) {
+        checkPending = true;
+        return;
+      }
+      checking = true;
+      do {
+        checkPending = false;
+        const change = await readCommitChange(cwd, baselineInfo.baseline);
+        if (change) {
+          finish({ reason: 'commit', ...change });
+          checking = false;
+          return;
+        }
+      } while (checkPending && !settled);
+      checking = false;
+      if (deadlineReached && !settled) finish({ reason: 'timeout' });
+    }
+
+    try {
+      // fs.watch is only a low-latency wake hint. Every event re-runs git,
+      // while the poll below guarantees progress if events are coalesced,
+      // missed, or the reflog cannot be watched.
+      watcher = fs.watch(baselineInfo.reflogPath, { persistent: false }, checkTruth);
+      watcher.on('error', () => {
+        try { watcher.close(); } catch { /* already closed */ }
+        watcher = null;
+      });
+    } catch { /* The 5s git-truth poll remains authoritative. */ }
+
+    pollTimer = setInterval(checkTruth, 5_000);
+    timeoutTimer = setTimeout(() => {
+      deadlineReached = true;
+      checkTruth();
+    }, timeoutMs);
+
+    // Closes the snapshot→watch race: a HEAD change between recording the
+    // baseline and attaching fs.watch is observed by git immediately.
+    checkTruth();
+  });
+}
+
+function emitCommitWaitError(reason, message, code, details = {}) {
+  if (wantJson) {
+    process.stdout.write(JSON.stringify({ ok: false, reason, message, ...details }) + '\n');
+  } else {
+    process.stderr.write(`pretty wait: ${message}\n`);
+  }
+  process.exitCode = code;
+}
+
+async function cmdWaitUntilCommit(id, args) {
+  let timeoutMs = 30_000;
+  let cwdOverride;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--timeout') {
+      if (!args[i + 1]) fail('--timeout needs a duration', 1);
+      timeoutMs = parseDuration(args[++i]);
+    } else if (args[i] === '--cwd') {
+      if (!args[i + 1]) fail('--cwd needs a path', 1);
+      cwdOverride = args[++i];
+    } else {
+      fail(`unknown option for --until commit: ${args[i]}`, 1);
+    }
+  }
+
+  let target;
+  try {
+    target = await resolveCommitWaitTarget(id, cwdOverride);
+  } catch (error) {
+    emitCommitWaitError('session-unavailable', error.message || String(error), 2);
+    return;
+  }
+
+  let baselineInfo;
+  try {
+    baselineInfo = await commitWaitBaseline(target.cwd);
+  } catch (error) {
+    emitCommitWaitError('not-a-git-repository', error.message || String(error), 1, {
+      session: target.session,
+      cwd: target.cwd
+    });
+    return;
+  }
+
+  const outcome = await waitForCommitChange(target.cwd, baselineInfo, timeoutMs);
+  if (outcome.reason === 'timeout') {
+    emitCommitWaitError(
+      'timeout',
+      `no commit change after ${timeoutMs}ms`,
+      2,
+      {
+        session: target.session,
+        cwd: target.cwd,
+        baseline: baselineInfo.baseline,
+        elapsed_ms: outcome.elapsed_ms
+      }
+    );
+    return;
+  }
+
+  const result = {
+    session: target.session,
+    cwd: target.cwd,
+    baseline: baselineInfo.baseline,
+    commit: outcome.commit,
+    subject: outcome.subject,
+    elapsed_ms: outcome.elapsed_ms,
+    history_rewritten: outcome.history_rewritten
+  };
+  if (wantJson) {
+    process.stdout.write(JSON.stringify(result) + '\n');
+  } else {
+    process.stdout.write(
+      `session: ${result.session}\n` +
+      `cwd: ${result.cwd}\n` +
+      `baseline: ${result.baseline}\n` +
+      `commit: ${result.commit}\n` +
+      `subject: ${result.subject}\n` +
+      `elapsed_ms: ${result.elapsed_ms}\n` +
+      `history_rewritten: ${result.history_rewritten}\n`
+    );
+  }
+}
+
+const WAIT_UNTIL_HANDLERS = new Map([
+  ['commit', cmdWaitUntilCommit]
+]);
+
 async function cmdWait(args) {
   const id = args.shift();
-  if (!id) fail('usage: pretty wait <id> [--idle 2s] [--timeout 30s]');
+  if (!id) fail('usage: pretty wait <id> [--idle 2s] [--timeout 30s] | pretty wait <id> --until commit [--timeout 30s] [--cwd P]');
+  const untilIndex = args.indexOf('--until');
+  if (untilIndex >= 0) {
+    const predicate = args[untilIndex + 1];
+    if (!predicate) fail('--until needs a predicate (supported: commit)', 1);
+    const handler = WAIT_UNTIL_HANDLERS.get(predicate);
+    if (!handler) fail(`unsupported --until predicate '${predicate}' (supported: commit)`, 1);
+    args.splice(untilIndex, 2);
+    return handler(id, args);
+  }
   let idleMs = 2000;
   let timeoutMs = 30_000;
   for (let i = 0; i < args.length; i++) {
@@ -2068,6 +2351,10 @@ function help() {
     '  model <id> <model> [--effort L]',
     '                           switch model/effort on an idle Claude session.',
     '  kill <id> [<id>...]      terminate one or more sessions',
+    '  wait <id> [--idle Ns] [--timeout Ns]',
+    '                           wait for the existing session-idle condition',
+    '  wait <id> --until commit [--timeout Ns] [--cwd P]',
+    '                           wait until git HEAD differs from its baseline',
     '  attach <id>              raw two-way stream (Ctrl+Q to detach)',
     '  doctor                   per-session health: QoS (throttled?), spawn',
     '                           path (dist/tsx), flags sessions needing recreate',
