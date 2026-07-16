@@ -44,6 +44,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/fix-spawn-helper.cjs",
     "setup": "npm run build && pretty install",
+    "test:codex-resolver": "tsx --test scripts/test-codex-resolver.mjs",
     "test:remote": "node --test scripts/test-remote.cjs"
   },
   "dependencies": {

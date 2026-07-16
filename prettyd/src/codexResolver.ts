@@ -71,12 +71,20 @@ function todayAndYesterday(now: Date = new Date()): Date[] {
   return [now, yesterday];
 }
 
-export function codexFreshSessionDirs(now: Date = new Date()): string[] {
-  return todayAndYesterday(now).map(dateDir);
+function sessionDates(now: Date, createdAt?: number): Date[] {
+  const dates = todayAndYesterday(now);
+  if (createdAt !== undefined && Number.isFinite(createdAt)) {
+    dates.push(new Date(createdAt));
+  }
+  return dates;
 }
 
-export function codexWatchDirs(now: Date = new Date()): string[] {
-  return unique(todayAndYesterday(now).flatMap(dateAncestorDirs));
+export function codexFreshSessionDirs(now: Date = new Date(), createdAt?: number): string[] {
+  return unique(sessionDates(now, createdAt).map(dateDir));
+}
+
+export function codexWatchDirs(now: Date = new Date(), createdAt?: number): string[] {
+  return unique(sessionDates(now, createdAt).flatMap(dateAncestorDirs));
 }
 
 export function extractCodexResumeId(args: string[]): string | undefined {
@@ -206,7 +214,10 @@ export function resolveCodexRolloutPath(opts: {
   const resumed = resolveResumed(opts.args);
   if (resumed) return resumed;
 
-  const dirs = codexFreshSessionDirs();
+  // Reattached runners can be much older than the daemon process. Include
+  // the runner's own start date while retaining today/yesterday for fresh
+  // rollouts and midnight races. This stays bounded to at most three days.
+  const dirs = codexFreshSessionDirs(new Date(), opts.createdAt);
   let sawDir = false;
   let sawFile = false;
   let sawCwdMatch = false;

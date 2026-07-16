@@ -173,7 +173,7 @@ export async function watchCodexRollout(opts: WatcherOptions): Promise<SessionFi
   };
 
   const ensureDirWatches = (): void => {
-    for (const dir of codexWatchDirs()) ensureDirWatch(dir);
+    for (const dir of codexWatchDirs(new Date(), opts.createdAt)) ensureDirWatch(dir);
     if (currentPath) ensureDirWatch(path.dirname(currentPath));
   };
 

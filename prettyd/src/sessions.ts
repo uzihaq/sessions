@@ -986,6 +986,9 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
       .catch(() => { /* swallow — non-fatal */ });
   }
 
+  // Keep this in registerRunner: both createSession() and discoverRunners()
+  // enter through this shared path, so reattached Codex sessions get the
+  // same rollout watcher as newly-created sessions.
   if (internal.info.tool === 'codex' && hello.cwd) {
     void watchCodexRollout({
       cwd: hello.cwd,
