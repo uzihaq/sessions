@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>tech.pretty-pty.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/uzair/pretty-PTY-embed/prettygo/dist-go/prettyd-darwin-arm64</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>/Users/uzair/pretty-PTY-embed/prettygo/dist-go</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/uzair/pretty-PTY-embed/prettygo/dist-go/prettyd-darwin-arm64.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/uzair/pretty-PTY-embed/prettygo/dist-go/prettyd-darwin-arm64.log</string>
+</dict>
+</plist>
