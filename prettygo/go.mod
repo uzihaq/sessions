@@ -1,13 +1,16 @@
 module github.com/uzihaq/pretty-pty/prettygo
 
 go 1.26.5
-require github.com/creack/pty v1.1.24
+
 require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/charmbracelet/x/vt v0.0.0-20260713092006-0d683c34c74b
 	github.com/creack/pty v1.1.24
+	github.com/fsnotify/fsnotify v1.10.1
 )
+
+require (
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
 	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
@@ -22,5 +25,4 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
-require github.com/fsnotify/fsnotify v1.10.1
-require golang.org/x/sys v0.13.0 // indirect
+)
