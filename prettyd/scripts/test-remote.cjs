@@ -101,6 +101,6 @@ test('verification resolves the ts.net name and requires a real health 200', asy
 test('phone link pre-fills the verified endpoint', () => {
   assert.equal(
     walkthroughUrl('https://mac-mini.example.ts.net'),
-    'https://pretty-pty.somewhere.tech/#endpoint=https%3A%2F%2Fmac-mini.example.ts.net'
+    'https://pretty-pty.somewhere.site/#endpoint=https%3A%2F%2Fmac-mini.example.ts.net'
   );
 });
