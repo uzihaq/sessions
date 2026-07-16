@@ -31,7 +31,7 @@
 // Session ids accept full ids or unique prefixes.
 //
 // Exit codes:
-//   0 success · 1 user error (bad args, unknown id) · 2 transport error.
+//   0 success · 1 user/definite send error · 2 transport or ambiguous send.
 
 'use strict';
 
@@ -157,13 +157,18 @@ async function getJson(p) {
   if (r.status >= 400) fail(`${p} → ${r.status} ${r.body.toString('utf8').slice(0, 200)}`, 2);
   return JSON.parse(r.body.toString('utf8'));
 }
-async function postJson(p, body) {
-  const r = await api('POST', p, body);
+async function postJson(p, body, errorCode = 2) {
+  let r;
+  try {
+    r = await api('POST', p, body);
+  } catch (err) {
+    fail(`${p} → ${err.message || String(err)}`, errorCode);
+  }
   if (r.status === 404) {
     const sid = sessionIdFromApiPath(p);
     if (sid) fail(unknownSessionMessage(sid), 1);
   }
-  if (r.status >= 400) fail(`${p} → ${r.status} ${r.body.toString('utf8').slice(0, 200)}`, 2);
+  if (r.status >= 400) fail(`${p} → ${r.status} ${r.body.toString('utf8').slice(0, 200)}`, errorCode);
   return JSON.parse(r.body.toString('utf8'));
 }
 async function del(p) {
@@ -333,6 +338,33 @@ function getComposerLines(snap) {
   return lines.slice(-8);
 }
 
+// Claude's compact status line can update before the sessions API's working
+// flag. Keep this deliberately specific to the status-line shape so ordinary
+// conversation text containing the word "working" is not acceptance evidence.
+const COMPOSER_TAIL_WORKING_RE = /(?:^|\n)\s*[\u2022·∙]\s*Working\b/i;
+function composerTailShowsWorking(composerTail) {
+  return COMPOSER_TAIL_WORKING_RE.test(composerTail || '');
+}
+
+// Pure evidence-tier decision used by the send path and its unit-style test.
+// A cleared composer is represented by textStillInComposer=false.
+function decideSendConfirmation({
+  jsonlConfirmed = false,
+  textStillInComposer = false,
+  working = false
+} = {}) {
+  if (jsonlConfirmed) {
+    return { confidence: 'confirmed', exitCode: 0 };
+  }
+  if (!textStillInComposer && working) {
+    return { confidence: 'accepted', exitCode: 0 };
+  }
+  if (textStillInComposer) {
+    return { confidence: 'unconfirmed', exitCode: 1 };
+  }
+  return { confidence: 'unconfirmed', exitCode: 2 };
+}
+
 const SNAPSHOT_PICKER_FOOTER_RE = /Enter to select.*[↑↓].*to navigate/;
 const SNAPSHOT_NUMBERED_OPTION_RE = /^\s*(?:[❯>]\s*)?\d+[\.)]\s+\S.+$/;
 const SNAPSHOT_TRUST_PROMPT_RE = /\b(?:do you trust|trust (?:this|the)|trusted (?:folder|directory|workspace|project)|trust the files|only grant access to directories you trust)\b/i;
@@ -438,11 +470,11 @@ function snapshotStateCliLabel(state) {
 // JSONL event to appear (it's almost certainly just lagging).
 //
 // opts: { timeoutMs?: number, noWait?: boolean }
-// Returns: { confirmed: true|false|null, tool?, text?, reason?,
-//            textStillInComposer?, composerTail? }
+// Returns: { confirmed: true|false|null, confidence?, exitCode?, tool?, text?,
+//            reason?, textStillInComposer?, composerTail? }
 //   confirmed=null  → fire-and-forget (noWait=true or non-confirmable tool)
-//   confirmed=true  → JSONL user event confirmed
-//   confirmed=false → timed out without confirmation
+//   confirmed=true  → confirmed or accepted-working
+//   confirmed=false → unconfirmed
 async function sendAndConfirm(id, text, opts) {
   const timeoutMs = (opts && opts.timeoutMs) || 10_000;
   const noWait    = !!(opts && opts.noWait);
@@ -474,9 +506,9 @@ async function sendAndConfirm(id, text, opts) {
   // as a separate discrete keystroke (prevents the "\r" from being
   // interpreted as a newline inside the multiline box).
   const inputUrl = `/api/sessions/${encodeURIComponent(id)}/input`;
-  await postJson(inputUrl, { data: text });
+  await postJson(inputUrl, { data: text }, 1);
   await new Promise((r) => setTimeout(r, 150));
-  await postJson(inputUrl, { data: '\r' });
+  await postJson(inputUrl, { data: '\r' }, 1);
 
   if (!confirmable || noWait) {
     return { confirmed: null, tool };
@@ -500,7 +532,14 @@ async function sendAndConfirm(id, text, opts) {
     // JSONL, which happens exactly when the message is submitted.
     const { sessions: sess2 } = await getJson('/api/sessions');
     const s2 = sess2.find((x) => x.id === id);
-    if (!s2) return { confirmed: true, reason: 'gone', text: '' };
+    if (!s2) {
+      return {
+        confirmed: false,
+        confidence: 'unconfirmed',
+        exitCode: 1,
+        reason: 'session-unreachable'
+      };
+    }
 
     const newTs = typeof s2.lastUserMessageAt === 'number' ? s2.lastUserMessageAt : 0;
     if (newTs > baseTs) {
@@ -514,7 +553,11 @@ async function sendAndConfirm(id, text, opts) {
         const real = (evData.events || []).filter(isRealUserEvent);
         if (real.length > 0) confirmedText = extractEventText(real[real.length - 1]);
       } catch { /* best effort */ }
-      return { confirmed: true, text: confirmedText };
+      return {
+        confirmed: true,
+        ...decideSendConfirmation({ jsonlConfirmed: true }),
+        text: confirmedText
+      };
     }
 
     // Timeout?
@@ -525,7 +568,18 @@ async function sendAndConfirm(id, text, opts) {
       const snapshotState = classifySnapshotComposerState(snap);
       const textStillInComposer =
         snippet.length > 0 && composerLines.some((l) => l.includes(snippet));
-      return { confirmed: false, reason: 'timeout', textStillInComposer, composerTail, snapshotState };
+      const decision = decideSendConfirmation({
+        textStillInComposer,
+        working: s2.working === true || composerTailShowsWorking(composerTail)
+      });
+      return {
+        confirmed: decision.exitCode === 0,
+        ...decision,
+        reason: 'timeout',
+        textStillInComposer,
+        composerTail,
+        snapshotState
+      };
     }
 
     // Anti-duplicate check: should we re-press Enter?
@@ -539,7 +593,7 @@ async function sendAndConfirm(id, text, opts) {
         snippet.length > 0 && composerLines.some((l) => l.includes(snippet));
       if (textInComposer) {
         // Text is still sitting in the box — Enter didn't submit. Retry.
-        await postJson(inputUrl, { data: '\r' });
+        await postJson(inputUrl, { data: '\r' }, 1);
         enterRetries++;
       }
       // Text gone from composer → do nothing (JSONL event is just lagging).
@@ -727,7 +781,11 @@ async function cmdSend(args) {
   if (result.confirmed === null) {
     if (!isConfirmableTool(result.tool)) {
       if (wantJson) {
-        process.stdout.write(JSON.stringify({ submitted: null, tool: result.tool }) + '\n');
+        process.stdout.write(JSON.stringify({
+          submitted: null,
+          confidence: 'unconfirmed',
+          tool: result.tool
+        }) + '\n');
       } else {
         process.stdout.write(
           `sent (submission confirmation not available for tool: ${result.tool})\n`
@@ -741,9 +799,12 @@ async function cmdSend(args) {
   // ── Confirmed ────────────────────────────────────────────────────────
   if (result.confirmed) {
     if (wantJson) {
-      const out = { submitted: true };
+      const out = { submitted: true, confidence: result.confidence };
+      if (result.confidence === 'accepted') out.reason = 'working-jsonl-pending';
       if (result.text) out.text = result.text;
       process.stdout.write(JSON.stringify(out) + '\n');
+    } else if (result.confidence === 'accepted') {
+      process.stdout.write('accepted (working); JSONL confirmation pending\n');
     } else {
       process.stdout.write('submitted\n');
     }
@@ -754,12 +815,15 @@ async function cmdSend(args) {
   if (wantJson) {
     process.stdout.write(JSON.stringify({
       submitted: false,
+      confidence: 'unconfirmed',
       reason: result.reason,
       sessionState: result.snapshotState ? result.snapshotState.kind : undefined,
       sessionStateDescription: result.snapshotState ? result.snapshotState.description : undefined,
       textStillInComposer: result.textStillInComposer,
       composerTail: result.composerTail || ''
     }) + '\n');
+  } else if (result.reason === 'session-unreachable') {
+    process.stderr.write('pretty send: session exited or became unreachable before submission was confirmed\n');
   } else {
     process.stderr.write(`pretty send: could not confirm submission after ${timeoutMs}ms\n`);
     if (isBlockingSnapshotState(result.snapshotState)) {
@@ -789,7 +853,7 @@ async function cmdSend(args) {
       }
     }
   }
-  process.exit(1);
+  process.exit(result.exitCode);
 }
 
 // `pretty last <id> [--role user|assistant] [-n N]`
@@ -2035,12 +2099,13 @@ function help() {
     '  send <id> [--timeout Ns] [--no-wait] [--file path] <text...>',
     '                           send text + Enter (alias: `input`).',
     '                           For Claude/Codex sessions: blocks until the',
-    '                           event log confirms receipt (default --timeout 10s).',
+    '                           event log confirms receipt (default --timeout 10s),',
+    '                           or the cleared composer is visibly working.',
     '                           Re-presses Enter only when text is still visible',
     '                           in the composer (anti-duplicate guard).',
     '                           --file reads the message body from UTF-8 file.',
     '                           --no-wait: fire-and-forget (old behavior).',
-    '                           Exits non-zero if confirmation times out.',
+    '                           Ambiguous timeouts exit 2; definite failures exit 1.',
     '  input <id> <text...>     same as send',
     '  last <id> [--role user|assistant] [-n N]',
     '                           print the last message(s) from the JSONL log.',
@@ -2132,10 +2197,14 @@ async function dispatch() {
   }
 }
 
-(async () => {
-  try {
-    await dispatch();
-  } finally {
-    destroyApiAgents();
-  }
-})().catch((err) => fail(err.message || String(err), 2));
+module.exports = { decideSendConfirmation };
+
+if (require.main === module) {
+  (async () => {
+    try {
+      await dispatch();
+    } finally {
+      destroyApiAgents();
+    }
+  })().catch((err) => fail(err.message || String(err), 2));
+}
