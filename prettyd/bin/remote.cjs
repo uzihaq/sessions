@@ -6,7 +6,7 @@ const { spawn, spawnSync } = require('node:child_process');
 
 const DOWNLOAD_URL = 'https://tailscale.com/download';
 const DNS_ADMIN_URL = 'https://login.tailscale.com/admin/dns';
-const WALKTHROUGH_URL = 'https://pretty-pty.somewhere.tech/';
+const WALKTHROUGH_URL = 'https://pretty-pty.somewhere.site/';
 
 function commandText(result) {
   return [result.stdout, result.stderr]
