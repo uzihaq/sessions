@@ -16,6 +16,7 @@ import (
 
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/webassets"
 )
 
 const maxJSONBody = 2 * 1024 * 1024
@@ -349,7 +350,7 @@ func isStaticRequest(path, method string) bool {
 func (s *Server) serveStatic(response http.ResponseWriter, request *http.Request) bool {
 	info, err := os.Stat(s.config.WebDir)
 	if err != nil || !info.IsDir() {
-		return false
+		return webassets.ServeHTTP(response, request)
 	}
 	escaped := request.URL.EscapedPath()
 	decoded, err := url.PathUnescape(escaped)
