@@ -4,6 +4,13 @@ import { handleHttp } from './http.js';
 import { handleUpgrade } from './ws.js';
 import { discoverRunners } from './sessions.js';
 
+// Deploy preflight: static imports above are fully evaluated before this guard
+// runs, so a zero exit proves dist/server.js and its dependency graph resolve.
+// Exit before creating sockets or discovering runners.
+if (process.env.PRETTYD_SMOKE === '1') {
+  process.exit(0);
+}
+
 // Hard reject any-interface binding. 0.0.0.0 / :: would expose prettyd
 // on every network the host has — coffee shop WiFi, home LAN, anything a
 // future port-forward could reach. There is NO override flag for this:
