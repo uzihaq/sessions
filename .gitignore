@@ -18,3 +18,4 @@ frontend/vite.config.d.ts
 /prettyd/web/
 /prettyd/LICENSE
 /prettyd/*.tgz
+node_modules
