@@ -14,3 +14,7 @@ A lane = conversation + workspace + resume recipe. If runners are wiped:
 2. On MacBook: clone the repo at the SAME path (~/pretty-PTY) so the project-dir encoding matches; `cd ~/pretty-PTY && claude --resume ce1c91ab-3a7c-4eff-8f0a-ad8aa966cad6` in tmux.
 3. Verify the resumed session responds with full context, THEN stop the mini copy (quit that claude; never run both against the same conversation simultaneously for long).
 4. Snapshots: ~/Documents/claude-backups/ holds dated copies.
+
+## Project backup to somewhere
+Full-history backup: `git bundle create pretty-PTY-all.bundle --all`, tar with untracked docs, then raw-bytes upload (never via agent context / fs_write base64):
+`PUT https://api.somewhere.tech/v1/fs/pretty-pty/backups/<name>.tgz` with `Authorization: Bearer <smt_ token from ~/.somewhere/config.json>`, body = file bytes. Verify with fs_stat. Files are private by default. Latest: /backups/pretty-PTY-backup-20260716.tgz (all branches + ASSESSMENT/CODEX_CONTROLS). Restore: download → `git clone <bundle>`. This same PUT endpoint is the primitive for the roadmap's opt-in session-history backup.
