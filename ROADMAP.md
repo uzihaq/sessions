@@ -20,3 +20,8 @@
 - LLM calls / routing intelligence / relays in pretty. Orchestration lives in the calling agent.
 - Auto-adoption of external sessions. Auto-kill of anything possibly alive.
 - Dev work on the production machine.
+
+## somewhere tie-ins (value ladder)
+- **Session backup to YOUR somewhere account (opt-in):** conversations are just files (JSONL/rollouts) → periodic push to sw.fs under the user's own account. Would have made the 2026-07-16 incident a non-event. Framing matters for trust: *your* account, *your* data, explicit opt-in (E2E encryption later); pretty still never sees/relays anything — the daemon pushes directly to the user's somewhere.
+- **somewhere MCP pulls session histories:** once backed up, any agent with the user's somewhere MCP can recall past lane transcripts from anywhere — cross-machine memory, and a real onboarding hook into somewhere. Backup doubles as the fleet-migration transport (tsk_f4039d1a phase 2/3).
+- Ladder: free local pretty → opt-in somewhere backup → fleet/VM. Each rung justifies giving the client away.
