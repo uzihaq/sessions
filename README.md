@@ -1,101 +1,140 @@
 # pretty-PTY
 
-Run Claude Code (and any TUI — `codex`, a shell) as long-lived sessions on
-your Mac, and reach them from a phone or laptop over Tailscale. Sessions
-survive daemon restarts and reloads.
+pretty-PTY puts long-lived Claude Code, Codex, and shell sessions in your browser; they survive browser closes, daemon restarts, and Mac reboots. Everything runs on your Mac—we never see your sessions or data. [See what it looks like](https://pretty-pty.somewhere.site).
 
-```
-frontend/   Vite + React + Zustand + xterm.js (UI)
-prettyd/    Node + node-pty + ws (daemon — owns the sessions; ships the `pretty` CLI)
-src-tauri/  Tauri desktop wrapper (optional)
-```
+> **v0.1:** Useful today, still early. Expect rough edges around first-time remote setup and browser notifications.
 
-## Architecture
+## Install
 
-- **Per-session runners.** Each session is a detached runner process
-  supervised by launchd (`~/Library/LaunchAgents/tech.pretty-pty.runner.<id>.plist`),
-  with its socket/state under `~/.local/state/pretty-PTY/runners/`. The daemon
-  reattaches to live runners over their Unix sockets on startup, so sessions
-  survive a daemon restart or a `tsx watch` reload. On boot the daemon
-  **listens first, then discovers runners in the background** — `/api/health`
-  reports `{ discovering, sessionsLoaded }` while it reattaches.
-- **One multiplexed WebSocket per window** (`/ws?mux=1`): every attached
-  session's traffic is `sessionId`-tagged on a single socket (tmux-style),
-  instead of one socket per session. Only the *viewed* session streams live
-  PTY output / Claude events; hidden sessions attach quiescent and catch up on
-  activation.
-- **Two views per session:**
-  - **Terminal** — raw xterm over the PTY byte stream (the source of truth).
-  - **Pretty / Remote** — for Claude sessions only, *derived* from Claude's own
-    JSONL transcript (`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`), tailed
-    by a watcher and streamed as structured `claudeEvent`s. Markdown/ANSI is
-    rendered to HTML (link hrefs sanitized against `javascript:`/`data:`/`vbscript:`).
-
-## CLI (`pretty`)
-
-Installed on `PATH` via `npm i -g` / the package `bin`. The daemon defaults to
-`127.0.0.1:8787`; if it's bound to a tailnet IP, pass `--host` (or set
-`PRETTYD_HOST` once):
+Requirements: **macOS** and **Node.js 18+**. Install Claude Code and/or Codex separately if you want to run them.
 
 ```sh
-export PRETTYD_HOST=100.x.y.z      # then plain `pretty ls` works
+npm i -g pretty-pty
+pretty install
+open http://localhost:8787
 ```
 
-| Command | Description |
+`pretty install` registers a per-user launchd service and starts it. Re-running it after an npm upgrade is safe.
+
+## Your first session
+
+Create a session in a project, send it work, wait for the turn to finish, and read the reply:
+
+```sh
+session=$(pretty new --tool claude --cwd ~/code/my-project --name first-run)
+pretty send "$session" "Explain this project and suggest one useful first task."
+pretty wait "$session" --timeout 10m
+pretty last "$session" --role assistant
+```
+
+Open `http://localhost:8787` at any point to use the same session in Terminal, Pretty, or Remote view.
+
+The CLI in 60 seconds:
+
+| Command | What it does |
 | --- | --- |
-| `pretty ls [-a\|--include-exited]` | list sessions (hides exited by default) |
-| `pretty snap <id> [--raw]` | print the current screen buffer (clean text; `--raw` keeps ANSI) |
-| `pretty tail <id> [-f] [-n N]` | last N lines (default 50); `-f` to follow |
-| `pretty send <id> <text…>` | type text + Enter (alias: `input`) |
-| `pretty keys <id> <key>` | send a special key: `esc\|up\|down\|left\|right\|^c\|^d\|enter\|tab` |
-| `pretty new --tool <claude\|codex\|shell> [--cwd P] [--no-skip-perms] [args…]` | create a session (easy path) |
-| `pretty new [--cwd P] [--cmd C] [args…]` | create with an explicit command |
-| `pretty wait <id> [--idle Ns] [--timeout Ns]` | block until idle (defaults: idle 2s, timeout 30s) |
-| `pretty kill <id> [<id>…]` | terminate one or more sessions |
-| `pretty attach <id>` | raw two-way stream (Ctrl+Q to detach) |
+| `pretty new --tool claude --cwd <path>` | Start Claude Code and print the session ID |
+| `pretty new --tool codex --cwd <path>` | Start Codex and print the session ID |
+| `pretty ls` | List live sessions and their state |
+| `pretty send <id> "prompt"` | Send a prompt and confirm receipt |
+| `pretty wait <id> --timeout 10m` | Wait until the current turn is idle |
+| `pretty last <id> --role assistant` | Print the latest structured reply |
+| `pretty model <id> <model> --effort high` | Switch an idle Claude session |
+| `pretty kill <id>` | End a session and remove its runner |
 
-Global flags: `--json` (machine-readable), `--host`, `--port`.
-
-Typical agent loop:
+Session IDs may be shortened to any unique prefix. `pretty new` also accepts tool-neutral controls:
 
 ```sh
-id=$(pretty new --tool claude --cwd ~/proj)
-pretty send "$id" "implement X"
-pretty wait "$id"
-pretty snap "$id"
+pretty new --tool claude --model YOUR_CLAUDE_MODEL --effort high
+pretty new --tool codex --model YOUR_CODEX_MODEL --effort high --fast
 ```
 
-## Dev
+`--model` and `--effort` work for Claude and Codex at creation time. `--fast` is Codex-only, and live `pretty model` switching is currently Claude-only. Tool presets run with permission prompts skipped by default; add `--no-skip-perms` for the tool's approval/sandbox mode.
+
+Run `pretty help` for snapshots, transcripts, special keys, raw attach, JSON output, and other options.
+
+## Remote access (early access)
+
+Pretty uses [Tailscale](https://tailscale.com/download) rather than opening a public port. Install Tailscale and sign in on this Mac and the device you want to use, then run:
 
 ```sh
-# one-shot install
-(cd prettyd && npm install) && (cd frontend && npm install)
+pretty remote enable
+```
 
-# run both (prettyd + vite, via concurrently)
+The command configures tailnet-only HTTPS, verifies the endpoint, and prints a QR code for the phone UI. On first use, Tailscale may print an HTTPS approval link; open it and run the command again. Enabling HTTPS also makes your machine's `.ts.net` name visible in public Certificate Transparency logs—the CLI warns before changing anything.
+
+Remote clients need the daemon token:
+
+```sh
+pretty token
+pretty remote status
+```
+
+Paste the token when the UI asks for it. To remove Pretty's Tailscale Serve handler, run `pretty remote disable`.
+
+## Notifications and hooks
+
+After remote HTTPS is working, open **Settings → Notifications** in the web UI. Pretty sends a green “done,” yellow “needs you,” or red “hit an error” notification when a turn becomes idle. This classifier is intentionally conservative and may not identify every blocked prompt in v0.1.
+
+For scripts and integrations, create `~/.config/pretty/hooks.json`:
+
+```json
+{
+  "onIdle": "printf '%s: %s\\n' \"$PRETTY_SESSION_NAME\" \"$PRETTY_FINAL_MESSAGE\" >> ~/.local/state/pretty-PTY/completions.log"
+}
+```
+
+The command runs in the session's working directory and receives:
+
+- `PRETTY_SESSION_ID`, `PRETTY_SESSION_NAME`, `PRETTY_SESSION_TOOL`, `PRETTY_SESSION_CWD`
+- `PRETTY_FINAL_MESSAGE`, `PRETTY_OUTCOME` (`done`, `blocked`, or `error`), `PRETTY_DURATION_MS`
+
+Run `pretty install` again after changing the global hooks file. For one session only, use `pretty new ... --on-idle '<command>'`.
+
+## The trust contract
+
+- **We never see your data.** Pretty has no hosted session backend; the daemon, PTYs, transcripts, and state live on your Mac.
+- **Pretty makes no LLM calls.** It runs your installed Claude Code or Codex process; those tools keep their own provider relationships and policies.
+- **No telemetry or phone-home.** The core daemon does not report usage to us. Tailscale remote access and browser push are opt-in and use their respective services.
+- **Local-first security.** Localhost is not exposed to your network and needs no Pretty account. The daemon creates a local token; remote UI/API connections must present it, and Tailscale supplies the encrypted network boundary.
+- **MIT licensed.** Read the [license](LICENSE), audit the source, and modify it freely.
+
+Pretty controls real shells as your macOS user. Treat the daemon token like a password, do not expose port 8787 publicly, and use `--no-skip-perms` when you want agent approvals.
+
+## Troubleshooting
+
+Start with:
+
+```sh
+pretty doctor
+```
+
+- **`node-pty` or `posix_spawn` failure:** install Apple's command-line tools with `xcode-select --install`, then reinstall the package.
+- **The browser asks for a token:** run `pretty token` and paste the result into the prompt or server settings.
+- **Remote DNS verification fails:** run `tailscale set --accept-dns=true`, confirm MagicDNS is enabled, then retry `pretty remote status`.
+- **Daemon will not start:** check `~/Library/Logs/pretty-pty/daemon.log`, then rerun `pretty install`.
+
+To uninstall, first kill any sessions you no longer want, then remove the daemon and package:
+
+```sh
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/tech.pretty-pty.daemon.plist 2>/dev/null || true
+rm -f ~/Library/LaunchAgents/tech.pretty-pty.daemon.plist
+npm uninstall -g pretty-pty
+```
+
+Session state remains in `~/.local/state/pretty-PTY` unless you remove it yourself.
+
+## Development
+
+Use a separate worktree so development stays isolated from the checkout serving your installed daemon:
+
+```sh
+git worktree add ../pretty-pty-dev -b my-change
+cd ../pretty-pty-dev
+npm run install:all
 npm run dev
 ```
 
-Open the Vite URL it prints. For tailnet access set `PRETTYD_HOST` /
-`VITE_HOST` to a specific `100.x.y.z` address (binding to `0.0.0.0` is
-refused — Tailscale is the auth/encryption boundary).
+The dev UI runs on port 5273 and the daemon on 8787. To update a running checkout safely, use `pretty deploy --repo /path/to/pretty-pty`; inspect the sequence first with `--dry-run`. `pretty deploy` installs both dependency trees, builds and preflights them, restarts the daemon, checks health, and verifies runner survival.
 
-| service        | port |
-| -------------- | ---- |
-| backend daemon (prettyd) | 8787 |
-| frontend (vite)          | 5273 |
-
-### Verify
-
-```sh
-cd frontend && npm run typecheck && npm run test:markdown   # incl. link-XSS cases
-cd prettyd  && npm run typecheck
-cd prettyd  && ./node_modules/.bin/tsx scripts/test-jsonl-resolver.mjs
-cd prettyd  && ./node_modules/.bin/tsx scripts/test-claude-working.mjs
-```
-
-## Security note
-
-`prettyd` is an unauthenticated control API for local shells. Loopback-only
-(`127.0.0.1`) is fine for a personal tool; binding to a tailnet IP makes
-**Tailscale membership the only access boundary** — don't expose it more
-broadly. CORS is currently permissive; token auth is a planned hardening step.
+For process boundaries, persistence, protocols, and data flow, read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

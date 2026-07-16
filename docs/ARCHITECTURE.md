@@ -9,6 +9,10 @@ state, network protocols, frontend rendering pipeline, and where each
 phase of the original plan lives in the code today. The last section is
 an honest critique of the gaps.
 
+> This deep dive was originally written during pre-v0.1 development. Its
+> process and protocol descriptions remain useful, but status and critique
+> notes may be historical; the current source and README define v0.1 behavior.
+
 ---
 
 ## 1. Process layout — the four kinds of process
