@@ -4,10 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pretty — your agent sessions, everywhere</title>
-<meta name="description" content="A better tmux for Claude Code & Codex on your Mac. Sessions that survive everything, driven from any browser. We never see your data.">
+<meta name="description" content="A better tmux for Claude Code &amp; Codex on your Mac. Sessions that survive everything, driven from any browser. We never see your data.">
+<meta property="og:title" content="pretty — your agent sessions, everywhere">
+<meta property="og:description" content="A better tmux for Claude Code &amp; Codex on your Mac. Long-lived sessions from any browser, with no relay and no hosted terminal data.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
 <style>
   :root {
     --ink: #0b0f0d;
@@ -55,8 +57,10 @@
   }
   .brand { font-family: var(--serif); font-style: italic; font-size: 28px; color: var(--cream); text-decoration: none; }
   .brand .tld { color: var(--phos-dim); font-size: 18px; }
-  nav a { color: var(--cream-dim); text-decoration: none; margin-left: 22px; font-size: 13px; }
+  nav { display: flex; align-items: center; gap: 22px; }
+  nav a { color: var(--cream-dim); text-decoration: none; font-size: 13px; white-space: nowrap; }
   nav a:hover { color: var(--phos); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--phos); outline-offset: 4px; }
 
   /* ---------- hero ---------- */
   .hero { padding: 88px 0 40px; }
@@ -187,28 +191,36 @@
     .paths { grid-template-columns: 1fr; }
     .never-row { grid-template-columns: 1fr; gap: 8px; padding: 22px 2px; }
     .hero { padding-top: 64px; }
-    nav a { margin-left: 14px; }
+    nav { gap: 14px; }
+  }
+  @media (max-width: 560px) {
+    header { align-items: flex-start; }
+    .brand .tld { display: none; }
+    nav { max-width: 230px; justify-content: flex-end; flex-wrap: wrap; row-gap: 4px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
   }
 </style>
 </head>
 <body>
 <main>
   <header class="rise">
-    <a class="brand" href="/">pretty<span class="tld">.somewhere.tech</span></a>
-    <nav>
-      <a href="#never">guarantees</a>
-      <a href="#start">get started</a>
-      <a href="https://github.com/uzairhaq/pretty-PTY">github</a>
+    <a class="brand" href="index.html">pretty<span class="tld">.somewhere.tech</span></a>
+    <nav aria-label="Primary navigation">
+      <a href="index.html#what">what it is</a>
+      <a href="setup.html">get set up</a>
+      <a href="connect.html">connect</a>
     </nav>
   </header>
 
   <section class="hero">
     <h1 class="rise" style="animation-delay:.05s">Your agents keep working.<br><em>You keep living.</em></h1>
     <p class="sub rise" style="animation-delay:.15s">
-      <strong>pretty</strong> is a better tmux for the agent era — run <strong>Claude Code</strong>,
-      <strong>Codex</strong>, and shells as long-lived sessions on your Mac, and drive them from any
-      browser. Sessions survive restarts, updates, even reboots. Sends confirm or fail loudly —
-      never silently lost.
+      <strong>pretty</strong> is a better tmux for the agent era. Keep <strong>Claude Code</strong>,
+      <strong>Codex</strong>, and shells running on your Mac, then pick them up from any browser.
+      Sessions survive restarts and reboots. Every send confirms or fails loudly — never silently lost.
     </p>
 
     <div class="term rise" style="animation-delay:.3s">
@@ -217,7 +229,7 @@
         <span class="term-title">pretty — 31 sessions, all alive</span>
       </div>
       <div class="term-body">
-        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">npm install -g pretty-pty && pretty install</span></span>
+        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">npm install -g pretty-pty &amp;&amp; pretty install</span></span>
         <span class="ln p2"><span class="ok">✓</span> <span class="out">daemon registered with launchd — survives reboots</span></span>
         <span class="ln p3"><span class="ok">✓</span> <span class="out">web ui → </span><span class="am">http://localhost:8787</span></span>
         <span class="ln p4"><span class="prompt">$</span> <span class="cmd">pretty new --tool claude --name refactor</span></span>
@@ -295,7 +307,7 @@
           <li><span class="k">2</span><code>pretty install</code></li>
           <li><span class="k">3</span>open the local app — done.</li>
         </ol>
-        <a class="go" href="http://localhost:8787">Open localhost:8787 →</a>
+        <a class="go" href="setup.html#install">Set up on this Mac →</a>
       </div>
 
       <div class="path remote">
@@ -307,7 +319,7 @@
           <li><span class="k">2</span><code>pretty remote enable</code></li>
           <li><span class="k">3</span>Scan the QR it prints — sessions on your phone.</li>
         </ol>
-        <a class="go" href="#never">Read the privacy contract first ↑</a>
+        <a class="go" href="setup.html#remote">Set up phone access →</a>
       </div>
     </div>
 
@@ -323,7 +335,7 @@
 
   <footer>
     <span>pretty — made for people who run agents.</span>
-    <span><a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS · MIT</span>
+    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS · MIT</span>
   </footer>
 </main>
 </body>

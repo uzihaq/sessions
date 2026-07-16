@@ -7,7 +7,7 @@
 <meta name="description" content="Get pretty running on your Mac in minutes. Two paths — local and from-anywhere over Tailscale — and the page checks each step actually worked.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
 <style>
   :root {
     --ink: #0b0f0d;
@@ -51,13 +51,15 @@
 
   /* ---- top bar ---- */
   header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 26px 0 0; position: relative; z-index: 2;
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 28px 0 0; position: relative; z-index: 2;
   }
-  .brand { font-family: var(--serif); font-size: 26px; letter-spacing: .5px; }
-  .brand .dot { color: var(--phos); }
-  .back { font-size: 12.5px; color: var(--cream-faint); border-bottom: 1px solid transparent; transition: .2s; }
-  .back:hover { color: var(--phos); border-color: var(--phos-dim); }
+  .brand { font-family: var(--serif); font-style: italic; font-size: 28px; color: var(--cream); }
+  .brand .tld { color: var(--phos-dim); font-size: 18px; }
+  nav { display: flex; align-items: center; gap: 22px; }
+  nav a { color: var(--cream-dim); font-size: 13px; white-space: nowrap; }
+  nav a:hover, nav a[aria-current="page"] { color: var(--phos); }
+  a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible { outline: 2px solid var(--phos); outline-offset: 4px; }
 
   /* ---- hero ---- */
   .hero { padding: 78px 0 30px; }
@@ -105,6 +107,23 @@
   }
   .tip { border-left: 2px solid var(--line-2); padding: 4px 0 4px 16px; margin: 16px 0; color: var(--cream-faint); font-size: 13.5px; }
   .tip b { color: var(--cream-dim); }
+  .trouble {
+    margin-top: 18px; border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line);
+    color: var(--cream-dim);
+  }
+  .trouble summary {
+    padding: 13px 2px; color: var(--cream-dim); font-size: 13px; cursor: pointer;
+    list-style: none;
+  }
+  .trouble summary::-webkit-details-marker { display: none; }
+  .trouble summary::before { content: '+ '; color: var(--phos); }
+  .trouble[open] summary::before { content: '− '; }
+  .trouble-body { padding: 2px 2px 16px 20px; }
+  .fix { padding: 12px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+  .fix:first-child { border-top: none; }
+  .fix b { color: var(--cream); font-weight: 500; }
+  .fix p { margin-top: 5px; color: var(--cream-faint); }
+  .fix a { color: var(--phos); border-bottom: 1px solid var(--phos-dim); }
   .btn-open {
     display: inline-flex; align-items: center; gap: 9px; margin-top: 10px;
     border: 1px solid var(--phos-dim); color: var(--phos); border-radius: 7px;
@@ -151,19 +170,43 @@
   .verdict.wait { color: var(--amber); }
   .verdict small { display:block; color: var(--cream-faint); margin-top: 6px; font-size: 13px; line-height: 1.6; }
 
+  /* ---- uninstall ---- */
+  .uninstall { margin: 84px 0 0; padding-top: 42px; border-top: 1px solid var(--line); }
+  .uninstall h2 { font-family: var(--serif); font-size: 34px; font-weight: 400; margin-bottom: 10px; }
+  .uninstall .note { max-width: 58ch; }
+
   /* ---- closing ---- */
   .closing { margin: 90px 0 40px; padding-top: 40px; border-top: 1px solid var(--line); text-align: center; }
   .closing .line { font-family: var(--serif); font-size: clamp(24px, 5vw, 36px); font-style: italic; color: var(--cream); }
   .closing .never { margin-top: 20px; font-size: 12.5px; color: var(--cream-faint); letter-spacing: .3px; }
   .closing .never a { color: var(--phos-dim); border-bottom: 1px solid var(--line-2); }
   footer { padding: 30px 0 60px; text-align: center; color: var(--cream-faint); font-size: 12px; }
+  footer a { color: var(--cream-dim); }
+  footer a:hover { color: var(--phos); }
+
+  @media (max-width: 720px) { nav { gap: 14px; } }
+  @media (max-width: 560px) {
+    header { align-items: flex-start; }
+    .brand .tld { display: none; }
+    nav { max-width: 230px; justify-content: flex-end; flex-wrap: wrap; row-gap: 4px; }
+    .check-row { align-items: stretch; flex-direction: column; }
+    .check-row button { min-height: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="brand">pretty<span class="dot">.</span></div>
-    <a class="back" href="/">← what it is</a>
+    <a class="brand" href="index.html">pretty<span class="tld">.somewhere.tech</span></a>
+    <nav aria-label="Primary navigation">
+      <a href="index.html#what">what it is</a>
+      <a href="setup.html" aria-current="page">get set up</a>
+      <a href="connect.html">connect</a>
+    </nav>
   </header>
 
   <section class="hero">
@@ -181,7 +224,7 @@
   </div>
 
   <!-- 1: install -->
-  <div class="step">
+  <div class="step" id="install">
     <div class="step-head"><div class="num">1</div><div><div class="step-title">Install pretty</div><div class="step-sub">on your Mac</div></div></div>
     <div class="step-body">
       <span class="pill">early access — CLI landing soon</span>
@@ -190,11 +233,24 @@
       <p class="note"><code>pretty install</code> registers a small background daemon that <b>survives restarts and reboots</b>, then starts it. Your sessions live in it — close terminals, close the laptop lid, they keep going.</p>
       <a class="btn-open" href="http://localhost:8787" target="_blank" rel="noopener">Open it on this Mac <span class="arr">→</span></a>
       <div class="tip"><b>Stuck on install?</b> If npm errors about <code>node-pty</code> / a C++ build, run <code>xcode-select --install</code> first, then retry. Any other trouble: <code>pretty doctor</code> tells you exactly what's wrong.</div>
+      <details class="trouble">
+        <summary>Installation troubleshooting</summary>
+        <div class="trouble-body">
+          <div class="fix">
+            <b><code>node-pty</code> or C++ build failed</b>
+            <p>Install Apple's command-line tools with <code>xcode-select --install</code>, then run the npm install again.</p>
+          </div>
+          <div class="fix">
+            <b>The daemon is down</b>
+            <p>Run <code>pretty doctor</code>. It checks the native PTY, daemon, and session runners and tells you what needs attention.</p>
+          </div>
+        </div>
+      </details>
     </div>
   </div>
 
   <!-- 2: tailscale -->
-  <div class="step">
+  <div class="step" id="remote">
     <div class="step-head"><div class="num">2</div><div><div class="step-title">Reach it from anywhere</div><div class="step-sub">optional · +2 minutes</div></div></div>
     <div class="step-body">
       <p class="note">Want your sessions on your phone, or from another laptop? You'll put them on <b>Tailscale</b> — a private network just for <em>your</em> devices. No ports opened to the internet, and <b>nothing routed through us</b>: your browser talks straight to your Mac.</p>
@@ -203,11 +259,24 @@
       <div class="cmd"><code>pretty remote enable</code><button class="copy">copy</button></div>
       <p class="note">That runs <code>tailscale serve</code> for you (gives your daemon a real HTTPS address like <code>https://your-mac.tailnet.ts.net</code>) and prints a <b>QR code</b>. Scan it with your phone — it lands you right back here, already connected, no typing.</p>
       <div class="tip"><b>One honest heads-up:</b> Tailscale's HTTPS certificate lists your machine + tailnet name in public certificate-transparency logs. Harmless for most, but if your machine name is sensitive, rename it before you enable serve.</div>
+      <details class="trouble">
+        <summary>Remote-access troubleshooting</summary>
+        <div class="trouble-body">
+          <div class="fix">
+            <b>The <code>.ts.net</code> address does not resolve</b>
+            <p>Let this device use Tailscale DNS with <code>tailscale set --accept-dns=true</code>. Then confirm MagicDNS is enabled in the <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noopener">Tailscale DNS console</a> and retry <code>pretty remote status</code>.</p>
+          </div>
+          <div class="fix">
+            <b>The address resolves but does not answer</b>
+            <p>Make sure both devices are signed into the same tailnet, then run <code>pretty doctor</code> and <code>pretty remote status</code> on your Mac.</p>
+          </div>
+        </div>
+      </details>
     </div>
   </div>
 
   <!-- 3: the live check -->
-  <div class="step">
+  <div class="step" id="check-connection">
     <div class="step-head"><div class="num">3</div><div><div class="step-title">Is it working?</div><div class="step-sub">the whole chain, checked live</div></div></div>
     <div class="step-body">
       <p class="note">Paste your pretty address below and we'll actually reach out to it — right now, from your browser — and tell you if Tailscale, the daemon, and the connection are all up. (This check runs entirely between you and your Mac. We never see it.)</p>
@@ -225,22 +294,48 @@
     </div>
   </div>
 
+  <section class="uninstall" id="uninstall">
+    <div class="kicker">leave no daemon behind</div>
+    <h2>Uninstall cleanly.</h2>
+    <p class="note">End any sessions you still need first. Then stop the daemon, remove its login item, and uninstall the package. Each line is separate so it is safe to copy and run one step at a time.</p>
+    <div class="cmd"><code>launchctl bootout gui/"$(id -u)" "$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist"</code><button class="copy">copy</button></div>
+    <div class="cmd"><code>rm -f "$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist"</code><button class="copy">copy</button></div>
+    <div class="cmd"><code>npm rm -g pretty-pty</code><button class="copy">copy</button></div>
+  </section>
+
   <div class="closing">
     <div class="line">Close the laptop. Take the walk.<br>It keeps going.</div>
-    <div class="never">Terminal traffic goes straight from your browser to your Mac — we never relay or store it. <a href="/">what we never do →</a></div>
+    <div class="never">Terminal traffic goes straight from your browser to your Mac — we never relay or store it. <a href="index.html#never">what we never do →</a></div>
   </div>
 
-  <footer>pretty · a better tmux for Claude Code &amp; Codex</footer>
+  <footer>pretty · <a href="docs.html">docs</a> · <a href="https://github.com/uzairhaq/pretty-PTY">source</a> · macOS · MIT</footer>
 </div>
 
 <script>
   // copy buttons
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    var field = document.createElement('textarea');
+    field.value = text;
+    field.setAttribute('readonly', '');
+    field.style.position = 'fixed';
+    field.style.opacity = '0';
+    document.body.appendChild(field);
+    field.select();
+    var copied = document.execCommand('copy');
+    field.remove();
+    return copied ? Promise.resolve() : Promise.reject(new Error('copy failed'));
+  }
+
   document.querySelectorAll('.cmd .copy').forEach(function (b) {
     b.addEventListener('click', function () {
       var code = b.parentElement.querySelector('code').textContent;
-      navigator.clipboard.writeText(code).then(function () {
+      copyText(code).then(function () {
         b.textContent = 'copied'; b.classList.add('done');
         setTimeout(function () { b.textContent = 'copy'; b.classList.remove('done'); }, 1400);
+      }).catch(function () {
+        b.textContent = 'select';
+        b.parentElement.querySelector('code').focus();
       });
     });
   });
@@ -277,7 +372,8 @@
     if (!base) { setState('bad', 'need an address'); el.verdict.innerHTML = '<span class="glyph">○</span> Paste your pretty address first.'; return; }
 
     setState('wait', 'reaching your Mac…');
-    el.verdict.innerHTML = '<span class="glyph">◌</span> Knocking on ' + base + ' …';
+    el.verdict.innerHTML = '<span class="glyph">◌</span> Knocking on <code></code> …';
+    el.verdict.querySelector('code').textContent = base;
     el.btn.disabled = true;
 
     var t0 = Date.now();
