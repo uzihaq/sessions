@@ -70,7 +70,12 @@ export function getAuthToken(): string {
 // origin (scheme+host+port) — never a hostname — so plain http://, another port,
 // or a look-alike subdomain (pretty-pty.somewhere.tech.evil.test) is rejected.
 // Lets the hosted walkthrough's "is my daemon reachable?" check call this daemon.
-const HOSTED_SHELL_ORIGINS = new Set(['https://pretty-pty.somewhere.tech']);
+const HOSTED_SHELL_ORIGINS = new Set([
+  'https://pretty-pty.somewhere.tech',
+  // 2026-07-16: the somewhere platform migrated hosted domains — .tech now
+  // 308-redirects to .site, so the page's actual origin is .site. Allow both.
+  'https://pretty-pty.somewhere.site'
+]);
 
 export function isAllowedOrigin(origin: string | undefined, host: string): boolean {
   // No origin = non-browser client (curl, CLI) — always allow.
