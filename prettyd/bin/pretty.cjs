@@ -18,6 +18,8 @@
 //   pretty kill <id>                Terminate the session's runner.
 //   pretty remote enable|disable|status
 //                                   Manage tailnet-only HTTPS access.
+//   pretty deploy [--repo P] [--no-pull] [--dry-run]
+//                                   Safely update, build, preflight, and restart.
 //   pretty attach <id>              Stream the session to your terminal
 //                                   (raw bytes, two-way; Ctrl+Q to detach).
 //   pretty help                     This.
@@ -1561,6 +1563,247 @@ function cmdToken() {
   process.stdout.write(tok + '\n');
 }
 
+// `pretty deploy` — the one supported path for updating a running checkout.
+// Dependency installation is deliberately unconditional and happens before
+// either build and, most importantly, before launchd is allowed to restart the
+// daemon. The smoke import then proves every dist/server.js import resolves.
+async function cmdDeploy(args) {
+  const { spawnSync } = require('node:child_process');
+
+  let repoOverride = null;
+  let noPull = false;
+  let dryRun = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--repo') {
+      if (repoOverride !== null || !args[i + 1] || args[i + 1].startsWith('--')) {
+        fail('usage: pretty deploy [--repo <dir>] [--no-pull] [--dry-run]');
+      }
+      repoOverride = args[++i];
+    } else if (arg === '--no-pull') {
+      if (noPull) fail('--no-pull may only be specified once');
+      noPull = true;
+    } else if (arg === '--dry-run') {
+      if (dryRun) fail('--dry-run may only be specified once');
+      dryRun = true;
+    } else {
+      fail(`unknown deploy option: ${arg}\nusage: pretty deploy [--repo <dir>] [--no-pull] [--dry-run]`);
+    }
+  }
+
+  const shellQuote = (value) => {
+    const s = String(value);
+    if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(s)) return s;
+    return `'${s.replace(/'/g, `'"'"'`)}'`;
+  };
+  const commandText = (command, commandArgs, cwd, envPrefix) => {
+    const rendered = [command, ...commandArgs].map(shellQuote).join(' ');
+    const prefixed = envPrefix ? `${envPrefix} ${rendered}` : rendered;
+    return cwd ? `(cd ${shellQuote(cwd)} && ${prefixed})` : prefixed;
+  };
+  const abort = (step, message) => {
+    process.stderr.write(`\nFAIL: deploy aborted during ${step}\n`);
+    fail(message, 2);
+  };
+  const spawn = (step, command, commandArgs, options = {}) => {
+    process.stdout.write(`  $ ${commandText(command, commandArgs, options.cwd, options.envPrefix)}\n`);
+    const result = spawnSync(command, commandArgs, {
+      cwd: options.cwd,
+      env: options.env || process.env,
+      stdio: options.stdio || 'inherit',
+      timeout: options.timeout
+    });
+    if (result.error) {
+      const detail = result.error.code === 'ETIMEDOUT'
+        ? `command timed out after ${options.timeout}ms`
+        : result.error.message;
+      abort(step, detail);
+    }
+    if (result.status !== 0) {
+      abort(step, `${command} exited with status ${result.status ?? 'unknown'}`);
+    }
+    return result;
+  };
+
+  const findGitRoot = (startPath) => {
+    let current;
+    try {
+      current = fs.realpathSync(startPath);
+    } catch (err) {
+      fail(`cannot resolve deploy repo '${startPath}': ${err.message}`, 1);
+    }
+    let stat;
+    try { stat = fs.statSync(current); }
+    catch (err) { fail(`cannot inspect deploy repo '${current}': ${err.message}`, 1); }
+    if (!stat.isDirectory()) fail(`deploy repo is not a directory: ${current}`, 1);
+
+    while (true) {
+      if (fs.existsSync(path.join(current, '.git'))) return current;
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    fail(`no git root found above ${startPath}`, 1);
+  };
+
+  // Follow the real CLI path (important when `pretty` is a symlink) and walk
+  // upward. An explicit --repo may point at the root or any directory in it.
+  const defaultStart = path.dirname(fs.realpathSync(__filename));
+  const repo = findGitRoot(repoOverride ? path.resolve(repoOverride) : defaultStart);
+  const prettydDir = path.join(repo, 'prettyd');
+  const frontendDir = path.join(repo, 'frontend');
+  const serverJs = path.join(prettydDir, 'dist', 'server.js');
+
+  for (const required of [
+    path.join(prettydDir, 'package.json'),
+    path.join(frontendDir, 'package.json')
+  ]) {
+    if (!fs.existsSync(required)) fail(`deploy repo is incomplete: missing ${required}`, 1);
+  }
+
+  const conflictCheck = spawnSync('git', ['diff', '--name-only', '--diff-filter=U'], {
+    cwd: repo,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (conflictCheck.error) abort('conflict check', conflictCheck.error.message);
+  if (conflictCheck.status !== 0) {
+    const detail = (conflictCheck.stderr || '').trim();
+    abort('conflict check', detail || `git exited with status ${conflictCheck.status}`);
+  }
+  const conflicts = conflictCheck.stdout.trim();
+  if (conflicts) abort('conflict check', `working tree has unresolved conflicts:\n${conflicts}`);
+
+  const uid = process.getuid?.();
+  if (uid === undefined) fail('deploy requires a platform with process.getuid()', 2);
+  const serviceTarget = `gui/${uid}/tech.pretty-pty.daemon`;
+  const importExpression = `await import(${JSON.stringify(url.pathToFileURL(serverJs).href)})`;
+  const smokeArgs = ['--input-type=module', '-e', importExpression];
+  const smokeEnv = { ...process.env, PRETTYD_SMOKE: '1' };
+
+  const runPreflight = () => {
+    const step = 'dist/server.js import preflight';
+    let builtServer;
+    try {
+      builtServer = fs.readFileSync(serverJs, 'utf8');
+    } catch (err) {
+      abort(step, `cannot read ${serverJs}: ${err.message}`);
+    }
+    // A stale dist from before the smoke guard would start a real server when
+    // imported. Refuse it so dry-run remains incapable of touching the daemon.
+    if (!builtServer.includes('PRETTYD_SMOKE')) {
+      abort(step, `${serverJs} is stale and lacks the PRETTYD_SMOKE guard; run a live deploy to rebuild it safely`);
+    }
+    const result = spawn(step, process.execPath, smokeArgs, {
+      cwd: prettydDir,
+      env: smokeEnv,
+      envPrefix: 'PRETTYD_SMOKE=1',
+      timeout: 5_000
+    });
+    process.stdout.write('  PASS: dist/server.js imports resolved within 5s\n');
+    return result;
+  };
+
+  const runnerCount = (step) => {
+    process.stdout.write('  $ pgrep -f dist/runner.js | wc -l\n');
+    const result = spawnSync('pgrep', ['-f', 'dist/runner.js'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    if (result.error) abort(step, result.error.message);
+    if (result.status !== 0 && result.status !== 1) {
+      const detail = (result.stderr || '').trim();
+      abort(step, detail || `pgrep exited with status ${result.status}`);
+    }
+    const output = result.stdout.trim();
+    return output ? output.split(/\r?\n/).filter(Boolean).length : 0;
+  };
+
+  const pollHealth = async () => {
+    const deadline = Date.now() + 30_000;
+    let lastError = 'no response';
+    while (Date.now() < deadline) {
+      try {
+        const response = await api('GET', '/api/health', undefined, 1_500);
+        if (response.status !== 200) {
+          lastError = `HTTP ${response.status}`;
+        } else {
+          const health = JSON.parse(response.body.toString('utf8'));
+          if (health && health.ok === true && health.name === 'prettyd') {
+            const listen = health.listen && typeof health.listen === 'object'
+              ? health.listen
+              : { host: HOST, port: Number(PORT) };
+            return { health, listen };
+          }
+          lastError = 'response did not report prettyd ok=true';
+        }
+      } catch (err) {
+        lastError = err.message || String(err);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    abort('health check', `daemon did not become healthy within 30s (${lastError})`);
+  };
+
+  process.stdout.write(`pretty deploy\nrepo: ${repo}\nmode: ${dryRun ? 'dry-run' : 'live'}\n\n`);
+
+  if (dryRun) {
+    const plan = [
+      `${noPull ? 'SKIP (--no-pull)' : 'SKIP (--dry-run)'}  ${commandText('git', ['pull', '--ff-only'], repo)}`,
+      `SKIP (--dry-run)  ${commandText('npm', ['install'], prettydDir)}`,
+      `SKIP (--dry-run)  ${commandText('npm', ['install'], frontendDir)}`,
+      `SKIP (--dry-run)  ${commandText('npm', ['run', 'build'], prettydDir)}`,
+      `SKIP (--dry-run)  ${commandText('npm', ['run', 'build'], frontendDir)}`,
+      `RUN                ${commandText(process.execPath, smokeArgs, prettydDir, 'PRETTYD_SMOKE=1')}`,
+      'SKIP (--dry-run)  pgrep -f dist/runner.js | wc -l  # runner baseline',
+      `SKIP (--dry-run)  launchctl kickstart -k ${serviceTarget}`,
+      `SKIP (--dry-run)  poll ${HOST}:${PORT}/api/health for up to 30s`,
+      'SKIP (--dry-run)  verify runner count >= baseline - 1'
+    ];
+    process.stdout.write('Plan:\n');
+    plan.forEach((line, index) => process.stdout.write(`  ${index + 1}. ${line}\n`));
+    process.stdout.write('\nExecuting the import preflight (the only dry-run action):\n');
+    runPreflight();
+    process.stdout.write('\nPASS: dry-run preflight succeeded; no deploy actions were executed\n');
+    return;
+  }
+
+  if (noPull) {
+    process.stdout.write('[1/10] SKIP git pull --ff-only (--no-pull)\n');
+  } else {
+    process.stdout.write('[1/10] Pull latest changes (fast-forward only)\n');
+    spawn('git pull', 'git', ['pull', '--ff-only'], { cwd: repo });
+  }
+  process.stdout.write('[2/10] Install prettyd dependencies (always)\n');
+  spawn('prettyd dependency install', 'npm', ['install'], { cwd: prettydDir });
+  process.stdout.write('[3/10] Install frontend dependencies (always)\n');
+  spawn('frontend dependency install', 'npm', ['install'], { cwd: frontendDir });
+  process.stdout.write('[4/10] Build prettyd\n');
+  spawn('prettyd build', 'npm', ['run', 'build'], { cwd: prettydDir });
+  process.stdout.write('[5/10] Build frontend (TypeScript + Vite)\n');
+  spawn('frontend build', 'npm', ['run', 'build'], { cwd: frontendDir });
+  process.stdout.write('[6/10] Preflight dist/server.js imports\n');
+  runPreflight();
+  process.stdout.write('[7/10] Record runner baseline\n');
+  const runnerBaseline = runnerCount('runner baseline');
+  process.stdout.write(`  runner baseline: ${runnerBaseline}\n`);
+  process.stdout.write('[8/10] Restart prettyd LaunchAgent\n');
+  spawn('launchd restart', 'launchctl', ['kickstart', '-k', serviceTarget]);
+  process.stdout.write('[9/10] Poll /api/health (up to 30s)\n');
+  const { listen } = await pollHealth();
+  const listenHost = typeof listen.host === 'string' ? listen.host : HOST;
+  const listenPort = Number.isFinite(Number(listen.port)) ? Number(listen.port) : Number(PORT);
+  process.stdout.write(`  healthy: ${listenHost}:${listenPort}\n`);
+  process.stdout.write('[10/10] Verify runner survival\n');
+  const runnerAfter = runnerCount('runner survival check');
+  const minimum = runnerBaseline - 1;
+  if (runnerAfter < minimum) {
+    abort('runner survival check', `runner count ${runnerAfter} is below required minimum ${minimum} (baseline ${runnerBaseline})`);
+  }
+  process.stdout.write(`  runners: ${runnerAfter} (baseline ${runnerBaseline}, required >= ${minimum})\n`);
+  process.stdout.write('\nPASS: deploy completed; dependencies installed, builds preflighted, daemon healthy\n');
+}
+
 // `pretty install` — register prettyd as a macOS LaunchAgent daemon and
 // start it. Safe to re-run: an already-loaded agent is kickstarted.
 // All paths are resolved at runtime from __dirname so the installed CLI
@@ -1830,6 +2073,12 @@ function help() {
     '                           path (dist/tsx), flags sessions needing recreate',
     '  token                    print the daemon auth token (paste into web UI)',
     '  install                  register prettyd as a macOS LaunchAgent and start it',
+    '  deploy [--repo P] [--no-pull] [--dry-run]',
+    '                           canonical safe update: pull, always install both',
+    '                           dependency trees, build, smoke-import dist/server.js,',
+    '                           then restart, health-check, and verify runners.',
+    '                           --no-pull skips only git pull; --dry-run executes',
+    '                           only the smoke import and never touches launchd.',
     '  remote enable            expose the daemon over tailnet-only Tailscale HTTPS',
     '  remote disable           remove Pretty\'s Tailscale Serve HTTPS root handler',
     '  remote status            verify the Serve endpoint and /api/health',
@@ -1867,6 +2116,7 @@ async function dispatch() {
     case 'doctor':  return cmdDoctor();
     case 'token':   return cmdToken();
     case 'install': return cmdInstall();
+    case 'deploy':  return cmdDeploy(argv.slice());
     case 'version':
     case '--version':
     case '-v':
