@@ -3,20 +3,23 @@
 // Codex writes rollouts under ~/.codex/sessions/YYYY/MM/DD as
 // rollout-<iso-ts>-<uuid>.jsonl. Unlike Claude, fresh prettyd Codex
 // launches do not pin the rollout id at spawn, so fresh-session
-// resolution is necessarily best-effort: match cwd and pick the first
-// session_meta timestamp at or after the runner spawn time.
+// resolution is necessarily best-effort: match cwd in the bounded date
+// window first, then choose the nearest timestamp on a full-scan fallback.
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
 const CODEX_SESSIONS_DIR = path.join(os.homedir(), '.codex', 'sessions');
-const FIRST_LINE_BYTES = 16_384;
+// session_meta can include enough launch context to exceed 16 KiB. Keep
+// reads bounded while leaving room for the metadata written by Codex.
+const FIRST_LINE_BYTES = 65_536;
 
 export type CodexResolveReason =
   | 'resume-match'
   | 'resume-missing'
   | 'fresh-match'
+  | 'fresh-match-fullscan'
   | 'no-dir'
   | 'empty-dir'
   | 'no-cwd-match'
@@ -250,6 +253,28 @@ export function resolveCodexRolloutPath(opts: {
 
   if (!sawDir) return { path: null, reason: 'no-dir' };
   if (!sawFile) return { path: null, reason: 'empty-dir' };
-  if (!sawCwdMatch) return { path: null, reason: 'no-cwd-match' };
+  if (!sawCwdMatch) {
+    const fullScanMatches: Array<RolloutCandidate & SessionMeta> = [];
+    for (const file of listRolloutsRecursive(CODEX_SESSIONS_DIR)) {
+      const meta = readSessionMeta(file.path);
+      if (!meta || meta.cwd !== opts.cwd) continue;
+      fullScanMatches.push({ ...file, ...meta });
+    }
+
+    if (fullScanMatches.length > 0) {
+      fullScanMatches.sort((a, b) => {
+        const distance = Math.abs(a.timestampMs - opts.createdAt)
+          - Math.abs(b.timestampMs - opts.createdAt);
+        return distance !== 0 ? distance : a.path.localeCompare(b.path);
+      });
+      return {
+        path: fullScanMatches[0]!.path,
+        reason: 'fresh-match-fullscan',
+        ambiguousCount: fullScanMatches.length > 1 ? fullScanMatches.length : undefined
+      };
+    }
+
+    return { path: null, reason: 'no-cwd-match' };
+  }
   return { path: null, reason: 'no-after-spawn' };
 }
