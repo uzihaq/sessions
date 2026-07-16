@@ -163,6 +163,31 @@ func (m *Mirror) Write(raw []byte) (int, error) {
 	return len(raw), nil
 }
 
+// Resize keeps the daemon-side mirror in lockstep with the runner PTY. The
+// emulator performs the terminal reflow; the wrapper refreshes the dimensions
+// used by serialization and soft-wrap tracking.
+func (m *Mirror) Resize(cols, rows int) error {
+	if cols <= 0 || rows <= 0 {
+		return errInvalidSize
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return io.ErrClosedPipe
+	}
+	m.term.Resize(cols, rows)
+	for index := range m.wrapped {
+		resized := make([]bool, rows)
+		copy(resized, m.wrapped[index])
+		m.wrapped[index] = resized
+	}
+	m.cols = cols
+	m.rows = rows
+	m.scrollTop = 0
+	m.scrollBot = rows - 1
+	return nil
+}
+
 func (m *Mirror) writeTracked(raw []byte) error {
 	for i := 0; i < len(raw); {
 		if m.trackState != trackGround {
