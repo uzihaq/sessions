@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createSession, getSession, killSession, listSessions, snapshot, writeInput, isDiscovering, deepSessionDiagnostics } from './sessions.js';
 import { scanResumableSessions } from './claudeSessionScanner.js';
 import { listDirectoryCandidates } from './directories.js';
-import { config, getAuthToken, isAllowedOrigin, isAuthOpen } from './config.js';
+import { config, getAuthToken, isAllowedOrigin, isAuthOpen, isLoopbackAuthExempt } from './config.js';
 import { addSubscription, getVapidPublicKey, removeSubscription } from './push.js';
 import type { CreateSessionRequest } from './types.js';
 
@@ -71,6 +71,7 @@ function checkAuth(req: IncomingMessage, url: URL): boolean {
   // Fully reversible: delete the file to re-enable tokens. The Origin
   // allowlist still applies, so cross-site (CSWSH) protection is unaffected.
   if (isAuthOpen()) return true;
+  if (isLoopbackAuthExempt(req.socket.remoteAddress, req.headers['x-forwarded-for'])) return true;
   const token = getAuthToken();
   const authHeader = req.headers.authorization ?? '';
   if (authHeader.startsWith('Bearer ')) {
@@ -234,7 +235,8 @@ export async function handleHttp(req: IncomingMessage, res: ServerResponse): Pro
     return;
   }
 
-  // All routes below this point require a valid auth token.
+  // All routes below this point require auth (token, direct-loopback
+  // exemption, or the operator's open-file escape hatch).
   if (!checkAuth(req, url)) {
     reply(401, { error: 'unauthorized' });
     return;

@@ -45,6 +45,7 @@
     "postinstall": "node scripts/fix-spawn-helper.cjs",
     "setup": "npm run build && pretty install",
     "test:codex-resolver": "tsx --test scripts/test-codex-resolver.mjs",
+    "test:auth-exemption": "tsx --test scripts/test-auth-exemption.mjs",
     "test:remote": "node --test scripts/test-remote.cjs"
   },
   "dependencies": {

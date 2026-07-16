@@ -33,15 +33,32 @@ export function isAuthOpen(): boolean {
   return fs.existsSync(nodePath.join(PRETTYD_STATE_DIR, 'open'));
 }
 
+const LOOPBACK_PEERS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+/**
+ * True only for a direct loopback TCP peer with no X-Forwarded-For header.
+ *
+ * Host and Origin are intentionally irrelevant: both are client-controlled.
+ * Tailscale Serve terminates its proxied connection on loopback and adds
+ * X-Forwarded-For, so the header guard prevents that traffic from inheriting
+ * the local-only auth exemption.
+ */
+export function isLoopbackAuthExempt(
+  remoteAddress: string | undefined,
+  xForwardedFor: string | string[] | undefined
+): boolean {
+  return xForwardedFor === undefined && remoteAddress !== undefined && LOOPBACK_PEERS.has(remoteAddress);
+}
+
 /**
  * Returns the daemon's auth token, creating it on first call.
  *
  * The token is 32 cryptographically random bytes encoded as 64 lowercase
  * hex characters, stored at ~/.local/state/pretty-PTY/token with mode
- * 0600. The directory is created (mode 0700) if missing. Every HTTP
- * route except /api/health and /api/health/deep, and every WS upgrade,
- * requires this token — either as an `Authorization: Bearer <t>` header
- * or a `?token=<t>` query parameter.
+ * 0600. The directory is created (mode 0700) if missing. Except for direct
+ * loopback peers and the public health routes, HTTP requests and WebSocket
+ * upgrades require this token — either as an `Authorization: Bearer <t>`
+ * header or a `?token=<t>` query parameter.
  */
 export function getAuthToken(): string {
   try {
