@@ -187,7 +187,7 @@ button:active:not(:disabled),
   top: calc(100% + 4px);
   left: 0;
   z-index: 50;
-  min-width: 280px;
+  width: min(340px, calc(100vw - 64px));
   background: var(--bg-elev-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -216,8 +216,16 @@ button:active:not(:disabled),
   text-align: left;
 }
 .server-selector-pick .server-selector-dot { width: 12px; color: var(--ok); font-size: 10px; }
-.server-selector-pick .server-selector-name { flex: 1; }
-.server-selector-pick .server-selector-host { color: var(--fg-faint); font-family: var(--font-mono); font-size: 11px; }
+.server-selector-pick .server-selector-name { flex: 1; min-width: 0; }
+.server-selector-pick .server-selector-host {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .server-selector-remove {
   border: 0;
   background: transparent;
@@ -261,6 +269,23 @@ button:active:not(:disabled),
   border-radius: 4px;
   font-size: 12px;
 }
+.server-selector-add-form input[aria-invalid="true"] { border-color: var(--danger); }
+.server-selector-error {
+  margin: -1px 0 1px;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.server-selector-advanced {
+  align-self: flex-start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.server-selector-advanced:hover { color: var(--fg); }
 .server-selector-add-actions {
   display: flex;
   justify-content: flex-end;

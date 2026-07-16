@@ -27,10 +27,9 @@
 //                               new entries.
 //   • activate: drop any old caches whose key isn't the current version.
 
-// Bump this string on every release so the new SW evicts the old cache and
-// takes control immediately via skipWaiting() below.
-// TODO: inject a build hash here (e.g. via Vite's define) to automate this.
-const CACHE_VERSION = 'pretty-pty-v2';
+// Vite replaces this marker in the emitted sw.js with a unique build hash,
+// so every production build evicts the previous app-shell cache.
+const CACHE_VERSION = 'pretty-pty-__BUILD_HASH__';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-maskable.svg'];
 
 self.addEventListener('install', (event) => {
