@@ -18,12 +18,52 @@ interface WatcherOptions {
   cwd: string;
   args: string[];
   createdAt: number;
+  // Deterministic path override for isolated watcher tests. Production
+  // callers leave this unset and resolve the rollout from cwd/args.
+  rolloutPath?: string;
   initialDelayMs?: number;
   pollIntervalMs?: number;
 }
 
-const EMIT_CAP = 60_000;
-const EMIT_TRIM_TO = 40_000;
+const BACKFILL_LINE_LIMIT = 2_000;
+const READ_BYTE_LIMIT = 16 * 1024 * 1024;
+
+function boundedBackfillStart(buf: Buffer, windowStart: number): number {
+  let usableStart = 0;
+
+  // A capped read can begin in the middle of a JSONL record. Drop that
+  // partial record rather than feeding malformed content to the parser.
+  if (windowStart > 0) {
+    const firstNewline = buf.indexOf(0x0a);
+    if (firstNewline === -1) return buf.length;
+    usableStart = firstNewline + 1;
+  }
+
+  // Count physical lines backwards, treating an unterminated final record
+  // as a line. The returned slice contains at most BACKFILL_LINE_LIMIT lines.
+  let lines = buf.length > usableStart && buf[buf.length - 1] !== 0x0a ? 1 : 0;
+  for (let i = buf.length - 1; i >= usableStart; i -= 1) {
+    if (buf[i] !== 0x0a) continue;
+    lines += 1;
+    if (lines > BACKFILL_LINE_LIMIT) return i + 1;
+  }
+  return usableStart;
+}
+
+async function readRange(
+  fh: fsp.FileHandle,
+  start: number,
+  length: number
+): Promise<Buffer> {
+  const buf = Buffer.allocUnsafe(length);
+  let total = 0;
+  while (total < length) {
+    const { bytesRead } = await fh.read(buf, total, length - total, start + total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  return total === length ? buf : buf.subarray(0, total);
+}
 
 export async function watchCodexRollout(opts: WatcherOptions): Promise<SessionFileWatcher> {
   const emitter = new EventEmitter();
@@ -48,81 +88,107 @@ export async function watchCodexRollout(opts: WatcherOptions): Promise<SessionFi
   let tickScheduled = false;
   let ambiguityWarnedFor: string | null = null;
 
-  const emitted = new Set<string>();
-  const trimEmitted = (): void => {
-    if (emitted.size <= EMIT_CAP) return;
-    const keep = Array.from(emitted).slice(emitted.size - EMIT_TRIM_TO);
-    emitted.clear();
-    for (const u of keep) emitted.add(u);
-  };
-
   const detachFileWatcher = (): void => {
     try { fileWatcher?.close(); } catch { /* ignore */ }
     fileWatcher = null;
   };
 
   const emitNormalized = (ev: ClaudeSessionEvent): void => {
-    const uuid = typeof ev.uuid === 'string' ? ev.uuid : null;
-    if (uuid) {
-      if (emitted.has(uuid)) return;
-      emitted.add(uuid);
-      trimEmitted();
-    }
     emitter.emit('event', ev);
+  };
+
+  // Backfill and live bytes both enter here, so parsing, normalization,
+  // working-state updates, and event emission cannot drift between paths.
+  const consumeBytes = (buf: Buffer): void => {
+    lineBuffer += decoder.write(buf);
+    if (!currentPath) return;
+    const rolloutBasename = path.basename(currentPath);
+    let nl: number;
+    while ((nl = lineBuffer.indexOf('\n')) !== -1) {
+      const line = lineBuffer.slice(0, nl);
+      lineBuffer = lineBuffer.slice(nl + 1);
+      const thisLineIndex = lineIndex;
+      lineIndex += 1;
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line) as unknown;
+      } catch {
+        continue;
+      }
+      const normalized = normalizeCodexRolloutLine(parsed, {
+        rolloutBasename,
+        lineIndex: thisLineIndex
+      });
+      for (const ev of normalized.events) emitNormalized(ev);
+      if (normalized.working !== null) emitter.emit('working', normalized.working);
+    }
+  };
+
+  const resetReadState = (): void => {
+    readOffset = 0;
+    lineBuffer = '';
+    lineIndex = 0;
+    decoder = new StringDecoder('utf8');
   };
 
   const readFrom = async (): Promise<void> => {
     if (closed || !currentPath) return;
     if (readingInFlight) { pendingRead = true; return; }
     readingInFlight = true;
+    const targetPath = currentPath;
     try {
-      let st: fs.Stats;
+      let fh: fsp.FileHandle;
       try {
-        st = await fsp.stat(currentPath);
+        fh = await fsp.open(targetPath, 'r');
       } catch {
-        detachFileWatcher();
-        currentPath = null; currentIno = null; readOffset = 0; lineBuffer = '';
-        lineIndex = 0;
-        decoder = new StringDecoder('utf8');
+        if (currentPath === targetPath) {
+          detachFileWatcher();
+          currentPath = null;
+          currentIno = null;
+          resetReadState();
+        }
         return;
       }
-      if ((currentIno !== null && st.ino !== currentIno) || st.size < readOffset) {
-        readOffset = 0;
-        lineBuffer = '';
-        lineIndex = 0;
-        decoder = new StringDecoder('utf8');
-      }
-      currentIno = st.ino;
-      if (st.size <= readOffset) return;
-      const buf = Buffer.alloc(st.size - readOffset);
-      const fh = await fsp.open(currentPath, 'r');
       try {
-        await fh.read(buf, 0, buf.length, readOffset);
+        const st = await fh.stat();
+        if (closed || currentPath !== targetPath) return;
+
+        const needsBackfill = currentIno === null
+          || st.ino !== currentIno
+          || st.size < readOffset;
+
+        if (needsBackfill) {
+          // Snapshot the attach boundary, replay only its bounded tail, then
+          // advance to that exact byte. Any append after the snapshot is read
+          // by the serialized live pass below, so replay and tail cannot
+          // overlap or leave a gap.
+          const snapshotEnd = st.size;
+          const windowStart = Math.max(0, snapshotEnd - READ_BYTE_LIMIT);
+          const window = await readRange(fh, windowStart, snapshotEnd - windowStart);
+          if (closed || currentPath !== targetPath) return;
+
+          resetReadState();
+          currentIno = st.ino;
+          readOffset = windowStart + window.length;
+          const replayStart = boundedBackfillStart(window, windowStart);
+          consumeBytes(window.subarray(replayStart));
+
+          // A short read means the file changed under us. Re-enter through
+          // the same serialized reader to reconcile with its current size.
+          if (readOffset < snapshotEnd) pendingRead = true;
+          return;
+        }
+
+        if (st.size <= readOffset) return;
+        const liveEnd = Math.min(st.size, readOffset + READ_BYTE_LIMIT);
+        const buf = await readRange(fh, readOffset, liveEnd - readOffset);
+        if (closed || currentPath !== targetPath) return;
+        readOffset += buf.length;
+        consumeBytes(buf);
+        if (readOffset < st.size) pendingRead = true;
       } finally {
         await fh.close();
-      }
-      readOffset = st.size;
-      lineBuffer += decoder.write(buf);
-      const rolloutBasename = path.basename(currentPath);
-      let nl: number;
-      while ((nl = lineBuffer.indexOf('\n')) !== -1) {
-        const line = lineBuffer.slice(0, nl);
-        lineBuffer = lineBuffer.slice(nl + 1);
-        const thisLineIndex = lineIndex;
-        lineIndex += 1;
-        if (!line.trim()) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(line) as unknown;
-        } catch {
-          continue;
-        }
-        const normalized = normalizeCodexRolloutLine(parsed, {
-          rolloutBasename,
-          lineIndex: thisLineIndex
-        });
-        for (const ev of normalized.events) emitNormalized(ev);
-        if (normalized.working !== null) emitter.emit('working', normalized.working);
       }
     } finally {
       readingInFlight = false;
@@ -138,10 +204,7 @@ export async function watchCodexRollout(opts: WatcherOptions): Promise<SessionFi
     detachFileWatcher();
     currentPath = p;
     currentIno = null;
-    readOffset = 0;
-    lineBuffer = '';
-    lineIndex = 0;
-    decoder = new StringDecoder('utf8');
+    resetReadState();
     ensureDirWatch(path.dirname(p));
     try {
       fileWatcher = fs.watch(p, { persistent: false }, (eventType) => {
@@ -180,6 +243,11 @@ export async function watchCodexRollout(opts: WatcherOptions): Promise<SessionFi
   const tick = async (): Promise<void> => {
     if (closed) return;
     ensureDirWatches();
+    if (opts.rolloutPath) {
+      attachFile(opts.rolloutPath);
+      await readFrom();
+      return;
+    }
     const res = resolveCodexRolloutPath({
       cwd: opts.cwd,
       args: opts.args,
