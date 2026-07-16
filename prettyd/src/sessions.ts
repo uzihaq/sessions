@@ -67,6 +67,9 @@ interface SessionInternal {
   // edges. The first detector sample after daemon start/register is just
   // initialization, not a completion event.
   pushWorkingObserved: boolean;
+  // Wall-clock start of the current working stretch. Used only when the
+  // matching working → idle edge fires, then cleared.
+  workingStartedAt: number | null;
 }
 
 export type { OutputEvent };
@@ -79,6 +82,19 @@ const GLOBAL_HOOKS_FILE = path.join(os.homedir(), '.config', 'pretty', 'hooks.js
 
 interface GlobalHooksConfig {
   onIdle?: string;
+}
+
+export type IdleOutcome = 'done' | 'blocked' | 'error';
+
+interface IdleClassification {
+  outcome: IdleOutcome;
+  line: string | null;
+}
+
+interface IdleHookContext {
+  summary: string | null;
+  outcome: IdleOutcome;
+  durationMs: number;
 }
 
 function loadGlobalHooks(): GlobalHooksConfig {
@@ -141,18 +157,197 @@ function writeIdleSentinel(info: SessionInfo): void {
   }
 }
 
-function runOnIdleHook(info: SessionInfo): void {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function conciseText(text: string, maxLength: number = 100): string | null {
+  const cleaned = text
+    .replace(/```[^\n]*\n?/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gm, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/[*_~`]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return null;
+
+  const sentenceMatch = /[.!?](?=\s|$)/.exec(cleaned);
+  const firstSentence = sentenceMatch
+    ? cleaned.slice(0, sentenceMatch.index + 1)
+    : cleaned;
+  if (firstSentence.length <= maxLength) return firstSentence;
+
+  const prefix = firstSentence.slice(0, Math.max(1, maxLength - 1));
+  const lastSpace = prefix.lastIndexOf(' ');
+  const cutAt = lastSpace >= Math.floor(maxLength * 0.6) ? lastSpace : prefix.length;
+  return `${prefix.slice(0, cutAt).trimEnd()}…`;
+}
+
+function assistantText(event: ClaudeSessionEvent): string | null {
+  if (event.type !== 'assistant' || event.message?.role !== 'assistant') return null;
+  const content = event.message.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return null;
+
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block) || block.type !== 'text' || typeof block.text !== 'string') continue;
+    parts.push(block.text);
+  }
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
+export function finalAssistantSummary(log: readonly ClaudeSessionEvent[]): string | null {
+  try {
+    for (let i = log.length - 1; i >= 0; i--) {
+      const text = assistantText(log[i]!);
+      if (!text) continue;
+      const summary = conciseText(text);
+      if (summary) return summary;
+    }
+  } catch {
+    // Structured session events are best-effort input. A malformed event
+    // must never interfere with the working-state transition.
+  }
+  return null;
+}
+
+function stripTerminalControls(text: string): string {
+  return text
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, '')
+    .replace(/\u001B[P^_][\s\S]*?\u001B\\/g, '')
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001B[@-_]/g, '')
+    .replace(/[^\x09\x0A\x0D\x20-\uFFFF]/g, '');
+}
+
+function snapshotLines(snapshot: string): string[] {
+  return stripTerminalControls(snapshot)
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line
+      .replace(/^[\s│┃║╎╏┆┊]+/, '')
+      .replace(/[\s│┃║╎╏┆┊]+$/, '')
+      .replace(/[ \t]+/g, ' '))
+    .filter((line) => line.length > 0)
+    .slice(-20);
+}
+
+function displayLine(line: string): string {
+  const shortened = line.length > 180 ? `${line.slice(0, 179).trimEnd()}…` : line;
+  return shortened.replace(/^\s*[❯›]\s*/, '').trim();
+}
+
+const INPUT_PROMPT_RE = /\b(?:y\/n|yes\/no|do you want)\b|\[[yn]\/[yn]\]|\b(?:continue|proceed)\s*\?|\?\s*$/i;
+const PERMISSION_PROMPT_RE = /^\s*[❯›]\s*(?:approve|allow|trust)\b|\b(?:approve|allow|trust)\b.*(?:\?|:)\s*$/i;
+const CHOICE_PROMPT_RE = /\b(?:which|select|choose)\b.*(?:\?|:)\s*$/i;
+const NUMBERED_CHOICE_RE = /^\s*(?:[>❯›^]\s*)?\d+[.)]\s+\S/;
+const SELECTED_NUMBERED_CHOICE_RE = /^\s*[>❯›^]\s*\d+[.)]\s+\S/;
+const SELECTED_CHOICE_RE = /^\s*[❯›]\s+\S/;
+const OTHER_CHOICE_RE = /^\s*(?:[○◯●◉]|\[[ x]\])\s+\S/i;
+const ERROR_RE = /\b(?:error|failed|exception|panic|traceback|fatal)\b/i;
+const BENIGN_ERROR_RE = /\b(?:0\s+(?:errors?|fail(?:ed|ures?)?)|no\s+(?:errors?|failures?))\b/i;
+const RESOLUTION_RE = /\b(?:resolved|recovered|fixed|succeeded|successful|passed|completed|all checks pass|done)\b/i;
+
+function classifySnapshot(snapshot: string): IdleClassification {
+  const lines = snapshotLines(snapshot);
+  const trailing = lines.slice(-12);
+
+  for (let i = trailing.length - 1; i >= 0; i--) {
+    const line = trailing[i]!;
+    if (INPUT_PROMPT_RE.test(line) || PERMISSION_PROMPT_RE.test(line) || CHOICE_PROMPT_RE.test(line)) {
+      return { outcome: 'blocked', line: displayLine(line) };
+    }
+  }
+
+  const numberedChoices = trailing.filter((line) => NUMBERED_CHOICE_RE.test(line));
+  const selectedNumberedChoice = trailing.find((line) => SELECTED_NUMBERED_CHOICE_RE.test(line));
+  if (numberedChoices.length >= 2 && selectedNumberedChoice) {
+    const prompt = [...trailing]
+      .reverse()
+      .find((line) => !NUMBERED_CHOICE_RE.test(line) && /[:?]\s*$/.test(line));
+    return { outcome: 'blocked', line: displayLine(prompt ?? selectedNumberedChoice) };
+  }
+
+  const selectedChoice = trailing.find((line) => SELECTED_CHOICE_RE.test(line));
+  if (selectedChoice && trailing.some((line) => line !== selectedChoice && OTHER_CHOICE_RE.test(line))) {
+    return { outcome: 'blocked', line: displayLine(selectedChoice) };
+  }
+
+  for (let i = trailing.length - 1; i >= 0; i--) {
+    const line = trailing[i]!;
+    if (!ERROR_RE.test(line)) continue;
+    if (BENIGN_ERROR_RE.test(line)) continue;
+    const followingLines = trailing.slice(i + 1);
+    if (followingLines.some((following) => RESOLUTION_RE.test(following))) {
+      return { outcome: 'done', line: null };
+    }
+    return { outcome: 'error', line: displayLine(line) };
+  }
+
+  return { outcome: 'done', line: null };
+}
+
+function mirrorSnapshot(internal: Pick<SessionInternal, 'mirrorSerialize'>): string | null {
+  try {
+    return internal.mirrorSerialize.serialize({ scrollback: 1000 });
+  } catch {
+    return null;
+  }
+}
+
+export function classifyIdleReason(
+  internal: Pick<SessionInternal, 'mirrorSerialize'>,
+  capturedSnapshot?: string | null
+): IdleOutcome {
+  try {
+    const snapshot = capturedSnapshot === undefined ? mirrorSnapshot(internal) : capturedSnapshot;
+    return snapshot === null ? 'done' : classifySnapshot(snapshot).outcome;
+  } catch {
+    return 'done';
+  }
+}
+
+function mirrorTailSummary(snapshot: string | null): string | null {
+  if (snapshot === null) return null;
+  try {
+    const lines = snapshotLines(snapshot);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]!;
+      if (!/[\p{L}\p{N}]/u.test(line)) continue;
+      if (/\b(?:esc to interrupt|shift\+tab|for shortcuts|context left|bypass permissions|accept edits)\b/i.test(line)) continue;
+      const summary = conciseText(line.replace(/^\s*[⏺●•✻✽✶❯›]+\s*/, ''));
+      if (summary) return summary;
+    }
+  } catch {
+    // Mirror snapshots are a fallback only.
+  }
+  return null;
+}
+
+function hookEnvironment(info: SessionInfo, context: IdleHookContext): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PRETTY_SESSION_ID: info.id,
+    PRETTY_SESSION_NAME: sessionDisplayLabel(info),
+    PRETTY_SESSION_TOOL: info.tool,
+    PRETTY_SESSION_CWD: info.cwd,
+    PRETTY_FINAL_MESSAGE: context.summary ?? '',
+    PRETTY_OUTCOME: context.outcome,
+    PRETTY_DURATION_MS: String(context.durationMs)
+  };
+}
+
+function runOnIdleHook(info: SessionInfo, context: IdleHookContext): void {
   if (!info.onIdle) return;
   try {
     const child = spawn('/bin/sh', ['-c', info.onIdle], {
       cwd: info.cwd,
       detached: true,
       stdio: 'ignore',
-      env: {
-        ...process.env,
-        PRETTY_SESSION_ID: info.id,
-        PRETTY_SESSION_NAME: sessionDisplayLabel(info)
-      }
+      env: hookEnvironment(info, context)
     });
     child.on('error', () => { /* fire-and-forget hook failed to spawn */ });
     child.unref();
@@ -161,20 +356,14 @@ function runOnIdleHook(info: SessionInfo): void {
   }
 }
 
-function runGlobalOnIdleHook(info: SessionInfo): void {
+function runGlobalOnIdleHook(info: SessionInfo, context: IdleHookContext): void {
   if (!globalHooks.onIdle) return;
   try {
     const child = spawn('/bin/sh', ['-c', globalHooks.onIdle], {
       cwd: info.cwd,
       detached: true,
       stdio: 'ignore',
-      env: {
-        ...process.env,
-        PRETTY_SESSION_ID: info.id,
-        PRETTY_SESSION_NAME: sessionDisplayLabel(info),
-        PRETTY_SESSION_TOOL: info.tool,
-        PRETTY_SESSION_CWD: info.cwd
-      }
+      env: hookEnvironment(info, context)
     });
     const killTimer = setTimeout(() => {
       try { child.kill(); } catch { /* hook already exited */ }
@@ -195,21 +384,46 @@ function setWorkingState(internal: SessionInternal, nextWorking: boolean): void 
   const previous = internal.info.working;
   internal.info.working = nextWorking;
   if (!previous && nextWorking) {
+    internal.workingStartedAt = Date.now();
     removeIdleSentinel(internal.info.id);
   }
   if (!internal.pushWorkingObserved) {
     internal.pushWorkingObserved = true;
     return;
   }
-  if (previous && !nextWorking && !internal.exited) {
+  if (previous && !nextWorking) {
+    const idleAt = Date.now();
+    const durationMs = Math.max(0, idleAt - (internal.workingStartedAt ?? idleAt));
+    internal.workingStartedAt = null;
+    if (internal.exited) return;
+
     const label = sessionDisplayLabel(internal.info);
+    const snapshot = mirrorSnapshot(internal);
+    const outcome = classifyIdleReason(internal, snapshot);
+    const classification = snapshot === null
+      ? { outcome: 'done', line: null } satisfies IdleClassification
+      : classifySnapshot(snapshot);
+    const summary = finalAssistantSummary(internal.claudeEventLog) ?? mirrorTailSummary(snapshot);
+    const context: IdleHookContext = { summary, outcome, durationMs };
+    const title = outcome === 'blocked'
+      ? `🟡 ${label} — needs you`
+      : outcome === 'error'
+        ? `🔴 ${label} — hit an error`
+        : `🟢 ${label} — done`;
+    const body = outcome === 'blocked'
+      ? classification.line ?? summary ?? 'waiting for input'
+      : outcome === 'error'
+        ? classification.line ?? summary ?? 'error detected'
+        : summary ?? 'finished';
+
     writeIdleSentinel(internal.info);
-    runOnIdleHook(internal.info);
-    runGlobalOnIdleHook(internal.info);
+    runOnIdleHook(internal.info, context);
+    runGlobalOnIdleHook(internal.info, context);
     void sendPush({
-      title: `${label} finished`,
+      title,
+      body,
       data: { sessionId: internal.info.id }
-    });
+    }).catch(() => { /* push delivery is best-effort */ });
   }
 }
 
@@ -735,7 +949,8 @@ async function registerRunner(sockPath: string): Promise<SessionInternal> {
     codexLifecycleWorking: null,
     claudeEventLog: [],
     claudeEventBase: 0,
-    pushWorkingObserved: false
+    pushWorkingObserved: false,
+    workingStartedAt: null
   };
   sessions.set(hello.id, internal);
 
