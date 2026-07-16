@@ -159,5 +159,5 @@ export function getActiveServer(): ServerConfig {
 // the Vite proxy handles the loopback hop, instead of the frontend
 // trying (and failing) to talk to 127.0.0.1 from a different machine.
 export function isLocalServer(s: ServerConfig): boolean {
-  return s.host === '127.0.0.1' || s.host === 'localhost' || s.host === '::1';
+  return s.host === '127.0.0.1' || s.host === 'localhost' || s.host === '::1' || s.host === '[::1]';
 }

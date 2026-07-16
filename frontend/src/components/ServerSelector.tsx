@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useServers } from '../lib/servers';
+import { formatServerEndpoint, parseServerEndpoint } from '../lib/serverEndpoint';
 import { useSessions } from '../store/sessions';
 
 // Compact dropdown that lives in the app header. Lists known prettyd
@@ -25,8 +26,10 @@ export function ServerSelector(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('8787');
+  const [endpoint, setEndpoint] = useState('');
+  const [advanced, setAdvanced] = useState(false);
+  const [token, setToken] = useState('');
+  const [endpointError, setEndpointError] = useState('');
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   // Close the dropdown on outside click. Pointerdown so it closes BEFORE
@@ -45,20 +48,27 @@ export function ServerSelector(): JSX.Element {
   }, [open]);
 
   const handleAdd = (): void => {
-    const trimmedHost = host.trim();
-    const portNum = Number(port);
-    if (!trimmedHost || !Number.isFinite(portNum) || portNum <= 0 || portNum > 65535) return;
+    let parsed: ReturnType<typeof parseServerEndpoint>;
+    try {
+      parsed = parseServerEndpoint(endpoint);
+    } catch (error) {
+      setEndpointError(error instanceof Error ? error.message : 'Enter a valid endpoint.');
+      return;
+    }
+
     const created = addServer({
-      name: name.trim() || trimmedHost,
-      host: trimmedHost,
-      port: portNum
+      name: name.trim() || parsed.host,
+      ...parsed,
+      token: token.trim() || undefined
     });
     setActive(created.id);
     setAdding(false);
     setOpen(false);
     setName('');
-    setHost('');
-    setPort('8787');
+    setEndpoint('');
+    setAdvanced(false);
+    setToken('');
+    setEndpointError('');
   };
 
   return (
@@ -69,13 +79,12 @@ export function ServerSelector(): JSX.Element {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        // Title attribute carries the host:port so it's available on
-        // hover but doesn't take up always-visible chrome. The full
-        // host is exposed in the dropdown menu rows.
+        // Title carries the endpoint so it is available on hover without
+        // taking up always-visible chrome. Rows show it in full below.
         title={
           unreachable
-            ? `Couldn't reach ${active.host}:${active.port}`
-            : `${active.name} — ${active.host}:${active.port}`
+            ? `Couldn't reach ${formatServerEndpoint(active)}`
+            : `${active.name} — ${formatServerEndpoint(active)}`
         }
       >
         <span className="server-selector-icon" aria-hidden>🖥</span>
@@ -90,11 +99,12 @@ export function ServerSelector(): JSX.Element {
               <button
                 type="button"
                 className="server-selector-pick"
+                title={`${s.name} — ${formatServerEndpoint(s)}`}
                 onClick={() => { setActive(s.id); setOpen(false); }}
               >
                 <span className="server-selector-dot" aria-hidden>{s.id === activeId ? '●' : '○'}</span>
                 <span className="server-selector-name">{s.name}</span>
-                <span className="server-selector-host">{s.host}:{s.port}</span>
+                <span className="server-selector-host">{formatServerEndpoint(s)}</span>
               </button>
               {!s.isDefault ? (
                 <button
@@ -120,19 +130,43 @@ export function ServerSelector(): JSX.Element {
               />
               <input
                 type="text"
-                placeholder="Host (e.g. 100.86.76.84)"
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
+                inputMode="url"
+                autoComplete="url"
+                placeholder="Endpoint (https://mac.example.com)"
+                aria-label="Endpoint"
+                aria-invalid={endpointError ? true : undefined}
+                aria-describedby={endpointError ? 'server-endpoint-error' : undefined}
+                value={endpoint}
+                onChange={(e) => {
+                  setEndpoint(e.target.value);
+                  if (endpointError) setEndpointError('');
+                }}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
               />
-              <input
-                type="text"
-                inputMode="numeric"
-                placeholder="Port"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
-              />
+              {endpointError ? (
+                <p id="server-endpoint-error" className="server-selector-error" role="alert">
+                  {endpointError}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className="server-selector-advanced"
+                aria-expanded={advanced}
+                onClick={() => setAdvanced((value) => !value)}
+              >
+                <span aria-hidden>{advanced ? '▾' : '▸'}</span> Advanced
+              </button>
+              {advanced ? (
+                <input
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Token (optional)"
+                  aria-label="Token"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); }}
+                />
+              ) : null}
               <div className="server-selector-add-actions">
                 <button type="button" onClick={() => setAdding(false)}>Cancel</button>
                 <button type="button" className="primary" onClick={handleAdd}>Add</button>
