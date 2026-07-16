@@ -1,0 +1,273 @@
+package ledger
+
+import (
+	"encoding/json"
+	"sort"
+)
+
+type LaneState struct {
+	LaneID           string
+	Name             string
+	Tool             string
+	Cwd              string
+	ResumeArgv       []string
+	ProviderUUID     string
+	CreatedAtMS      int64
+	LastEventAtMS    int64
+	LastActivityAtMS int64
+	LatestEvent      EventType
+
+	Created           bool
+	LaunchStarted     bool
+	RunnerReady       bool
+	ProviderBound     bool
+	Attached          bool
+	ManagedActive     bool
+	UserKillRequested bool
+	RunnerExited      bool
+	RunnerLost        bool
+	Reaped            bool
+	ReopenedAs        string
+}
+
+// Fold reduces an event stream in seq order. Input order is irrelevant as
+// long as seq values are the unique database sequence numbers.
+func Fold(events []Event) []LaneState {
+	ordered := append([]Event(nil), events...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if ordered[i].Seq != ordered[j].Seq {
+			return ordered[i].Seq < ordered[j].Seq
+		}
+		return ordered[i].EventID < ordered[j].EventID
+	})
+	states := make(map[string]*LaneState)
+	for _, event := range ordered {
+		if event.LaneID == "" {
+			continue
+		}
+		state := states[event.LaneID]
+		if state == nil {
+			state = &LaneState{LaneID: event.LaneID}
+			states[event.LaneID] = state
+		}
+		if event.AtMS > state.LastEventAtMS {
+			state.LastEventAtMS = event.AtMS
+		}
+		state.LatestEvent = event.Type
+		switch event.Type {
+		case EventCreated:
+			if state.Created {
+				continue
+			}
+			var payload createdPayload
+			if json.Unmarshal(event.Payload, &payload) != nil {
+				continue
+			}
+			state.Created = true
+			state.CreatedAtMS = event.AtMS
+			state.Name = payload.Name
+			state.Tool = payload.Tool
+			state.Cwd = payload.Cwd
+			state.ResumeArgv = append([]string(nil), payload.ResumeArgv...)
+			state.ProviderUUID = payload.ProviderUUID
+		case EventLaunchStarted:
+			state.LaunchStarted = true
+		case EventRunnerReady:
+			state.RunnerReady = true
+			state.RunnerLost = false
+			state.ManagedActive = true
+		case EventProviderBound:
+			var payload providerPayload
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				state.ProviderBound = true
+				state.ProviderUUID = payload.ProviderUUID
+				state.ResumeArgv = append([]string(nil), payload.ResumeArgv...)
+			}
+		case EventAttached:
+			state.Attached = true
+			state.RunnerLost = false
+			state.ManagedActive = true
+		case EventActivity:
+			var payload activityPayload
+			if json.Unmarshal(event.Payload, &payload) == nil &&
+				(payload.Source == ActivityHumanInput || payload.Source == ActivityProviderEvent) &&
+				event.AtMS > state.LastActivityAtMS {
+				state.LastActivityAtMS = event.AtMS
+			}
+		case EventRenamed:
+			var payload renamePayload
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				state.Name = payload.Name
+			}
+		case EventUserKillRequested:
+			// This bit is monotonic. No later observation, including reopened,
+			// can turn a tombstoned lane into a recovery candidate.
+			state.UserKillRequested = true
+			state.ManagedActive = false
+		case EventRunnerExited:
+			state.RunnerExited = true
+			state.ManagedActive = false
+		case EventRunnerLost:
+			state.RunnerLost = true
+			state.ManagedActive = false
+		case EventReaped:
+			state.Reaped = true
+			state.ManagedActive = false
+		case EventReopened:
+			var payload reopenedPayload
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				state.ReopenedAs = payload.NewLaneID
+			}
+		}
+	}
+	result := make([]LaneState, 0, len(states))
+	for _, state := range states {
+		state.ResumeArgv = append([]string(nil), state.ResumeArgv...)
+		result = append(result, *state)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].LaneID < result[j].LaneID })
+	return result
+}
+
+type Class string
+
+const (
+	ClassLiveManaged      Class = "live-managed"
+	ClassClosed           Class = "closed"
+	ClassUnexpectedlyLost Class = "unexpectedly-lost"
+	ClassExternal         Class = "external"
+)
+
+type Anomaly string
+
+const (
+	AnomalyClosedButRunning    Anomaly = "closed-but-running"
+	AnomalyNeverBecameReady    Anomaly = "never-became-ready"
+	AnomalyResumeSourceMissing Anomaly = "resume-source-missing"
+	AnomalyProviderUnbound     Anomaly = "provider-unbound"
+)
+
+type RuntimeState struct {
+	Running            bool
+	ResumeSourceKnown  bool
+	ResumeSourceExists bool
+}
+
+type Classification struct {
+	Lane      LaneState
+	Class     Class
+	Anomalies []Anomaly
+}
+
+func ClassifyLane(lane LaneState, runtime RuntimeState) Classification {
+	classification := Classification{Lane: lane}
+	closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped
+	switch {
+	case !lane.Created && runtime.Running:
+		classification.Class = ClassExternal
+	case closed:
+		classification.Class = ClassClosed
+	case lane.Created && runtime.Running:
+		classification.Class = ClassLiveManaged
+	case lane.Created:
+		classification.Class = ClassUnexpectedlyLost
+	default:
+		classification.Class = ClassClosed
+	}
+	if closed && runtime.Running {
+		classification.Anomalies = append(classification.Anomalies, AnomalyClosedButRunning)
+	}
+	if lane.Created && !lane.RunnerReady && !lane.Attached {
+		classification.Anomalies = append(classification.Anomalies, AnomalyNeverBecameReady)
+	}
+	if lane.Created && isProviderTool(lane.Tool) && lane.ProviderUUID == "" {
+		classification.Anomalies = append(classification.Anomalies, AnomalyProviderUnbound)
+	}
+	if classification.Class == ClassUnexpectedlyLost && lane.ProviderUUID != "" &&
+		runtime.ResumeSourceKnown && !runtime.ResumeSourceExists {
+		classification.Anomalies = append(classification.Anomalies, AnomalyResumeSourceMissing)
+	}
+	return classification
+}
+
+// ClassifyAll includes runtime-only lanes as external and returns lane-id
+// order, making the result stable across map iteration and daemon restarts.
+func ClassifyAll(lanes []LaneState, runtime map[string]RuntimeState) []Classification {
+	states := make(map[string]LaneState, len(lanes))
+	for _, lane := range lanes {
+		states[lane.LaneID] = lane
+	}
+	for laneID, observed := range runtime {
+		if _, exists := states[laneID]; !exists && observed.Running {
+			states[laneID] = LaneState{LaneID: laneID}
+		}
+	}
+	result := make([]Classification, 0, len(states))
+	for laneID, lane := range states {
+		result = append(result, ClassifyLane(lane, runtime[laneID]))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Lane.LaneID < result[j].Lane.LaneID })
+	return result
+}
+
+func isProviderTool(tool string) bool { return tool == "claude-code" || tool == "codex" }
+
+func HasAnomaly(classification Classification, anomaly Anomaly) bool {
+	for _, candidate := range classification.Anomalies {
+		if candidate == anomaly {
+			return true
+		}
+	}
+	return false
+}
+
+type RecoveryRecipe struct {
+	SourceLaneID     string
+	Name             string
+	Tool             string
+	Cwd              string
+	Cmd              string
+	Args             []string
+	ProviderUUID     string
+	LastActivityAtMS int64
+	Blocked          bool
+	Anomalies        []Anomaly
+}
+
+type RecoveryPlan struct {
+	Recipes []RecoveryRecipe
+}
+
+// BuildRecoveryPlan emits only create-with-resume commands. Lost lanes whose
+// provider never bound have no safe recipe and are intentionally omitted.
+// Missing on-disk resume sources remain visible as blocked recipes so callers
+// can explain the loss without accidentally launching them.
+func BuildRecoveryPlan(classifications []Classification) RecoveryPlan {
+	plan := RecoveryPlan{Recipes: make([]RecoveryRecipe, 0)}
+	for _, classification := range classifications {
+		lane := classification.Lane
+		if classification.Class != ClassUnexpectedlyLost || len(lane.ResumeArgv) == 0 {
+			continue
+		}
+		recipe := RecoveryRecipe{
+			SourceLaneID:     lane.LaneID,
+			Name:             lane.Name,
+			Tool:             lane.Tool,
+			Cwd:              lane.Cwd,
+			Cmd:              lane.ResumeArgv[0],
+			Args:             append([]string(nil), lane.ResumeArgv[1:]...),
+			ProviderUUID:     lane.ProviderUUID,
+			LastActivityAtMS: lane.LastActivityAtMS,
+			Anomalies:        append([]Anomaly(nil), classification.Anomalies...),
+		}
+		recipe.Blocked = HasAnomaly(classification, AnomalyResumeSourceMissing)
+		plan.Recipes = append(plan.Recipes, recipe)
+	}
+	sort.Slice(plan.Recipes, func(i, j int) bool {
+		if plan.Recipes[i].LastActivityAtMS != plan.Recipes[j].LastActivityAtMS {
+			return plan.Recipes[i].LastActivityAtMS > plan.Recipes[j].LastActivityAtMS
+		}
+		return plan.Recipes[i].SourceLaneID < plan.Recipes[j].SourceLaneID
+	})
+	return plan
+}

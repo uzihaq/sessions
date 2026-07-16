@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 )
 
@@ -25,9 +26,11 @@ const (
 )
 
 type Registry struct {
-	config   Config
-	launcher proto.RunnerLauncher
-	started  time.Time
+	config       Config
+	launcher     proto.RunnerLauncher
+	started      time.Time
+	boundaries   ledger.BoundaryWriter
+	observations ledger.ObservationWriter
 
 	mu          sync.RWMutex
 	sessions    map[string]*Session
@@ -35,11 +38,22 @@ type Registry struct {
 }
 
 func NewRegistry(config Config, launcher proto.RunnerLauncher) *Registry {
+	return NewRegistryWithLedger(config, launcher, nil, nil)
+}
+
+func NewRegistryWithLedger(
+	config Config,
+	launcher proto.RunnerLauncher,
+	boundaries ledger.BoundaryWriter,
+	observations ledger.ObservationWriter,
+) *Registry {
 	return &Registry{
-		config:   config,
-		launcher: launcher,
-		started:  time.Now(),
-		sessions: make(map[string]*Session),
+		config:       config,
+		launcher:     launcher,
+		started:      time.Now(),
+		boundaries:   boundaries,
+		observations: observations,
+		sessions:     make(map[string]*Session),
 	}
 }
 
@@ -113,6 +127,18 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 		Info: runnerInfo,
 		Env:  r.runnerEnvironment(runnerInfo, request.Env),
 	}
+	tool := classifyTool(cmd)
+	providerUUID, resumeArgv := ledger.SafeResumeRecipe(string(tool), cmd, args)
+	if r.boundaries != nil {
+		err := r.boundaries.RecordCreated(ctx, ledger.Created{
+			Meta: ledger.Meta{LaneID: id, AtMS: createdAt},
+			Name: strings.TrimSpace(request.Name), Tool: string(tool), Cwd: cwd,
+			ResumeArgv: resumeArgv, LaneUUID: id, ProviderUUID: providerUUID,
+		})
+		if err != nil {
+			return SessionInfo{}, fmt.Errorf("record lane creation before launch: %w", err)
+		}
+	}
 	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo); err != nil {
 		return SessionInfo{}, err
 	}
@@ -126,6 +152,9 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 	if err != nil {
 		return SessionInfo{}, err
 	}
+	r.observe(ctx, "launch started", func(writer ledger.ObservationWriter) error {
+		return writer.RecordLaunchStarted(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: id}})
+	})
 
 	runner, err := r.launcher.Launch(ctx, launchRequest)
 	if err != nil {
@@ -139,6 +168,17 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 	}
 	if actual.SocketPath == "" {
 		actual.SocketPath = runnerInfo.SocketPath
+	}
+	r.observe(ctx, "runner ready", func(writer ledger.ObservationWriter) error {
+		return writer.RecordRunnerReady(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: id}})
+	})
+	actualProviderUUID, actualResumeArgv := ledger.SafeResumeRecipe(string(classifyTool(actual.Cmd)), actual.Cmd, actual.Args)
+	if actualProviderUUID != "" {
+		r.observe(ctx, "provider bound", func(writer ledger.ObservationWriter) error {
+			return writer.RecordProviderBound(ctx, ledger.ProviderBound{
+				Meta: ledger.Meta{LaneID: id}, ProviderUUID: actualProviderUUID, ResumeArgv: actualResumeArgv,
+			})
+		})
 	}
 	if err := writeMetadata(r.config.RunnerStateDir, actual); err != nil {
 		return SessionInfo{}, err
@@ -158,7 +198,7 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 	if info.ProtocolVersion != proto.ProtocolVersion {
 		log.Printf("[protocol] runner %s reports v%d, daemon expects v%d; attaching anyway", info.ID, info.ProtocolVersion, proto.ProtocolVersion)
 	}
-	session, err := newSession(ctx, info, runner, name, onIdle)
+	session, err := newSession(ctx, info, runner, name, onIdle, r.boundaries, r.observations)
 	if err != nil {
 		return nil, err
 	}
@@ -170,8 +210,14 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 	}
 	r.sessions[info.ID] = session
 	r.mu.Unlock()
+	r.observe(ctx, "attached", func(writer ledger.ObservationWriter) error {
+		return writer.RecordAttached(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+	})
 	session.start(func(event proto.Event) {
 		if event.Kind == proto.EventRunnerLost {
+			r.observe(context.Background(), "runner lost", func(writer ledger.ObservationWriter) error {
+				return writer.RecordRunnerLost(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+			})
 			// Match sessions.ts: a lost runner disappears immediately, but its
 			// plist and state stay intact so launchd/restart discovery can recover it.
 			r.mu.Lock()
@@ -182,10 +228,22 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 			_ = session.Close()
 			return
 		}
+		r.observe(context.Background(), "runner exited", func(writer ledger.ObservationWriter) error {
+			return writer.RecordRunnerExited(context.Background(), ledger.RunnerExit{
+				Meta: ledger.Meta{LaneID: info.ID}, Code: event.Exit.Code, Signal: event.Exit.Signal,
+			})
+		})
+		reaped := false
 		if reaper, ok := r.launcher.(interface{ Reap(string) error }); ok {
-			_ = reaper.Reap(info.ID)
+			reaped = reaper.Reap(info.ID) == nil
 		} else {
-			_ = os.Remove(plistPath(r.config.LaunchAgentsDir, info.ID))
+			err := os.Remove(plistPath(r.config.LaunchAgentsDir, info.ID))
+			reaped = err == nil || errors.Is(err, os.ErrNotExist)
+		}
+		if reaped {
+			r.observe(context.Background(), "reaped", func(writer ledger.ObservationWriter) error {
+				return writer.RecordReaped(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+			})
 		}
 		time.AfterFunc(exitedGrace, func() {
 			r.mu.Lock()
@@ -228,6 +286,9 @@ func (r *Registry) Discover(ctx context.Context) error {
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: metadata id is %q", id, metadata.ID))
 			continue
 		}
+		r.observe(ctx, "daemon restart", func(writer ledger.ObservationWriter) error {
+			return writer.RecordDaemonRestart(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: id}})
+		})
 		r.mu.RLock()
 		_, exists := r.sessions[id]
 		r.mu.RUnlock()
@@ -249,6 +310,15 @@ func (r *Registry) Discover(ctx context.Context) error {
 		}
 	}
 	return errors.Join(attachErrors...)
+}
+
+func (r *Registry) observe(ctx context.Context, label string, record func(ledger.ObservationWriter) error) {
+	if r.observations == nil {
+		return
+	}
+	if err := record(r.observations); err != nil {
+		log.Printf("[ledger] record %s: %v", label, err)
+	}
 }
 
 func (r *Registry) List(includeExited bool) []SessionInfo {

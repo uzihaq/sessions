@@ -3,10 +3,12 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/mirror"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 )
@@ -27,6 +29,8 @@ type Session struct {
 	nextSubID    uint64
 	runnerEvents <-chan proto.Event
 	cancelRunner func()
+	boundaries   ledger.BoundaryWriter
+	observations ledger.ObservationWriter
 }
 
 type Attachment struct {
@@ -45,7 +49,14 @@ type AttachOptions struct {
 	InitialReplayCap    int
 }
 
-func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner, name, onIdle string) (*Session, error) {
+func newSession(
+	ctx context.Context,
+	info proto.RunnerInfo,
+	runner proto.Runner,
+	name, onIdle string,
+	boundaries ledger.BoundaryWriter,
+	observations ledger.ObservationWriter,
+) (*Session, error) {
 	terminal, err := mirror.NewSize(info.Cols, info.Rows)
 	if err != nil {
 		return nil, fmt.Errorf("create session mirror: %w", err)
@@ -62,8 +73,10 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: onIdle,
 			Model: model, Effort: effort, Fast: fast,
 		},
-		nextSeq: 1,
-		subs:    make(map[uint64]chan proto.Event),
+		nextSeq:      1,
+		subs:         make(map[uint64]chan proto.Event),
+		boundaries:   boundaries,
+		observations: observations,
 	}
 	session.runnerEvents, session.cancelRunner = runner.Subscribe()
 	replay := runner.Replay(ctx, 0)
@@ -92,6 +105,8 @@ func (s *Session) start(onExit func(proto.Event)) {
 func (s *Session) applyEvent(event proto.Event) bool {
 	s.mu.Lock()
 	terminal := false
+	providerActivityAt := int64(0)
+	laneID := s.info.ID
 	switch event.Kind {
 	case proto.EventOutput:
 		if event.Output.Seq == 0 {
@@ -104,6 +119,7 @@ func (s *Session) applyEvent(event proto.Event) bool {
 	case proto.EventClaude:
 		event.ClaudeIndex = s.claudeBase + int64(len(s.claude))
 		s.claude = append(s.claude, append(json.RawMessage(nil), event.ClaudeEvent...))
+		providerActivityAt = structuredEventAt(event.ClaudeEvent)
 		if len(s.claude) > maxClaudeEvents {
 			removed := len(s.claude) - maxClaudeEvents
 			s.claude = append([]json.RawMessage(nil), s.claude[removed:]...)
@@ -146,6 +162,12 @@ func (s *Session) applyEvent(event proto.Event) bool {
 		}
 	}
 	s.mu.Unlock()
+	if providerActivityAt != 0 && s.observations != nil {
+		_ = s.observations.RecordActivity(context.Background(), ledger.Activity{
+			Meta:   ledger.Meta{LaneID: laneID, AtMS: providerActivityAt},
+			Source: ledger.ActivityProviderEvent,
+		})
+	}
 	return terminal
 }
 
@@ -267,8 +289,17 @@ func (s *Session) Snapshot(_ context.Context, cols int) (string, uint32, error) 
 func (s *Session) Input(ctx context.Context, data string) bool {
 	s.mu.RLock()
 	exited := s.info.Exited
+	laneID := s.info.ID
 	s.mu.RUnlock()
-	return !exited && s.runner.Input(ctx, data) == nil
+	if exited || s.runner.Input(ctx, data) != nil {
+		return false
+	}
+	if s.observations != nil {
+		_ = s.observations.RecordActivity(ctx, ledger.Activity{
+			Meta: ledger.Meta{LaneID: laneID}, Source: ledger.ActivityHumanInput,
+		})
+	}
+	return true
 }
 
 func (s *Session) Resize(ctx context.Context, cols, rows int) bool {
@@ -290,7 +321,26 @@ func (s *Session) Resize(ctx context.Context, cols, rows int) bool {
 }
 
 func (s *Session) Kill(ctx context.Context) bool {
-	return s.runner.Kill(ctx) == nil
+	return s.RequestKill(ctx) == nil
+}
+
+func (s *Session) RequestKill(ctx context.Context) error {
+	s.mu.RLock()
+	laneID := s.info.ID
+	exited := s.info.Exited
+	s.mu.RUnlock()
+	if exited {
+		return errors.New("session already exited")
+	}
+	if s.boundaries != nil {
+		if err := s.boundaries.RecordUserKill(ctx, ledger.UserKill{Meta: ledger.Meta{LaneID: laneID}}); err != nil {
+			return fmt.Errorf("record user kill before runner kill: %w", err)
+		}
+	}
+	if err := s.runner.Kill(ctx); err != nil {
+		return fmt.Errorf("kill runner: %w", err)
+	}
+	return nil
 }
 
 func (s *Session) EventsWindow(since, tail, before *int64) ClaudeEventsWindow {
@@ -353,4 +403,24 @@ func clamp(value, minimum, maximum int64) int64 {
 		return maximum
 	}
 	return value
+}
+
+func structuredEventAt(raw json.RawMessage) int64 {
+	var envelope struct {
+		Timestamp any `json:"timestamp"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return time.Now().UnixMilli()
+	}
+	switch value := envelope.Timestamp.(type) {
+	case float64:
+		if value > 0 {
+			return int64(value)
+		}
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			return parsed.UnixMilli()
+		}
+	}
+	return time.Now().UnixMilli()
 }

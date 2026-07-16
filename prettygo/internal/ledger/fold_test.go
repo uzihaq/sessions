@@ -1,0 +1,150 @@
+package ledger
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
+
+func ledgerEvent(seq int64, laneID string, kind EventType, atMS int64, payload any) Event {
+	encoded, _ := json.Marshal(payload)
+	return Event{
+		Seq: seq, EventID: laneID + "-event", LaneID: laneID, Type: kind,
+		AtMS: atMS, Actor: ActorDaemon, SchemaVersion: SchemaVersion, Payload: encoded,
+	}
+}
+
+func createdLedgerEvent(seq int64, laneID, tool, provider string) Event {
+	argv := []string(nil)
+	if provider != "" {
+		argv = ResumeRecipeForProvider(tool, toolCommand(tool), provider)
+	}
+	return ledgerEvent(seq, laneID, EventCreated, seq*100, createdPayload{
+		Name: laneID + " name", Tool: tool, Cwd: "/work/" + laneID,
+		ResumeArgv: argv, LaneUUID: laneID, ProviderUUID: provider,
+	})
+}
+
+func toolCommand(tool string) string {
+	if tool == "claude-code" {
+		return "claude"
+	}
+	if tool == "codex" {
+		return "codex"
+	}
+	return "/bin/sh"
+}
+
+func TestTombstoneWinsForever(t *testing.T) {
+	provider := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	events := []Event{
+		createdLedgerEvent(1, "lane", "claude-code", provider),
+		ledgerEvent(2, "lane", EventRunnerReady, 200, emptyPayload{}),
+		ledgerEvent(3, "lane", EventUserKillRequested, 300, emptyPayload{}),
+		ledgerEvent(4, "lane", EventRunnerLost, 400, emptyPayload{}),
+		ledgerEvent(5, "lane", EventAttached, 500, emptyPayload{}),
+		ledgerEvent(6, "lane", EventReopened, 600, reopenedPayload{NewLaneID: "new-lane"}),
+	}
+	state := Fold(events)[0]
+	classification := ClassifyLane(state, RuntimeState{})
+	if classification.Class != ClassClosed || !state.UserKillRequested {
+		t.Fatalf("classification=%#v state=%#v", classification, state)
+	}
+	if plan := BuildRecoveryPlan([]Classification{classification}); len(plan.Recipes) != 0 {
+		t.Fatalf("tombstoned lane entered recovery plan: %#v", plan)
+	}
+}
+
+func TestClassificationTableAllClassesAndAnomalies(t *testing.T) {
+	provider := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	tests := []struct {
+		name      string
+		events    []Event
+		runtime   map[string]RuntimeState
+		laneID    string
+		wantClass Class
+		want      []Anomaly
+	}{
+		{
+			name: "live managed", laneID: "live", wantClass: ClassLiveManaged,
+			events:  []Event{createdLedgerEvent(1, "live", "claude-code", provider), ledgerEvent(2, "live", EventRunnerReady, 200, emptyPayload{})},
+			runtime: map[string]RuntimeState{"live": {Running: true}},
+		},
+		{
+			name: "closed", laneID: "closed", wantClass: ClassClosed,
+			events: []Event{createdLedgerEvent(1, "closed", "terminal", ""), ledgerEvent(2, "closed", EventRunnerReady, 200, emptyPayload{}), ledgerEvent(3, "closed", EventRunnerExited, 300, runnerExitPayload{})},
+		},
+		{
+			name: "unexpectedly lost", laneID: "lost", wantClass: ClassUnexpectedlyLost,
+			events: []Event{createdLedgerEvent(1, "lost", "claude-code", provider), ledgerEvent(2, "lost", EventRunnerReady, 200, emptyPayload{}), ledgerEvent(3, "lost", EventRunnerLost, 300, emptyPayload{})},
+		},
+		{
+			name: "external", laneID: "external", wantClass: ClassExternal,
+			runtime: map[string]RuntimeState{"external": {Running: true}},
+		},
+		{
+			name: "closed but running", laneID: "zombie", wantClass: ClassClosed,
+			events:  []Event{createdLedgerEvent(1, "zombie", "terminal", ""), ledgerEvent(2, "zombie", EventRunnerReady, 200, emptyPayload{}), ledgerEvent(3, "zombie", EventUserKillRequested, 300, emptyPayload{})},
+			runtime: map[string]RuntimeState{"zombie": {Running: true}},
+			want:    []Anomaly{AnomalyClosedButRunning},
+		},
+		{
+			name: "never ready and provider unbound", laneID: "unready", wantClass: ClassUnexpectedlyLost,
+			events: []Event{createdLedgerEvent(1, "unready", "codex", "")},
+			want:   []Anomaly{AnomalyNeverBecameReady, AnomalyProviderUnbound},
+		},
+		{
+			name: "resume source missing", laneID: "missing", wantClass: ClassUnexpectedlyLost,
+			events:  []Event{createdLedgerEvent(1, "missing", "claude-code", provider), ledgerEvent(2, "missing", EventRunnerReady, 200, emptyPayload{})},
+			runtime: map[string]RuntimeState{"missing": {ResumeSourceKnown: true, ResumeSourceExists: false}},
+			want:    []Anomaly{AnomalyResumeSourceMissing},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			classified := ClassifyAll(Fold(test.events), test.runtime)
+			var got Classification
+			for _, candidate := range classified {
+				if candidate.Lane.LaneID == test.laneID {
+					got = candidate
+				}
+			}
+			if got.Class != test.wantClass || !reflect.DeepEqual(got.Anomalies, test.want) {
+				t.Fatalf("got class=%q anomalies=%q, want class=%q anomalies=%q", got.Class, got.Anomalies, test.wantClass, test.want)
+			}
+			t.Logf("class=%s anomalies=%v", got.Class, got.Anomalies)
+		})
+	}
+}
+
+func TestRecoveryPlanUsesOnlyActivityAndRanksMostRecentFirst(t *testing.T) {
+	providerA := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	providerB := "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+	events := []Event{
+		createdLedgerEvent(1, "older", "claude-code", providerA),
+		ledgerEvent(2, "older", EventRunnerReady, 200, emptyPayload{}),
+		ledgerEvent(3, "older", EventActivity, 1000, activityPayload{Source: ActivityHumanInput}),
+		createdLedgerEvent(4, "newer", "codex", providerB),
+		ledgerEvent(5, "newer", EventRunnerReady, 500, emptyPayload{}),
+		ledgerEvent(6, "newer", EventAttached, 9000, emptyPayload{}), // not activity
+		ledgerEvent(7, "newer", EventActivity, 2000, activityPayload{Source: ActivityProviderEvent}),
+	}
+	classified := ClassifyAll(Fold(events), nil)
+	plan := BuildRecoveryPlan(classified)
+	if len(plan.Recipes) != 2 || plan.Recipes[0].SourceLaneID != "newer" || plan.Recipes[1].SourceLaneID != "older" {
+		t.Fatalf("plan order=%#v", plan.Recipes)
+	}
+	if plan.Recipes[0].LastActivityAtMS != 2000 || plan.Recipes[0].Cmd != "codex" ||
+		!reflect.DeepEqual(plan.Recipes[0].Args, []string{"resume", providerB}) {
+		t.Fatalf("newer recipe=%#v", plan.Recipes[0])
+	}
+	missingState := Fold([]Event{
+		createdLedgerEvent(1, "missing", "claude-code", providerA),
+		ledgerEvent(2, "missing", EventRunnerReady, 200, emptyPayload{}),
+	})[0]
+	missing := ClassifyLane(missingState, RuntimeState{ResumeSourceKnown: true})
+	blocked := BuildRecoveryPlan([]Classification{missing})
+	if len(blocked.Recipes) != 1 || !blocked.Recipes[0].Blocked {
+		t.Fatalf("missing resume source was not retained as blocked: %#v", blocked)
+	}
+}

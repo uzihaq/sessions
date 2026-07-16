@@ -140,12 +140,11 @@ func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.
 			s.sendJSON(response, http.StatusNotFound, map[string]any{"ok": false}, corsOrigin)
 			return
 		}
-		result := session.Kill(request.Context())
-		status := http.StatusOK
-		if !result {
-			status = http.StatusNotFound
+		if err := session.RequestKill(request.Context()); err != nil {
+			s.sendJSON(response, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()}, corsOrigin)
+			return
 		}
-		s.sendJSON(response, status, map[string]any{"ok": result}, corsOrigin)
+		s.sendJSON(response, http.StatusOK, map[string]any{"ok": true}, corsOrigin)
 		return
 	}
 	if suffix == "/snapshot" && request.Method == http.MethodGet {
