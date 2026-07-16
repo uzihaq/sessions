@@ -102,13 +102,7 @@ func (s *Session) applyEvent(event proto.Event) bool {
 			s.info.LastDataAt = time.Now().UnixMilli()
 		}
 	case proto.EventClaude:
-		event.ClaudeIndex = s.claudeBase + int64(len(s.claude))
-		s.claude = append(s.claude, append(json.RawMessage(nil), event.ClaudeEvent...))
-		if len(s.claude) > maxClaudeEvents {
-			removed := len(s.claude) - maxClaudeEvents
-			s.claude = append([]json.RawMessage(nil), s.claude[removed:]...)
-			s.claudeBase += int64(removed)
-		}
+		s.recordClaudeLocked(&event)
 	case proto.EventExit, proto.EventRunnerLost:
 		now := time.Now().UnixMilli()
 		exit := event.Exit
@@ -291,6 +285,37 @@ func (s *Session) Resize(ctx context.Context, cols, rows int) bool {
 
 func (s *Session) Kill(ctx context.Context) bool {
 	return s.runner.Kill(ctx) == nil
+}
+
+// SetWorking is the single synchronized mutation point used by the session
+// runtime's activity classifier. It returns the previous value and whether the
+// runner has already exited so transition side effects can be gated safely.
+func (s *Session) SetWorking(working bool) (previous bool, exited bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous = s.info.Working
+	exited = s.info.Exited
+	if !exited {
+		s.info.Working = working
+	}
+	return previous, exited
+}
+
+// RecordClaudeEvent adds one watcher-derived structured event to the same log
+// and subscriber stream used for runner-provided events.
+func (s *Session) RecordClaudeEvent(event json.RawMessage) {
+	s.applyEvent(proto.Event{Kind: proto.EventClaude, ClaudeEvent: append(json.RawMessage(nil), event...)})
+}
+
+// ClaudeEventLog returns a defensive copy for completion-summary extraction.
+func (s *Session) ClaudeEventLog() []json.RawMessage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	events := make([]json.RawMessage, len(s.claude))
+	for i := range events {
+		events[i] = append(json.RawMessage(nil), s.claude[i]...)
+	}
+	return events
 }
 
 func (s *Session) EventsWindow(since, tail, before *int64) ClaudeEventsWindow {

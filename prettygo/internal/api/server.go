@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,7 +12,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
 
@@ -19,12 +22,39 @@ const maxJSONBody = 2 * 1024 * 1024
 
 type Server struct {
 	config   state.Config
-	registry *state.Registry
+	registry sessionService
+	push     pushService
 	tokens   tokenStore
 }
 
-func New(config state.Config, registry *state.Registry) *Server {
-	return &Server{config: config, registry: registry, tokens: tokenStore{path: config.TokenPath}}
+type sessionService interface {
+	Uptime() time.Duration
+	IsDiscovering() bool
+	Create(context.Context, state.CreateSessionRequest) (state.SessionInfo, error)
+	List(bool) []state.SessionInfo
+	Get(string) (*state.Session, bool)
+	Kill(context.Context, string, bool) bool
+	DeepDiagnostics() []map[string]any
+}
+
+type pushService interface {
+	VAPIDPublicKey() (string, error)
+	AddSubscription(any) error
+	RemoveSubscription(string) error
+}
+
+func New(config state.Config, registry sessionService, pushes ...pushService) *Server {
+	var notifications pushService
+	if len(pushes) > 0 {
+		notifications = pushes[0]
+	} else {
+		root := config.UserStateRoot
+		if root == "" {
+			root = config.StateRoot
+		}
+		notifications = sessionruntime.NewPushService(root)
+	}
+	return &Server{config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath}}
 }
 
 func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -84,6 +114,46 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		s.serveWebSocket(response, request)
 		return
 	}
+	if path == "/api/push/vapid" && request.Method == http.MethodGet {
+		publicKey, err := s.push.VAPIDPublicKey()
+		if err != nil {
+			s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"publicKey": publicKey}, corsOrigin)
+		return
+	}
+	if path == "/api/push/subscribe" && request.Method == http.MethodPost {
+		var body any
+		if err := readJSON(request, &body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		if err := s.push.AddSubscription(body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"ok": true}, corsOrigin)
+		return
+	}
+	if path == "/api/push/unsubscribe" && request.Method == http.MethodPost {
+		var body map[string]any
+		if err := readJSON(request, &body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		endpoint, ok := body["endpoint"].(string)
+		if !ok || endpoint == "" {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": "endpoint is required"}, corsOrigin)
+			return
+		}
+		if err := s.push.RemoveSubscription(endpoint); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"ok": true}, corsOrigin)
+		return
+	}
 	if path == "/api/sessions" && request.Method == http.MethodGet {
 		includeExited := request.URL.Query().Get("include_exited") == "1"
 		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": s.registry.List(includeExited)}, corsOrigin)
@@ -140,7 +210,7 @@ func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.
 			s.sendJSON(response, http.StatusNotFound, map[string]any{"ok": false}, corsOrigin)
 			return
 		}
-		result := session.Kill(request.Context())
+		result := s.registry.Kill(request.Context(), id, request.URL.Query().Get("force") == "1")
 		status := http.StatusOK
 		if !result {
 			status = http.StatusNotFound

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/api"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
 
@@ -33,8 +34,9 @@ func main() {
 		return
 	}
 
-	registry := state.NewRegistry(config, state.NewLaunchdLauncher(config))
-	handler := api.New(config, registry)
+	manager := session.NewManager(config, state.NewLaunchdLauncher(config))
+	defer manager.Close()
+	handler := api.New(config, manager, manager.Push())
 	server := &http.Server{
 		Addr: config.ListenAddress(), Handler: handler,
 		ReadHeaderTimeout: 65 * time.Second,
@@ -42,7 +44,7 @@ func main() {
 	}
 
 	go func() {
-		if err := registry.Discover(context.Background()); err != nil {
+		if err := manager.Discover(context.Background()); err != nil {
 			log.Printf("runner discovery: %v", err)
 		}
 	}()

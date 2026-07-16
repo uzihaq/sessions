@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +30,7 @@ type Registry struct {
 
 	mu          sync.RWMutex
 	sessions    map[string]*Session
+	order       []string
 	discovering bool
 }
 
@@ -66,7 +66,6 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 	if cmd == "" {
 		cmd = r.config.DefaultShell
 	}
-	args := withToolDefaultArgs(cmd, request.Args)
 	cwd := request.Cwd
 	if cwd == "" {
 		cwd = r.config.DefaultCwd
@@ -97,6 +96,8 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 	if err := os.MkdirAll(r.config.RunnerStateDir, 0o700); err != nil {
 		return SessionInfo{}, fmt.Errorf("create runner state directory: %w", err)
 	}
+	args := appendClaudeSessionID(cmd, request.Args, id)
+	args = withToolDefaultArgs(cmd, args)
 
 	createdAt := time.Now().UnixMilli()
 	runnerInfo := proto.RunnerInfo{
@@ -169,6 +170,7 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 		return nil, fmt.Errorf("session %s is already registered", info.ID)
 	}
 	r.sessions[info.ID] = session
+	r.order = append(r.order, info.ID)
 	r.mu.Unlock()
 	session.start(func(event proto.Event) {
 		if event.Kind == proto.EventRunnerLost {
@@ -177,6 +179,7 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 			r.mu.Lock()
 			if r.sessions[info.ID] == session {
 				delete(r.sessions, info.ID)
+				r.removeOrderLocked(info.ID)
 			}
 			r.mu.Unlock()
 			_ = session.Close()
@@ -191,6 +194,7 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 			r.mu.Lock()
 			if r.sessions[info.ID] == session {
 				delete(r.sessions, info.ID)
+				r.removeOrderLocked(info.ID)
 			}
 			r.mu.Unlock()
 			_ = session.Close()
@@ -198,6 +202,16 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 	})
 	return session, nil
 }
+
+// Register attaches an already-probed runner to the in-memory registry. The
+// session runtime uses it after applying the conservative discovery policy.
+func (r *Registry) Register(ctx context.Context, runner proto.Runner, name, onIdle string) (*Session, error) {
+	return r.register(ctx, runner, name, onIdle)
+}
+
+// MarkDiscovering exposes startup progress to the API while the higher-level
+// session runtime performs its guarded discovery sweep.
+func (r *Registry) MarkDiscovering(value bool) { r.setDiscovering(value) }
 
 func (r *Registry) Discover(ctx context.Context) error {
 	if r.launcher == nil {
@@ -253,9 +267,11 @@ func (r *Registry) Discover(ctx context.Context) error {
 
 func (r *Registry) List(includeExited bool) []SessionInfo {
 	r.mu.RLock()
-	sessions := make([]*Session, 0, len(r.sessions))
-	for _, session := range r.sessions {
-		sessions = append(sessions, session)
+	sessions := make([]*Session, 0, len(r.order))
+	for _, id := range r.order {
+		if session := r.sessions[id]; session != nil {
+			sessions = append(sessions, session)
+		}
 	}
 	r.mu.RUnlock()
 	result := make([]SessionInfo, 0, len(sessions))
@@ -265,8 +281,16 @@ func (r *Registry) List(includeExited bool) []SessionInfo {
 			result = append(result, info)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt < result[j].CreatedAt })
 	return result
+}
+
+func (r *Registry) removeOrderLocked(id string) {
+	for index, existing := range r.order {
+		if existing == id {
+			r.order = append(r.order[:index], r.order[index+1:]...)
+			return
+		}
+	}
 }
 
 func (r *Registry) Get(id string) (*Session, bool) {
@@ -274,6 +298,13 @@ func (r *Registry) Get(id string) (*Session, bool) {
 	defer r.mu.RUnlock()
 	session, ok := r.sessions[id]
 	return session, ok
+}
+
+// Kill sends one runner KILL frame. The higher-level session manager applies
+// the mass-kill policy before calling this low-level operation.
+func (r *Registry) Kill(ctx context.Context, id string, _ bool) bool {
+	session, ok := r.Get(id)
+	return ok && session.Kill(ctx)
 }
 
 func (r *Registry) DeepDiagnostics() []map[string]any {
@@ -400,6 +431,10 @@ func readMetadata(path string) (proto.RunnerInfo, error) {
 	return metadata, nil
 }
 
+// ReadRunnerInfo decodes the canonical runner metadata file for startup
+// discovery. It does not mutate or validate filesystem state.
+func ReadRunnerInfo(path string) (proto.RunnerInfo, error) { return readMetadata(path) }
+
 func randomUUID() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
@@ -446,6 +481,19 @@ func withToolDefaultArgs(cmd string, args []string) []string {
 		}
 	}
 	return append(result, defaults...)
+}
+
+func appendClaudeSessionID(cmd string, args []string, id string) []string {
+	result := append([]string{}, args...)
+	if classifyTool(cmd) != ToolClaude {
+		return result
+	}
+	for i, arg := range result {
+		if (arg == "--session-id" || arg == "--resume") && i+1 < len(result) {
+			return result
+		}
+	}
+	return append(result, "--session-id", id)
 }
 
 func spawnControls(tool SessionTool, args []string) (model, effort string, fast bool) {

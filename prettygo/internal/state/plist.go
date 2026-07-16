@@ -2,7 +2,6 @@ package state
 
 import (
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,6 +22,9 @@ func plistPath(launchAgentsDir, id string) string {
 	return filepath.Join(launchAgentsDir, launchdLabelPrefix+id+".plist")
 }
 
+// RunnerPlistPath returns the canonical per-session launchd plist path.
+func RunnerPlistPath(launchAgentsDir, id string) string { return plistPath(launchAgentsDir, id) }
+
 func writePlist(launchAgentsDir string, args plistArgs) (string, error) {
 	if len(args.ProgramArguments) == 0 {
 		return "", fmt.Errorf("runner launcher returned no program arguments")
@@ -41,7 +43,9 @@ func writePlist(launchAgentsDir string, args plistArgs) (string, error) {
 }
 
 func plistXML(args plistArgs) string {
-	escape := func(value string) string { return html.EscapeString(value) }
+	escape := func(value string) string {
+		return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(value)
+	}
 	program := make([]string, 0, len(args.ProgramArguments))
 	for _, value := range args.ProgramArguments {
 		program = append(program, "    <string>"+escape(value)+"</string>")
@@ -76,11 +80,15 @@ func plistXML(args plistArgs) string {
   <string>` + escape(args.Cwd) + `</string>
   <key>RunAtLoad</key>
   <true/>
+  <!-- Restart the runner if it dies UNEXPECTEDLY (crash, kill -9,
+       prettyd-side socket cleanup nudging it out), but NOT when the
+       underlying PTY closes normally. -->
   <key>KeepAlive</key>
   <dict>
     <key>SuccessfulExit</key>
     <false/>
   </dict>
+  <!-- These runners own interactive PTYs. -->
   <key>ProcessType</key>
   <string>Interactive</string>
   <key>StandardOutPath</key>

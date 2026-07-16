@@ -16,17 +16,21 @@ const (
 )
 
 type Config struct {
-	Host            string
-	Port            int
-	DefaultShell    string
-	DefaultCwd      string
-	DefaultCols     int
-	DefaultRows     int
-	StateRoot       string
+	Host         string
+	Port         int
+	DefaultShell string
+	DefaultCwd   string
+	DefaultCols  int
+	DefaultRows  int
+	StateRoot    string
+	// UserStateRoot is always ~/.local/state/pretty-PTY. Unlike the runner
+	// directory, idle and push state do not follow PRETTYD_STATE_DIR.
+	UserStateRoot   string
 	RunnerStateDir  string
 	TokenPath       string
 	OpenPath        string
 	LaunchAgentsDir string
+	GlobalHooksPath string
 	WebDir          string
 	RunnerPath      string
 }
@@ -47,6 +51,7 @@ func ConfigFromEnv() (Config, error) {
 	}
 
 	stateRoot := filepath.Join(home, ".local", "state", "pretty-PTY")
+	userStateRoot := stateRoot
 	runnerDir := filepath.Join(stateRoot, "runners")
 	if configured := os.Getenv("PRETTYD_STATE_DIR"); configured != "" {
 		runnerDir, err = filepath.Abs(configured)
@@ -76,10 +81,12 @@ func ConfigFromEnv() (Config, error) {
 		DefaultCols:     DefaultCols,
 		DefaultRows:     DefaultRows,
 		StateRoot:       stateRoot,
+		UserStateRoot:   userStateRoot,
 		RunnerStateDir:  runnerDir,
 		TokenPath:       filepath.Join(stateRoot, "token"),
 		OpenPath:        filepath.Join(stateRoot, "open"),
 		LaunchAgentsDir: filepath.Join(home, "Library", "LaunchAgents"),
+		GlobalHooksPath: filepath.Join(home, ".config", "pretty", "hooks.json"),
 		WebDir:          webDir,
 		RunnerPath:      resolveRunnerPath(os.Getenv("PRETTYD_RUNNER")),
 	}, nil
