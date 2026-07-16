@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
 
@@ -76,6 +77,9 @@ func (m *Manager) handleIdle(session *state.Session, duration time.Duration) {
 	if info.Exited {
 		return
 	}
+	m.observe(context.Background(), "idle", func(writer ledger.ObservationWriter) error {
+		return writer.RecordIdle(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+	})
 	snapshot, _, err := session.Snapshot(context.Background(), 0)
 	if err != nil {
 		snapshot = ""

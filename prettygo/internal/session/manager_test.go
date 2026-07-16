@@ -7,12 +7,219 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
+
+type compositionLauncher struct {
+	base  *prototest.Launcher
+	store *ledger.Store
+
+	mu          sync.Mutex
+	killOrdered map[string]bool
+}
+
+func (l *compositionLauncher) ProgramArguments(request proto.LaunchRequest) []string {
+	return l.base.ProgramArguments(request)
+}
+
+func (l *compositionLauncher) Launch(ctx context.Context, request proto.LaunchRequest) (proto.Runner, error) {
+	runner, err := l.base.Launch(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &compositionRunner{Runner: runner, launcher: l, laneID: request.Info.ID}, nil
+}
+
+func (l *compositionLauncher) Attach(ctx context.Context, info proto.RunnerInfo) (proto.Runner, error) {
+	return l.base.Attach(ctx, info)
+}
+
+type compositionRunner struct {
+	proto.Runner
+	launcher *compositionLauncher
+	laneID   string
+}
+
+func (r *compositionRunner) Kill(ctx context.Context) error {
+	events, err := r.launcher.store.Events(ctx, r.laneID)
+	if err != nil {
+		return err
+	}
+	ordered := len(events) > 0 && events[len(events)-1].Type == ledger.EventUserKillRequested
+	r.launcher.mu.Lock()
+	r.launcher.killOrdered[r.laneID] = ordered
+	r.launcher.mu.Unlock()
+	if !ordered {
+		return errors.New("runner kill observed no committed tombstone")
+	}
+	return r.Runner.Kill(ctx)
+}
+
+func TestMassKillGuardThenTombstoneThenRunnerKillComposition(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	store, err := ledger.Open(context.Background(), ledger.Options{
+		Path: filepath.Join(root, "ledger", "lanes.sqlite3"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	launcher := &compositionLauncher{
+		base: prototest.NewLauncher(), store: store, killOrdered: make(map[string]bool),
+	}
+	manager := NewManager(config, launcher, ManagerOptions{
+		MassKillLimit: 3, DisableWatchers: true, ActivityInterval: time.Hour,
+		Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+	})
+	defer manager.Close()
+
+	ids := make([]string, 0, 4)
+	for range 4 {
+		created, createErr := manager.Create(context.Background(), state.CreateSessionRequest{
+			Cmd: "/bin/sh", Cwd: root,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		ids = append(ids, created.ID)
+	}
+
+	err = manager.KillMany(context.Background(), ids, false)
+	var guardErr *MassKillError
+	if !errors.As(err, &guardErr) || guardErr.Count != len(ids) {
+		t.Fatalf("KillMany() error = %v, want guard refusal for %d", err, len(ids))
+	}
+	for _, id := range ids {
+		events, readErr := store.Events(context.Background(), id)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		for _, event := range events {
+			if event.Type == ledger.EventUserKillRequested {
+				t.Fatalf("guard-refused lane %s received tombstone", id)
+			}
+		}
+		if !manager.Input(context.Background(), id, "still alive") {
+			t.Fatalf("guard-refused lane %s was killed", id)
+		}
+	}
+
+	if err := manager.KillMany(context.Background(), ids, true); err != nil {
+		t.Fatal(err)
+	}
+	launcher.mu.Lock()
+	for _, id := range ids {
+		if !launcher.killOrdered[id] {
+			t.Errorf("lane %s runner kill did not observe committed tombstone", id)
+		}
+	}
+	launcher.mu.Unlock()
+	for _, id := range ids {
+		waitFor(t, 2*time.Second, func() bool {
+			events, readErr := store.Events(context.Background(), id)
+			if readErr != nil {
+				return false
+			}
+			for _, event := range events {
+				if event.Type == ledger.EventReaped {
+					return true
+				}
+			}
+			return false
+		})
+	}
+}
+
+func TestStartupRestartThenDiscoveryReconcilesAbsentLedgerLane(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	store, err := ledger.Open(context.Background(), ledger.Options{
+		Path: filepath.Join(root, "ledger", "lanes.sqlite3"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	const laneID = "00000000-0000-4000-8000-000000000123"
+	if err := store.Boundaries().RecordCreated(context.Background(), ledger.Created{
+		Meta: ledger.Meta{LaneID: laneID}, LaneUUID: laneID, Tool: string(state.ToolTerminal), Cwd: root,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Observations().RecordRunnerReady(context.Background(), ledger.Observation{
+		Meta: ledger.Meta{LaneID: laneID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(config, prototest.NewLauncher(), ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+	})
+	defer manager.Close()
+	if err := manager.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := store.Events(context.Background(), laneID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 || events[2].Type != ledger.EventDaemonRestart || events[3].Type != ledger.EventRunnerLost {
+		t.Fatalf("startup reconciliation events = %#v, want created, ready, daemon_restart, runner_lost", events)
+	}
+}
+
+func TestProviderActivityTimestampFlowsFromRecordClaudeLocked(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	store, err := ledger.Open(context.Background(), ledger.Options{
+		Path: filepath.Join(root, "ledger", "lanes.sqlite3"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	launcher := prototest.NewLauncher()
+	manager := NewManager(config, launcher, ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+	})
+	defer manager.Close()
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{Cmd: "/bin/sh", Cwd: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const timestamp = "2026-07-16T12:34:56.789Z"
+	wantAt, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher.Runner(created.ID).AddClaudeEvent(map[string]any{
+		"type": "assistant", "timestamp": timestamp,
+	})
+
+	waitFor(t, 2*time.Second, func() bool {
+		events, readErr := store.Events(context.Background(), created.ID)
+		if readErr != nil {
+			return false
+		}
+		for _, event := range events {
+			if event.Type == ledger.EventActivity {
+				return event.AtMS == wantAt.UnixMilli() && strings.Contains(string(event.Payload), "provider_event")
+			}
+		}
+		return false
+	})
+}
 
 func TestMassKillGuardRefusesDiscoverySweepBeforeBootout(t *testing.T) {
 	root := t.TempDir()

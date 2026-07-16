@@ -8,9 +8,10 @@ import (
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 )
 
-func (s *Session) recordClaudeLocked(event *proto.Event) {
+func (s *Session) recordClaudeLocked(event *proto.Event) int64 {
 	event.ClaudeIndex = s.claudeBase + int64(len(s.claude))
 	raw := append(json.RawMessage(nil), event.ClaudeEvent...)
+	providerActivityAt := time.Now().UnixMilli()
 	s.claude = append(s.claude, raw)
 	if len(s.claude) > maxClaudeEvents {
 		removed := len(s.claude) - maxClaudeEvents
@@ -20,7 +21,17 @@ func (s *Session) recordClaudeLocked(event *proto.Event) {
 
 	var value map[string]any
 	if json.Unmarshal(raw, &value) != nil {
-		return
+		return providerActivityAt
+	}
+	switch timestamp := value["timestamp"].(type) {
+	case float64:
+		if timestamp > 0 {
+			providerActivityAt = int64(timestamp)
+		}
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, timestamp); err == nil {
+			providerActivityAt = parsed.UnixMilli()
+		}
 	}
 	switch value["type"] {
 	case "custom-title":
@@ -33,20 +44,21 @@ func (s *Session) recordClaudeLocked(event *proto.Event) {
 		}
 	}
 	if !realUserMessage(value) {
-		return
+		return providerActivityAt
 	}
 	timestamp, ok := value["timestamp"].(string)
 	if !ok {
-		return
+		return providerActivityAt
 	}
 	parsed, err := time.Parse(time.RFC3339Nano, timestamp)
 	if err != nil {
-		return
+		return providerActivityAt
 	}
 	millis := parsed.UnixMilli()
 	if s.info.LastUserMessageAt == nil || millis > *s.info.LastUserMessageAt {
 		s.info.LastUserMessageAt = &millis
 	}
+	return providerActivityAt
 }
 
 func realUserMessage(event map[string]any) bool {

@@ -28,10 +28,28 @@ type Registry struct {
 	launcher proto.RunnerLauncher
 	started  time.Time
 
-	mu          sync.RWMutex
-	sessions    map[string]*Session
-	order       []string
-	discovering bool
+	mu           sync.RWMutex
+	sessions     map[string]*Session
+	order        []string
+	discovering  bool
+	onRunnerExit func(string, proto.ExitEvent)
+	onReaped     func(string)
+}
+
+// PreparedSession is the complete, sanitized launch identity exposed to the
+// higher-level composition root before any launch side effect occurs.
+type PreparedSession struct {
+	Info proto.RunnerInfo
+	Name string
+	Tool SessionTool
+}
+
+// CreateLifecycle lets the session manager place durable boundaries around
+// Registry's low-level launch machinery without coupling state to a ledger.
+type CreateLifecycle struct {
+	BeforeLaunch  func(context.Context, PreparedSession) error
+	LaunchStarted func(context.Context, PreparedSession)
+	RunnerReady   func(context.Context, proto.RunnerInfo)
 }
 
 func NewRegistry(config Config, launcher proto.RunnerLauncher) *Registry {
@@ -59,6 +77,14 @@ func (r *Registry) setDiscovering(value bool) {
 }
 
 func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (SessionInfo, error) {
+	return r.CreateWithLifecycle(ctx, request, CreateLifecycle{})
+}
+
+func (r *Registry) CreateWithLifecycle(
+	ctx context.Context,
+	request CreateSessionRequest,
+	lifecycle CreateLifecycle,
+) (SessionInfo, error) {
 	if r.launcher == nil {
 		return SessionInfo{}, errors.New("runner launcher is unavailable")
 	}
@@ -114,6 +140,16 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 		Info: runnerInfo,
 		Env:  r.runnerEnvironment(runnerInfo, request.Env),
 	}
+	prepared := PreparedSession{
+		Info: runnerInfo,
+		Name: strings.TrimSpace(request.Name),
+		Tool: classifyTool(cmd),
+	}
+	if lifecycle.BeforeLaunch != nil {
+		if err := lifecycle.BeforeLaunch(ctx, prepared); err != nil {
+			return SessionInfo{}, err
+		}
+	}
 	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo); err != nil {
 		return SessionInfo{}, err
 	}
@@ -126,6 +162,9 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 	})
 	if err != nil {
 		return SessionInfo{}, err
+	}
+	if lifecycle.LaunchStarted != nil {
+		lifecycle.LaunchStarted(ctx, prepared)
 	}
 
 	runner, err := r.launcher.Launch(ctx, launchRequest)
@@ -140,6 +179,9 @@ func (r *Registry) Create(ctx context.Context, request CreateSessionRequest) (Se
 	}
 	if actual.SocketPath == "" {
 		actual.SocketPath = runnerInfo.SocketPath
+	}
+	if lifecycle.RunnerReady != nil {
+		lifecycle.RunnerReady(ctx, actual)
 	}
 	if err := writeMetadata(r.config.RunnerStateDir, actual); err != nil {
 		return SessionInfo{}, err
@@ -185,10 +227,18 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 			_ = session.Close()
 			return
 		}
+		if r.onRunnerExit != nil {
+			r.onRunnerExit(info.ID, event.Exit)
+		}
+		reaped := false
 		if reaper, ok := r.launcher.(interface{ Reap(string) error }); ok {
-			_ = reaper.Reap(info.ID)
+			reaped = reaper.Reap(info.ID) == nil
 		} else {
-			_ = os.Remove(plistPath(r.config.LaunchAgentsDir, info.ID))
+			err := os.Remove(plistPath(r.config.LaunchAgentsDir, info.ID))
+			reaped = err == nil || errors.Is(err, os.ErrNotExist)
+		}
+		if reaped && r.onReaped != nil {
+			r.onReaped(info.ID)
 		}
 		time.AfterFunc(exitedGrace, func() {
 			r.mu.Lock()
@@ -212,6 +262,16 @@ func (r *Registry) Register(ctx context.Context, runner proto.Runner, name, onId
 // MarkDiscovering exposes startup progress to the API while the higher-level
 // session runtime performs its guarded discovery sweep.
 func (r *Registry) MarkDiscovering(value bool) { r.setDiscovering(value) }
+
+// SetTerminalObservers lets the session manager record terminal facts while
+// Registry remains responsible for the low-level launchd cleanup operation.
+func (r *Registry) SetTerminalObservers(
+	onRunnerExit func(string, proto.ExitEvent),
+	onReaped func(string),
+) {
+	r.onRunnerExit = onRunnerExit
+	r.onReaped = onReaped
+}
 
 func (r *Registry) Discover(ctx context.Context) error {
 	if r.launcher == nil {
@@ -303,8 +363,22 @@ func (r *Registry) Get(id string) (*Session, bool) {
 // Kill sends one runner KILL frame. The higher-level session manager applies
 // the mass-kill policy before calling this low-level operation.
 func (r *Registry) Kill(ctx context.Context, id string, _ bool) bool {
+	return r.RequestKill(ctx, id, false) == nil
+}
+
+// RequestKill is the low-level runner operation. The session manager records
+// the durable user-kill tombstone before invoking it.
+func (r *Registry) RequestKill(ctx context.Context, id string, _ bool) error {
 	session, ok := r.Get(id)
-	return ok && session.Kill(ctx)
+	if !ok {
+		return fmt.Errorf("session %s not found", id)
+	}
+	return session.RequestKill(ctx)
+}
+
+func (r *Registry) Input(ctx context.Context, id, data string) bool {
+	session, ok := r.Get(id)
+	return ok && session.Input(ctx, data)
 }
 
 func (r *Registry) DeepDiagnostics() []map[string]any {

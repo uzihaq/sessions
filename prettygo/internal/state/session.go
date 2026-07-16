@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -102,7 +103,7 @@ func (s *Session) applyEvent(event proto.Event) bool {
 			s.info.LastDataAt = time.Now().UnixMilli()
 		}
 	case proto.EventClaude:
-		s.recordClaudeLocked(&event)
+		event.ClaudeActivityAt = s.recordClaudeLocked(&event)
 	case proto.EventExit, proto.EventRunnerLost:
 		now := time.Now().UnixMilli()
 		exit := event.Exit
@@ -284,7 +285,20 @@ func (s *Session) Resize(ctx context.Context, cols, rows int) bool {
 }
 
 func (s *Session) Kill(ctx context.Context) bool {
-	return s.runner.Kill(ctx) == nil
+	return s.RequestKill(ctx) == nil
+}
+
+func (s *Session) RequestKill(ctx context.Context) error {
+	s.mu.RLock()
+	exited := s.info.Exited
+	s.mu.RUnlock()
+	if exited {
+		return errors.New("session already exited")
+	}
+	if err := s.runner.Kill(ctx); err != nil {
+		return fmt.Errorf("kill runner: %w", err)
+	}
+	return nil
 }
 
 // SetWorking is the single synchronized mutation point used by the session

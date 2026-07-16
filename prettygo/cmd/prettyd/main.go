@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/api"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
@@ -34,7 +35,18 @@ func main() {
 		return
 	}
 
-	manager := session.NewManager(config, state.NewLaunchdLauncher(config))
+	ledgerStore, err := ledger.Open(context.Background(), ledger.Options{})
+	if err != nil {
+		log.Fatalf("open lane ledger: %v", err)
+	}
+	defer func() {
+		if err := ledgerStore.Close(); err != nil {
+			log.Printf("close lane ledger: %v", err)
+		}
+	}()
+	manager := session.NewManager(config, state.NewLaunchdLauncher(config), session.ManagerOptions{
+		Boundaries: ledgerStore.Boundaries(), Observations: ledgerStore.Observations(), LedgerReader: ledgerStore,
+	})
 	defer manager.Close()
 	handler := api.New(config, manager, manager.Push())
 	server := &http.Server{

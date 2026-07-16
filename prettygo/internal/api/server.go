@@ -33,7 +33,8 @@ type sessionService interface {
 	Create(context.Context, state.CreateSessionRequest) (state.SessionInfo, error)
 	List(bool) []state.SessionInfo
 	Get(string) (*state.Session, bool)
-	Kill(context.Context, string, bool) bool
+	RequestKill(context.Context, string, bool) error
+	Input(context.Context, string, string) bool
 	DeepDiagnostics() []map[string]any
 }
 
@@ -210,12 +211,11 @@ func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.
 			s.sendJSON(response, http.StatusNotFound, map[string]any{"ok": false}, corsOrigin)
 			return
 		}
-		result := s.registry.Kill(request.Context(), id, request.URL.Query().Get("force") == "1")
-		status := http.StatusOK
-		if !result {
-			status = http.StatusNotFound
+		if err := s.registry.RequestKill(request.Context(), id, request.URL.Query().Get("force") == "1"); err != nil {
+			s.sendJSON(response, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()}, corsOrigin)
+			return
 		}
-		s.sendJSON(response, status, map[string]any{"ok": result}, corsOrigin)
+		s.sendJSON(response, http.StatusOK, map[string]any{"ok": true}, corsOrigin)
 		return
 	}
 	if suffix == "/snapshot" && request.Method == http.MethodGet {
@@ -266,7 +266,7 @@ func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.
 			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
 			return
 		}
-		result := ok && session.Input(request.Context(), body.Data)
+		result := ok && s.registry.Input(request.Context(), id, body.Data)
 		status := http.StatusOK
 		if !result {
 			status = http.StatusNotFound

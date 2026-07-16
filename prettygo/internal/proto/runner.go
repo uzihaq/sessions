@@ -62,6 +62,9 @@ type Event struct {
 	Exit        ExitEvent
 	ClaudeEvent json.RawMessage
 	ClaudeIndex int64
+	// ClaudeActivityAt is derived by state.recordClaudeLocked and carried to
+	// the session manager so provider activity is ledgered without reparsing.
+	ClaudeActivityAt int64
 }
 
 // Runner is a daemon-side connection to one canonical runner socket. The

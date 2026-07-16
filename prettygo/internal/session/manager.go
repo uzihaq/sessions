@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
@@ -60,9 +61,16 @@ type ManagerOptions struct {
 	DisableWatchers  bool
 	ProcessAlive     func(int) bool
 	ProcessCommand   func(int) string
+	Boundaries       ledger.BoundaryWriter
+	Observations     ledger.ObservationWriter
+	LedgerReader     LedgerReader
 }
 
 type DiscoverOptions struct{ Force bool }
+
+type LedgerReader interface {
+	Events(context.Context, string) ([]ledger.Event, error)
+}
 
 type Manager struct {
 	config   state.Config
@@ -72,6 +80,10 @@ type Manager struct {
 	guard    MassKillGuard
 	options  ManagerOptions
 	started  time.Time
+
+	boundaries   ledger.BoundaryWriter
+	observations ledger.ObservationWriter
+	ledgerReader LedgerReader
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -130,8 +142,11 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 		config: config, launcher: launcher, registry: state.NewRegistry(config, launcher),
 		push: NewPushService(root), guard: MassKillGuard{Limit: selected.MassKillLimit},
 		options: selected, started: time.Now(), ctx: ctx, cancel: cancel,
+		boundaries: selected.Boundaries, observations: selected.Observations, ledgerReader: selected.LedgerReader,
 		runtimes: make(map[string]*runtimeSession), hooks: loadGlobalHooks(config.GlobalHooksPath),
 	}
+	manager.registry.SetTerminalObservers(manager.recordRunnerExited, manager.recordReaped)
+	manager.recordDaemonRestart(ctx)
 	manager.ticker = time.NewTicker(selected.ActivityInterval)
 	go manager.activityLoop()
 	return manager
@@ -148,8 +163,118 @@ func (m *Manager) List(includeExited bool) []state.SessionInfo {
 func (m *Manager) Get(id string) (*state.Session, bool) { return m.registry.Get(id) }
 func (m *Manager) DeepDiagnostics() []map[string]any    { return m.registry.DeepDiagnostics() }
 
+func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSession) error {
+	if m.boundaries == nil {
+		return nil
+	}
+	info := prepared.Info
+	providerUUID, resumeArgv := ledger.SafeResumeRecipe(string(prepared.Tool), info.Cmd, info.Args)
+	if err := m.boundaries.RecordCreated(ctx, ledger.Created{
+		Meta: ledger.Meta{LaneID: info.ID, AtMS: info.CreatedAt},
+		Name: prepared.Name, Tool: string(prepared.Tool), Cwd: info.Cwd,
+		ResumeArgv: resumeArgv, LaneUUID: info.ID, ProviderUUID: providerUUID,
+	}); err != nil {
+		return fmt.Errorf("record lane creation before launch: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) recordLaunchStarted(ctx context.Context, prepared state.PreparedSession) {
+	m.observe(ctx, "launch started", func(writer ledger.ObservationWriter) error {
+		return writer.RecordLaunchStarted(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: prepared.Info.ID}})
+	})
+}
+
+func (m *Manager) recordRunnerReady(ctx context.Context, info proto.RunnerInfo) {
+	m.observe(ctx, "runner ready", func(writer ledger.ObservationWriter) error {
+		return writer.RecordRunnerReady(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+	})
+	providerUUID, resumeArgv := ledger.SafeResumeRecipe("", info.Cmd, info.Args)
+	if providerUUID == "" {
+		return
+	}
+	m.observe(ctx, "provider bound", func(writer ledger.ObservationWriter) error {
+		return writer.RecordProviderBound(ctx, ledger.ProviderBound{
+			Meta: ledger.Meta{LaneID: info.ID}, ProviderUUID: providerUUID, ResumeArgv: resumeArgv,
+		})
+	})
+}
+
+func (m *Manager) recordReaped(id string) {
+	m.observe(context.Background(), "reaped", func(writer ledger.ObservationWriter) error {
+		return writer.RecordReaped(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: id}})
+	})
+}
+
+func (m *Manager) recordRunnerExited(id string, event proto.ExitEvent) {
+	m.observe(context.Background(), "runner exited", func(writer ledger.ObservationWriter) error {
+		return writer.RecordRunnerExited(context.Background(), ledger.RunnerExit{
+			Meta: ledger.Meta{LaneID: id}, Code: event.Code, Signal: event.Signal,
+		})
+	})
+}
+
+func (m *Manager) observe(ctx context.Context, label string, record func(ledger.ObservationWriter) error) {
+	if m.observations == nil {
+		return
+	}
+	if err := record(m.observations); err != nil {
+		log.Printf("[ledger] record %s: %v", label, err)
+	}
+}
+
+func (m *Manager) ledgerStates(ctx context.Context) ([]ledger.LaneState, error) {
+	if m.ledgerReader == nil {
+		return nil, nil
+	}
+	events, err := m.ledgerReader.Events(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	return ledger.Fold(events), nil
+}
+
+func (m *Manager) recordDaemonRestart(ctx context.Context) {
+	lanes, err := m.ledgerStates(ctx)
+	if err != nil {
+		log.Printf("[ledger] read lanes for daemon restart: %v", err)
+		return
+	}
+	for _, lane := range lanes {
+		laneID := lane.LaneID
+		m.observe(ctx, "daemon restart", func(writer ledger.ObservationWriter) error {
+			return writer.RecordDaemonRestart(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: laneID}})
+		})
+	}
+}
+
+func (m *Manager) reconcileLedger(ctx context.Context) {
+	lanes, err := m.ledgerStates(ctx)
+	if err != nil {
+		log.Printf("[ledger] read lanes for discovery reconciliation: %v", err)
+		return
+	}
+	for _, lane := range lanes {
+		closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped
+		if !lane.Created || closed || lane.RunnerLost {
+			continue
+		}
+		if _, present := m.registry.Get(lane.LaneID); present {
+			continue
+		}
+		laneID := lane.LaneID
+		m.observe(ctx, "runner lost during discovery reconciliation", func(writer ledger.ObservationWriter) error {
+			return writer.RecordRunnerLost(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: laneID}})
+		})
+	}
+}
+
 func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest) (state.SessionInfo, error) {
-	info, err := m.registry.Create(ctx, request)
+	info, err := m.registry.CreateWithLifecycle(ctx, request, state.CreateLifecycle{
+		BeforeLaunch:  m.recordCreated,
+		LaunchStarted: m.recordLaunchStarted,
+		RunnerReady:   m.recordRunnerReady,
+	})
 	if err != nil {
 		return state.SessionInfo{}, err
 	}
@@ -165,10 +290,17 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 }
 
 func (m *Manager) Kill(ctx context.Context, id string, force bool) bool {
+	return m.RequestKill(ctx, id, force) == nil
+}
+
+func (m *Manager) RequestKill(ctx context.Context, id string, force bool) error {
 	if err := m.guard.Check(1, force); err != nil {
-		return false
+		return err
 	}
-	return m.registry.Kill(ctx, id, force)
+	if _, ok := m.registry.Get(id); !ok {
+		return fmt.Errorf("session %s not found", id)
+	}
+	return m.killOne(ctx, id)
 }
 
 func (m *Manager) KillMany(ctx context.Context, ids []string, force bool) error {
@@ -182,12 +314,33 @@ func (m *Manager) KillMany(ctx context.Context, ids []string, force bool) error 
 		return err
 	}
 	var failures []error
-	for id := range unique {
-		if !m.registry.Kill(ctx, id, force) {
-			failures = append(failures, fmt.Errorf("kill session %s", id))
+	for _, id := range sortedKeys(unique) {
+		if err := m.killOne(ctx, id); err != nil {
+			failures = append(failures, fmt.Errorf("kill session %s: %w", id, err))
 		}
 	}
 	return errors.Join(failures...)
+}
+
+func (m *Manager) killOne(ctx context.Context, id string) error {
+	if m.boundaries != nil {
+		if err := m.boundaries.RecordUserKill(ctx, ledger.UserKill{Meta: ledger.Meta{LaneID: id}}); err != nil {
+			return fmt.Errorf("record user kill before runner kill: %w", err)
+		}
+	}
+	return m.registry.RequestKill(ctx, id, true)
+}
+
+func (m *Manager) Input(ctx context.Context, id, data string) bool {
+	if !m.registry.Input(ctx, id, data) {
+		return false
+	}
+	m.observe(ctx, "human activity", func(writer ledger.ObservationWriter) error {
+		return writer.RecordActivity(ctx, ledger.Activity{
+			Meta: ledger.Meta{LaneID: id}, Source: ledger.ActivityHumanInput,
+		})
+	})
+	return true
 }
 
 func (m *Manager) Close() {
@@ -222,6 +375,9 @@ func (m *Manager) manage(session *state.Session) *runtimeSession {
 	}
 	m.runtimes[info.ID] = runtime
 	m.mu.Unlock()
+	m.observe(context.Background(), "attached", func(writer ledger.ObservationWriter) error {
+		return writer.RecordAttached(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+	})
 	if !m.options.DisableWatchers {
 		runtime.startWatcher(info)
 	}
@@ -266,11 +422,21 @@ func (r *runtimeSession) observe() {
 			r.recentBytes += len(event.Output.Data)
 			r.mu.Unlock()
 		case proto.EventClaude:
+			if event.ClaudeActivityAt != 0 {
+				r.manager.observe(context.Background(), "provider activity", func(writer ledger.ObservationWriter) error {
+					return writer.RecordActivity(context.Background(), ledger.Activity{
+						Meta: ledger.Meta{LaneID: id, AtMS: event.ClaudeActivityAt}, Source: ledger.ActivityProviderEvent,
+					})
+				})
+			}
 			select {
 			case r.structuredEventArrived <- struct{}{}:
 			default:
 			}
 		case proto.EventRunnerLost:
+			r.manager.observe(context.Background(), "runner lost", func(writer ledger.ObservationWriter) error {
+				return writer.RecordRunnerLost(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: id}})
+			})
 			r.manager.dropRuntime(id, r)
 			r.manager.scheduleReconnect(id, []time.Duration{time.Second, 3 * time.Second, 10 * time.Second})
 			return
@@ -561,6 +727,7 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 			cleanupErrors = append(cleanupErrors, reapErr)
 		}
 	}
+	m.reconcileLedger(ctx)
 	return errors.Join(cleanupErrors...)
 }
 

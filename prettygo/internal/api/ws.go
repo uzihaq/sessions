@@ -99,19 +99,19 @@ func (s *Server) handleSingle(parent context.Context, peer *wsPeer, request *htt
 			return
 		}
 		if messageType == websocket.MessageBinary {
-			session.Input(ctx, string(payload))
+			s.registry.Input(ctx, id, string(payload))
 			continue
 		}
 		var message clientMessage
 		if err := json.Unmarshal(payload, &message); err != nil {
-			session.Input(ctx, string(payload))
+			s.registry.Input(ctx, id, string(payload))
 			continue
 		}
 		switch message.Type {
 		case "ping":
 			_ = peer.send(ctx, map[string]any{"type": "pong"})
 		case "input":
-			session.Input(ctx, message.Data)
+			s.registry.Input(ctx, id, message.Data)
 		case "resize":
 			session.Resize(ctx, clampDimension(message.Cols, 40, 500), clampDimension(message.Rows, 10, 200))
 		}
@@ -218,8 +218,7 @@ func (s *Server) handleMux(parent context.Context, peer *wsPeer) {
 		case "events":
 			s.handleMuxEvents(ctx, peer, message)
 		case "input":
-			session, ok := s.registry.Get(message.SessionID)
-			written := ok && session.Input(ctx, message.Data)
+			written := s.registry.Input(ctx, message.SessionID, message.Data)
 			if message.RequestID != "" {
 				_ = peer.send(ctx, map[string]any{
 					"type": "inputAck", "requestId": message.RequestID,
