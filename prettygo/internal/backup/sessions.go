@@ -1,0 +1,180 @@
+package backup
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
+)
+
+type Session struct {
+	ID             string
+	Name           string
+	CWD            string
+	Tool           state.SessionTool
+	Command        string
+	Args           []string
+	CreatedAt      int64
+	LastActivityAt int64
+	OptOut         bool
+}
+
+type Resolver struct {
+	ClaudeProjectsDir string
+	CodexSessionsDir  string
+	Now               func() time.Time
+}
+
+func CollectSessions(live []state.SessionInfo, runnerStateDir string) []Session {
+	collected := make(map[string]Session, len(live))
+	for _, info := range live {
+		if info.ID == "" {
+			continue
+		}
+		lastActivity := max(info.CreatedAt, info.LastDataAt)
+		if info.LastUserMessageAt != nil {
+			lastActivity = max(lastActivity, *info.LastUserMessageAt)
+		}
+		collected[info.ID] = Session{
+			ID: info.ID, Name: info.Name, CWD: info.Cwd, Tool: info.Tool,
+			Command: info.Cmd, Args: append([]string(nil), info.Args...),
+			CreatedAt: info.CreatedAt, LastActivityAt: lastActivity,
+			OptOut: sessionOptedOut(runnerStateDir, info.ID),
+		}
+	}
+	entries, _ := os.ReadDir(runnerStateDir)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".manifest.json") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".json")
+		if _, exists := collected[id]; exists {
+			continue
+		}
+		path := filepath.Join(runnerStateDir, name)
+		metadata, err := state.ReadRunnerMetadata(path)
+		if err != nil || metadata.Info.ID == "" || metadata.Info.ID != id {
+			continue
+		}
+		tool := classifySessionTool(metadata.Info.Cmd)
+		lastActivity := metadata.Info.CreatedAt
+		if info, err := entry.Info(); err == nil {
+			lastActivity = max(lastActivity, info.ModTime().UnixMilli())
+		}
+		collected[id] = Session{
+			ID: id, Name: metadata.Name, CWD: metadata.Info.Cwd, Tool: tool,
+			Command: metadata.Info.Cmd, Args: append([]string(nil), metadata.Info.Args...),
+			CreatedAt: metadata.Info.CreatedAt, LastActivityAt: lastActivity,
+			OptOut: sessionOptedOut(runnerStateDir, id),
+		}
+	}
+	result := make([]Session, 0, len(collected))
+	for _, session := range collected {
+		result = append(result, session)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
+}
+
+func (r Resolver) Resolve(session Session) (path, tool string) {
+	if session.OptOut {
+		return "", ""
+	}
+	switch normalizedTool(session.Tool, session.Command) {
+	case "claude":
+		projects := r.ClaudeProjectsDir
+		if projects == "" {
+			resolved, err := watch.ClaudeProjectsDir()
+			if err != nil {
+				return "", ""
+			}
+			projects = resolved
+		}
+		launchID := extractClaudeSessionID(session.Args)
+		if launchID == "" {
+			launchID = session.ID
+		}
+		resolution := watch.ResolveClaudeCWD(projects, session.CWD, launchID)
+		return resolution.Path, "claude"
+	case "codex":
+		now := time.Now()
+		if r.Now != nil {
+			now = r.Now()
+		}
+		resolution := watch.ResolveCodexRolloutPath(watch.CodexResolveOptions{
+			CWD: session.CWD, Args: session.Args,
+			CreatedAt:   time.UnixMilli(session.CreatedAt),
+			SessionsDir: r.CodexSessionsDir, Now: now,
+		})
+		return resolution.Path, "codex"
+	default:
+		return "", ""
+	}
+}
+
+func sessionOptedOut(runnerStateDir, id string) bool {
+	if _, err := os.Stat(filepath.Join(runnerStateDir, id+".no-backup")); err == nil {
+		return true
+	}
+	encoded, err := os.ReadFile(filepath.Join(runnerStateDir, id+".json"))
+	if err != nil {
+		return false
+	}
+	var flags struct {
+		Backup       *bool `json:"backup"`
+		BackupOptOut bool  `json:"backupOptOut"`
+		NoBackup     bool  `json:"noBackup"`
+	}
+	if json.Unmarshal(encoded, &flags) != nil {
+		return false
+	}
+	return flags.BackupOptOut || flags.NoBackup || (flags.Backup != nil && !*flags.Backup)
+}
+
+func classifySessionTool(command string) state.SessionTool {
+	switch strings.ToLower(filepath.Base(command)) {
+	case "claude":
+		return state.ToolClaude
+	case "codex":
+		return state.ToolCodex
+	default:
+		return state.ToolTerminal
+	}
+}
+
+func normalizedTool(tool state.SessionTool, command string) string {
+	switch tool {
+	case state.ToolClaude:
+		return "claude"
+	case state.ToolCodex:
+		return "codex"
+	}
+	switch classifySessionTool(command) {
+	case state.ToolClaude:
+		return "claude"
+	case state.ToolCodex:
+		return "codex"
+	default:
+		return ""
+	}
+}
+
+func extractClaudeSessionID(args []string) string {
+	for index, argument := range args {
+		for _, flag := range []string{"--session-id", "--resume"} {
+			if argument == flag && index+1 < len(args) {
+				return args[index+1]
+			}
+			if strings.HasPrefix(argument, flag+"=") {
+				return strings.TrimPrefix(argument, flag+"=")
+			}
+		}
+	}
+	return ""
+}
