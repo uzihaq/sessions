@@ -33,6 +33,8 @@ const idleShutdown = 30 * time.Second
 type config struct {
 	id       string
 	name     string
+	kind     string
+	specPath string
 	stateDir string
 	cmd      string
 	args     []string
@@ -98,6 +100,7 @@ type runner struct {
 	createdAt  int64
 	cmd        *exec.Cmd
 	ptmx       *os.File
+	output     *os.File
 	listener   *net.UnixListener
 	log        *state.EventLog
 	persistent *state.PersistentLog
@@ -159,9 +162,27 @@ func run() int {
 	command := exec.Command(cfg.cmd, spawnArgs...)
 	command.Dir = cfg.cwd
 	command.Env = childEnv()
-	ptmx, err := pty.StartWithSize(command, &pty.Winsize{Rows: uint16(cfg.rows), Cols: uint16(cfg.cols)})
+	var ptmx *os.File
+	var output *os.File
+	if cfg.kind == state.KindLane {
+		var writePipe *os.File
+		output, writePipe, err = os.Pipe()
+		if err == nil {
+			command.Stdin = nil
+			command.Stdout = writePipe
+			command.Stderr = writePipe
+			err = command.Start()
+			_ = writePipe.Close()
+		}
+	} else {
+		ptmx, err = pty.StartWithSize(command, &pty.Winsize{Rows: uint16(cfg.rows), Cols: uint16(cfg.cols)})
+		output = ptmx
+	}
 	if err != nil {
 		logger.Printf("spawn %q failed: %v", cfg.cmd, err)
+		if output != nil {
+			_ = output.Close()
+		}
 		return 1
 	}
 
@@ -169,7 +190,9 @@ func run() int {
 	if err != nil {
 		logger.Printf("open persistent log failed: %v", err)
 		_ = command.Process.Signal(syscall.SIGHUP)
-		_ = ptmx.Close()
+		if output != nil {
+			_ = output.Close()
+		}
 		_, _ = command.Process.Wait()
 		return 1
 	}
@@ -196,6 +219,7 @@ func run() int {
 		createdAt:    time.Now().UnixMilli(),
 		cmd:          command,
 		ptmx:         ptmx,
+		output:       output,
 		log:          eventLog,
 		persistent:   persistent,
 		logger:       logger,
@@ -206,7 +230,8 @@ func run() int {
 		jsonlMissing: jsonlMissing,
 	}
 	meta := state.Metadata{
-		ID: cfg.id, Name: cfg.name, Cmd: cfg.cmd, Args: cfg.args, Cwd: cfg.cwd,
+		ID: cfg.id, Name: cfg.name, Kind: cfg.kind, SpecPath: cfg.specPath,
+		Cmd: cfg.cmd, Args: cfg.args, Cwd: cfg.cwd,
 		Cols: cfg.cols, Rows: cfg.rows, CreatedAt: r.createdAt,
 		PID: command.Process.Pid, SockPath: paths.Socket,
 	}
@@ -226,7 +251,7 @@ func run() int {
 		logger.Printf("socket chmod failed: %v", err)
 	}
 
-	go r.readPTY()
+	go r.readOutput()
 	go r.waitChild()
 	go r.acceptLoop()
 
@@ -252,6 +277,11 @@ func configFromEnv() (config, string, error) {
 		return config{}, "", errors.New("RUNNER_ID env var required")
 	}
 	name := strings.TrimSpace(os.Getenv("RUNNER_NAME"))
+	kind := strings.TrimSpace(os.Getenv("RUNNER_KIND"))
+	if kind != "" && kind != state.KindLane {
+		return config{}, "", fmt.Errorf("unsupported RUNNER_KIND=%q", kind)
+	}
+	specPath := strings.TrimSpace(os.Getenv("RUNNER_SPEC_PATH"))
 	stateDir := os.Getenv("RUNNER_STATE_DIR")
 	if stateDir == "" {
 		var err error
@@ -290,7 +320,7 @@ func configFromEnv() (config, string, error) {
 	if cols <= 0 || cols > 65535 || rows <= 0 || rows > 65535 {
 		return config{}, "", fmt.Errorf("invalid PTY size %dx%d", cols, rows)
 	}
-	return config{id: id, name: name, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows}, "", nil
+	return config{id: id, name: name, kind: kind, specPath: specPath, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows}, "", nil
 }
 
 func envInt(name string, fallback int) (int, error) {
@@ -317,7 +347,8 @@ func childEnv() []string {
 	control := map[string]struct{}{
 		"RUNNER_ID": {}, "RUNNER_CMD": {}, "RUNNER_ARGS_JSON": {},
 		"RUNNER_CWD": {}, "RUNNER_COLS": {}, "RUNNER_ROWS": {},
-		"RUNNER_STATE_DIR": {}, "TERM": {}, "COLORTERM": {},
+		"RUNNER_STATE_DIR": {}, "RUNNER_NAME": {}, "RUNNER_KIND": {},
+		"RUNNER_SPEC_PATH": {}, "TERM": {}, "COLORTERM": {},
 	}
 	out := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {
@@ -450,7 +481,7 @@ func (r *runner) handleFrame(c *client, frame proto.Frame) error {
 		r.mu.Lock()
 		exited := r.exited
 		r.mu.Unlock()
-		if !exited {
+		if !exited && r.ptmx != nil {
 			_, _ = r.ptmx.Write(frame.Payload)
 		}
 	case proto.Resize:
@@ -464,11 +495,11 @@ func (r *runner) handleFrame(c *client, frame proto.Frame) error {
 		}
 		r.mu.Lock()
 		exited := r.exited
-		if !exited {
+		if !exited && r.ptmx != nil {
 			r.cols, r.rows = cols, rows
 		}
 		r.mu.Unlock()
-		if !exited {
+		if !exited && r.ptmx != nil {
 			_ = pty.Setsize(r.ptmx, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
 		}
 	case proto.SnapshotReq:
@@ -506,11 +537,11 @@ func (r *runner) handleFrame(c *client, frame proto.Frame) error {
 	return nil
 }
 
-func (r *runner) readPTY() {
+func (r *runner) readOutput() {
 	defer close(r.readDone)
 	buf := make([]byte, 32*1024)
 	for {
-		n, err := r.ptmx.Read(buf)
+		n, err := r.output.Read(buf)
 		if n > 0 {
 			r.recordOutput(buf[:n])
 		}
@@ -540,10 +571,16 @@ func (r *runner) waitChild() {
 	select {
 	case <-r.readDone:
 	case <-time.After(250 * time.Millisecond):
-		_ = r.ptmx.Close()
+		_ = r.output.Close()
 		<-r.readDone
 	}
-	info := processExitInfo(r.cmd.ProcessState, err)
+	info := processExitInfo(r.cmd.ProcessState, err, r.cfg.kind == state.KindLane)
+	if r.cfg.kind == state.KindLane {
+		manifest := r.completionManifest(info)
+		if writeErr := state.WriteCompletionManifest(r.paths.Manifest, manifest); writeErr != nil {
+			r.logger.Printf("write completion manifest failed: %v", writeErr)
+		}
+	}
 	r.streamMu.Lock()
 	info.Seq = r.log.CurrentSeq()
 	r.mu.Lock()
@@ -567,7 +604,7 @@ func (r *runner) waitChild() {
 	}
 }
 
-func processExitInfo(processState *os.ProcessState, waitErr error) exitInfo {
+func processExitInfo(processState *os.ProcessState, waitErr error, headless bool) exitInfo {
 	if processState != nil {
 		if status, ok := processState.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 			signalText := strconv.Itoa(int(status.Signal()))
@@ -575,6 +612,9 @@ func processExitInfo(processState *os.ProcessState, waitErr error) exitInfo {
 			// signal-terminated PTY. Keep that slightly unusual pairing for
 			// byte-level interop with runner.ts.
 			code := 0
+			if headless {
+				code = 128 + int(status.Signal())
+			}
 			return exitInfo{Code: &code, Signal: &signalText}
 		}
 		code := processState.ExitCode()
@@ -586,6 +626,46 @@ func processExitInfo(processState *os.ProcessState, waitErr error) exitInfo {
 	}
 	code := 0
 	return exitInfo{Code: &code, Signal: nil}
+}
+
+func (r *runner) completionManifest(info exitInfo) state.CompletionManifest {
+	code := 0
+	if info.Code != nil {
+		code = *info.Code
+	}
+	tail := r.snapshotLocked()
+	const maximumTail = 4 * 1024
+	if len(tail) > maximumTail {
+		tail = tail[len(tail)-maximumTail:]
+	}
+	duration := time.Since(time.UnixMilli(r.createdAt)).Milliseconds()
+	if duration < 0 {
+		duration = 0
+	}
+	return state.CompletionManifest{
+		ExitCode: code, Signal: info.Signal, DurationMS: duration,
+		LastOutputTail: string(tail), SpecPath: r.cfg.specPath,
+		FilesChanged: gitFilesChanged(r.cfg.cwd),
+	}
+}
+
+func gitFilesChanged(cwd string) *int {
+	check := exec.Command("git", "-C", cwd, "rev-parse", "--is-inside-work-tree")
+	if output, err := check.Output(); err != nil || strings.TrimSpace(string(output)) != "true" {
+		return nil
+	}
+	status := exec.Command("git", "-C", cwd, "status", "--porcelain=v1", "--untracked-files=all")
+	output, err := status.Output()
+	if err != nil {
+		return nil
+	}
+	count := 0
+	for _, line := range bytes.Split(output, []byte{'\n'}) {
+		if len(line) > 0 {
+			count++
+		}
+	}
+	return &count
 }
 
 func (r *runner) snapshotLocked() []byte {
@@ -653,7 +733,9 @@ func (r *runner) shutdown(permanent bool, code int) {
 		if r.cmd.Process != nil {
 			_ = r.cmd.Process.Signal(syscall.SIGHUP)
 		}
-		_ = r.ptmx.Close()
+		if r.output != nil {
+			_ = r.output.Close()
+		}
 		r.streamMu.Unlock()
 		os.Exit(code)
 	})

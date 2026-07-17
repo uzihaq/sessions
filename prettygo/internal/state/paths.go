@@ -11,23 +11,25 @@ import (
 
 // Paths is the complete on-disk file group for one runner.
 type Paths struct {
-	Dir    string
-	ID     string
-	Socket string
-	Meta   string
-	Events string
-	Log    string
+	Dir      string
+	ID       string
+	Socket   string
+	Meta     string
+	Events   string
+	Log      string
+	Manifest string
 }
 
 func For(dir, id string) Paths {
 	base := filepath.Join(dir, id)
 	return Paths{
-		Dir:    dir,
-		ID:     id,
-		Socket: base + ".sock",
-		Meta:   base + ".json",
-		Events: base + ".events",
-		Log:    base + ".log",
+		Dir:      dir,
+		ID:       id,
+		Socket:   base + ".sock",
+		Meta:     base + ".json",
+		Events:   base + ".events",
+		Log:      base + ".log",
+		Manifest: base + ".manifest.json",
 	}
 }
 
@@ -50,6 +52,8 @@ func EnsureDir(dir string) error {
 type Metadata struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name,omitempty"`
+	Kind      string   `json:"kind,omitempty"`
+	SpecPath  string   `json:"specPath,omitempty"`
 	Cmd       string   `json:"cmd"`
 	Args      []string `json:"args"`
 	Cwd       string   `json:"cwd"`
@@ -58,6 +62,17 @@ type Metadata struct {
 	CreatedAt int64    `json:"createdAt"`
 	PID       int      `json:"pid"`
 	SockPath  string   `json:"sockPath"`
+}
+
+// CompletionManifest is the durable terminal fact emitted by a headless lane.
+// FilesChanged is absent when the lane cwd is not a Git worktree.
+type CompletionManifest struct {
+	ExitCode       int     `json:"exit_code"`
+	Signal         *string `json:"signal"`
+	DurationMS     int64   `json:"duration_ms"`
+	LastOutputTail string  `json:"last_output_tail"`
+	SpecPath       string  `json:"spec_path"`
+	FilesChanged   *int    `json:"files_changed,omitempty"`
 }
 
 func WriteMetadata(path string, meta Metadata) error {
@@ -69,4 +84,36 @@ func WriteMetadata(path string, meta Metadata) error {
 		return err
 	}
 	return os.Chmod(path, 0o600)
+}
+
+func WriteCompletionManifest(path string, manifest CompletionManifest) error {
+	b, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary := path + ".tmp"
+	if err := os.WriteFile(temporary, b, 0o600); err != nil {
+		return err
+	}
+	if err := os.Chmod(temporary, 0o600); err != nil {
+		_ = os.Remove(temporary)
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		_ = os.Remove(temporary)
+		return err
+	}
+	return nil
+}
+
+func ReadCompletionManifest(path string) (CompletionManifest, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return CompletionManifest{}, err
+	}
+	var manifest CompletionManifest
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return CompletionManifest{}, err
+	}
+	return manifest, nil
 }

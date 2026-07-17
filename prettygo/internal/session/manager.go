@@ -64,6 +64,7 @@ type ManagerOptions struct {
 	Boundaries       ledger.BoundaryWriter
 	Observations     ledger.ObservationWriter
 	LedgerReader     LedgerReader
+	Notify           func(PushPayload)
 }
 
 type DiscoverOptions struct{ Force bool }
@@ -84,6 +85,10 @@ type Manager struct {
 	boundaries   ledger.BoundaryWriter
 	observations ledger.ObservationWriter
 	ledgerReader LedgerReader
+	notify       func(PushPayload)
+
+	deathMu    sync.Mutex
+	laneDeaths map[string]laneDeathBurst
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -92,6 +97,12 @@ type Manager struct {
 	mu       sync.Mutex
 	runtimes map[string]*runtimeSession
 	hooks    globalHooks
+}
+
+type laneDeathBurst struct {
+	started  time.Time
+	count    int
+	digested bool
 }
 
 type globalHooks struct {
@@ -144,6 +155,13 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 		options: selected, started: time.Now(), ctx: ctx, cancel: cancel,
 		boundaries: selected.Boundaries, observations: selected.Observations, ledgerReader: selected.LedgerReader,
 		runtimes: make(map[string]*runtimeSession), hooks: loadGlobalHooks(config.GlobalHooksPath),
+		laneDeaths: make(map[string]laneDeathBurst),
+	}
+	manager.notify = selected.Notify
+	if manager.notify == nil {
+		manager.notify = func(payload PushPayload) {
+			go manager.push.Send(context.Background(), payload)
+		}
 	}
 	manager.registry.SetTerminalObservers(manager.recordRunnerExited, manager.recordReaped)
 	manager.recordDaemonRestart(ctx)
@@ -168,7 +186,10 @@ func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSess
 		return nil
 	}
 	info := prepared.Info
-	providerUUID, resumeArgv := ledger.SafeResumeRecipe(string(prepared.Tool), info.Cmd, info.Args)
+	providerUUID, resumeArgv := "", []string(nil)
+	if prepared.Kind != state.KindLane {
+		providerUUID, resumeArgv = ledger.SafeResumeRecipe(string(prepared.Tool), info.Cmd, info.Args)
+	}
 	if err := m.boundaries.RecordCreated(ctx, ledger.Created{
 		Meta: ledger.Meta{LaneID: info.ID, AtMS: info.CreatedAt},
 		Name: prepared.Name, Tool: string(prepared.Tool), Cwd: info.Cwd,
@@ -189,6 +210,9 @@ func (m *Manager) recordRunnerReady(ctx context.Context, info proto.RunnerInfo) 
 	m.observe(ctx, "runner ready", func(writer ledger.ObservationWriter) error {
 		return writer.RecordRunnerReady(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
 	})
+	if metadata, err := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, info.ID+".json")); err == nil && metadata.Kind == state.KindLane {
+		return
+	}
 	providerUUID, resumeArgv := ledger.SafeResumeRecipe("", info.Cmd, info.Args)
 	if providerUUID == "" {
 		return
@@ -212,6 +236,89 @@ func (m *Manager) recordRunnerExited(id string, event proto.ExitEvent) {
 			Meta: ledger.Meta{LaneID: id}, Code: event.Code, Signal: event.Signal,
 		})
 	})
+	m.notifyLaneExit(id, event)
+}
+
+func (m *Manager) notifyLaneExit(id string, event proto.ExitEvent) {
+	session, ok := m.registry.Get(id)
+	if !ok {
+		return
+	}
+	info := session.Info()
+	if info.Kind != state.KindLane {
+		return
+	}
+	manifest, err := state.ReadCompletionManifest(filepath.Join(m.config.RunnerStateDir, id+".manifest.json"))
+	if err != nil {
+		manifest.ExitCode = exitCodeOf(event)
+		manifest.Signal = event.Signal
+		manifest.SpecPath = info.SpecPath
+		if snapshot, _, snapshotErr := session.Snapshot(context.Background(), 0); snapshotErr == nil {
+			manifest.LastOutputTail = snapshot
+		}
+	}
+	label := sessionDisplayLabel(info)
+	body := lastOutputLine(manifest.LastOutputTail)
+	failed := manifest.ExitCode != 0 || manifest.Signal != nil
+	if !failed {
+		if body == "" {
+			body = "finished"
+		}
+		m.notify(PushPayload{
+			Title: "🟢 " + label + " finished", Body: body,
+			Data: map[string]any{"sessionId": id, "kind": state.KindLane, "exitCode": manifest.ExitCode},
+		})
+		return
+	}
+	if body == "" {
+		body = "no output"
+	}
+	payload := PushPayload{
+		Title: fmt.Sprintf("🔴 %s died (exit %d)", label, manifest.ExitCode), Body: body,
+		Data: map[string]any{"sessionId": id, "kind": state.KindLane, "exitCode": manifest.ExitCode},
+	}
+	signature := fmt.Sprintf("exit:%d", manifest.ExitCode)
+	if manifest.Signal != nil {
+		signature += ":signal:" + *manifest.Signal
+	}
+	now := time.Now()
+	m.deathMu.Lock()
+	burst := m.laneDeaths[signature]
+	if burst.started.IsZero() || now.Sub(burst.started) >= time.Minute {
+		burst = laneDeathBurst{started: now}
+	}
+	burst.count++
+	send := true
+	if burst.count >= 3 {
+		if burst.digested {
+			send = false
+		} else {
+			burst.digested = true
+			payload.Title = fmt.Sprintf("%d lanes died", burst.count)
+			payload.Body = fmt.Sprintf("similar exit %d within 60s", manifest.ExitCode)
+			payload.Data = map[string]any{"kind": state.KindLane, "exitCode": manifest.ExitCode, "count": burst.count}
+		}
+	}
+	m.laneDeaths[signature] = burst
+	m.deathMu.Unlock()
+	if send {
+		m.notify(payload)
+	}
+}
+
+func exitCodeOf(event proto.ExitEvent) int {
+	if event.Code != nil {
+		return *event.Code
+	}
+	return 1
+}
+
+func lastOutputLine(output string) string {
+	lines := snapshotLines(output)
+	if len(lines) == 0 {
+		return ""
+	}
+	return displayLine(lines[len(lines)-1])
 }
 
 func (m *Manager) observe(ctx context.Context, label string, record func(ledger.ObservationWriter) error) {
@@ -641,7 +748,7 @@ func (m *Manager) scheduleReconnect(id string, delays []time.Duration) {
 		metadata.Info.ID = id
 		metadata.Info.SocketPath = path
 		if runner, attachErr := m.launcher.Attach(m.ctx, metadata.Info); attachErr == nil {
-			if session, registerErr := m.registry.Register(m.ctx, runner, metadata.Name, ""); registerErr == nil {
+			if session, registerErr := m.registry.RegisterMetadata(m.ctx, runner, metadata, ""); registerErr == nil {
 				m.manage(session)
 				log.Printf("[reconnect] runner %s reattached after unexpected disconnect", id)
 				return
@@ -683,7 +790,7 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 			for attempt := 0; attempt < m.options.DiscoveryRetries; attempt++ {
 				runner, attachErr := m.launcher.Attach(ctx, probe)
 				if attachErr == nil {
-					if session, registerErr := m.registry.Register(ctx, runner, metadata.Name, ""); registerErr == nil {
+					if session, registerErr := m.registry.RegisterMetadata(ctx, runner, metadata, ""); registerErr == nil {
 						m.manage(session)
 						connected = true
 						break
