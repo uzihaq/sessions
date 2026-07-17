@@ -317,7 +317,7 @@ func (e *Engine) resumeSource(lane ledger.LaneState) (known, exists bool, path s
 				return false, false, ""
 			}
 		}
-		resolution := watch.ResolveClaudeJSONL(filepath.Join(root, watch.EncodeClaudeCWD(lane.Cwd)), lane.ProviderUUID)
+		resolution := watch.ResolveClaudeCWD(root, lane.Cwd, lane.ProviderUUID)
 		if resolution.Path == "" || filepath.Base(resolution.Path) != lane.ProviderUUID+".jsonl" {
 			return true, false, ""
 		}

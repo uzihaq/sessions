@@ -66,6 +66,43 @@ func TestClaudeWatcherTailsAPIEventsAndDeduplicatesReread(t *testing.T) {
 	assertNoEvent(t, watcher.Events, 80*time.Millisecond)
 }
 
+func TestClaudeWatcherFindsRealpathProjectForAliasCWD(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	realCWD := filepath.Join(home, "private", "tmp")
+	aliasCWD := filepath.Join(home, "tmp")
+	if err := os.MkdirAll(realCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realCWD, aliasCWD); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "aaaaaaaa-1111-2222-3333-444444444444"
+	projectDir, err := ClaudeProjectDir(aliasCWD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projectDir, sessionID+".jsonl")
+	event := SessionEvent{"type": "assistant", "uuid": "realpath-event"}
+	writeSessionEvents(t, path, []SessionEvent{event}, false)
+
+	watcher, err := WatchClaudeSession(ClaudeWatcherOptions{
+		CWD: aliasCWD, ClaudeSessionID: sessionID,
+		InitialDelay: time.Millisecond, PollInterval: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer watcher.Close()
+	assertEventsJSONEqual(t, collectEvents(t, watcher.Events, 1, 2*time.Second), []SessionEvent{event})
+	if watcher.Path() != path {
+		t.Fatalf("watcher path = %q, want realpath project %q", watcher.Path(), path)
+	}
+}
+
 func writeSessionEvents(t *testing.T, path string, events []SessionEvent, appendMode bool) {
 	t.Helper()
 	flag := os.O_CREATE | os.O_WRONLY | os.O_TRUNC

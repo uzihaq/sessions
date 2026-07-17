@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDecideSendConfirmation(t *testing.T) {
@@ -34,6 +35,132 @@ func TestDecideSendConfirmation(t *testing.T) {
 				t.Fatalf("decision = %#v, want confidence=%s exit=%d", actual, test.confidence, test.exitCode)
 			}
 			t.Logf("%s: confidence=%s exit=%d", test.name, actual.Confidence, actual.ExitCode)
+		})
+	}
+}
+
+func TestClaudeSubmitSequenceMatchesNodeCLI(t *testing.T) {
+	const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	text := "\x1b[200~Reply with exactly PONG.\x1b[201~"
+	inputs := make([]string, 0, 2)
+	submitted := false
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
+			lastUser := any(nil)
+			if submitted {
+				lastUser = int64(2)
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"sessions": []any{map[string]any{
+				"id": id, "cmd": "claude", "tool": "claude-code", "lastUserMessageAt": lastUser,
+			}}})
+		case request.Method == http.MethodGet && request.URL.Path == "/api/sessions/"+id+"/events":
+			events := []any{}
+			if submitted {
+				events = append(events, map[string]any{
+					"type": "user", "message": map[string]any{"role": "user", "content": text},
+				})
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"events": events, "nextIndex": len(events)})
+		case request.Method == http.MethodPost && request.URL.Path == "/api/sessions/"+id+"/input":
+			var body map[string]string
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				http.Error(response, err.Error(), http.StatusBadRequest)
+				return
+			}
+			inputs = append(inputs, body["data"])
+			if body["data"] == "\r" {
+				submitted = true
+			}
+			_ = json.NewEncoder(response).Encode(map[string]any{"ok": true})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("HOME", t.TempDir())
+
+	application, err := newApp([]string{"--host", server.URL}, strings.NewReader(""), io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.close()
+	var sleeps []time.Duration
+	application.sleep = func(duration time.Duration) { sleeps = append(sleeps, duration) }
+	result, err := application.sendAndConfirm(id, text, time.Second, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Confirmed == nil || !*result.Confirmed || result.Text != text {
+		t.Fatalf("result = %+v, want confirmed exact text", result)
+	}
+	if want := []string{text, "\r"}; !reflect.DeepEqual(inputs, want) {
+		t.Fatalf("input sequence = %q, want %q", inputs, want)
+	}
+	if want := []time.Duration{sendTextSettleDelay}; !reflect.DeepEqual(sleeps, want) {
+		t.Fatalf("sleeps = %v, want %v", sleeps, want)
+	}
+}
+
+func TestClaudeEnterRetriesRequireTextStillInComposer(t *testing.T) {
+	const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	const text = "Reply with exactly PONG."
+	tests := []struct {
+		name       string
+		snapshot   string
+		wantEnters int
+	}{
+		{name: "visible text gets two bounded retries", snapshot: "❯ " + text, wantEnters: 3},
+		{name: "cleared composer never retries", snapshot: "❯ ", wantEnters: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			enters := 0
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				switch {
+				case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
+					_ = json.NewEncoder(response).Encode(map[string]any{"sessions": []any{map[string]any{
+						"id": id, "cmd": "claude", "tool": "claude-code", "working": false,
+					}}})
+				case request.Method == http.MethodGet && request.URL.Path == "/api/sessions/"+id+"/events":
+					_ = json.NewEncoder(response).Encode(map[string]any{"events": []any{}, "nextIndex": 0})
+				case request.Method == http.MethodGet && request.URL.Path == "/api/sessions/"+id+"/snapshot":
+					response.Header().Set("Content-Type", "text/plain")
+					_, _ = io.WriteString(response, test.snapshot)
+				case request.Method == http.MethodPost && request.URL.Path == "/api/sessions/"+id+"/input":
+					var body map[string]string
+					_ = json.NewDecoder(request.Body).Decode(&body)
+					if body["data"] == "\r" {
+						enters++
+					}
+					_ = json.NewEncoder(response).Encode(map[string]any{"ok": true})
+				default:
+					http.NotFound(response, request)
+				}
+			}))
+			defer server.Close()
+			t.Setenv("HOME", t.TempDir())
+
+			application, err := newApp([]string{"--host", server.URL}, strings.NewReader(""), io.Discard, io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer application.close()
+			clock := time.Unix(0, 0)
+			application.now = func() time.Time { return clock }
+			application.sleep = func(duration time.Duration) { clock = clock.Add(duration) }
+			result, err := application.sendAndConfirm(id, text, 650*time.Millisecond, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Confirmed == nil || *result.Confirmed {
+				t.Fatalf("result = %+v, want unconfirmed timeout", result)
+			}
+			if enters != test.wantEnters {
+				t.Fatalf("Enter count = %d, want %d", enters, test.wantEnters)
+			}
 		})
 	}
 }
@@ -271,6 +398,14 @@ func TestLastAndTranscriptJSONShapes(t *testing.T) {
 				map[string]any{"type": "text", "text": "answer"},
 				map[string]any{"type": "tool_use", "name": "Read"},
 			}},
+		},
+		map[string]any{
+			"type": "assistant", "timestamp": "2026-07-16T20:00:01.100Z",
+			"message": map[string]any{"role": "assistant", "content": []any{}, "usage": map[string]any{"output_tokens": 1}},
+		},
+		map[string]any{
+			"type": "assistant", "timestamp": "2026-07-16T20:00:01.200Z",
+			"message": map[string]any{"role": "assistant", "content": []any{}, "stop_reason": "end_turn"},
 		},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

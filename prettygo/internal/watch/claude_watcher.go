@@ -32,12 +32,12 @@ type claudeTail struct {
 	ctx     context.Context
 	hints   *notifyHints
 
-	projectDir string
-	sessionID  string
-	path       string
-	fileInfo   os.FileInfo
-	offset     int64
-	buffer     string
+	projectDirs []string
+	sessionID   string
+	path        string
+	fileInfo    os.FileInfo
+	offset      int64
+	buffer      string
 
 	emitted      map[string]struct{}
 	emittedOrder []string
@@ -46,10 +46,10 @@ type claudeTail struct {
 
 // WatchClaudeSession starts resolving and tailing a Claude session file.
 func WatchClaudeSession(options ClaudeWatcherOptions) (*FileWatcher, error) {
-	projectDir := options.ProjectDir
-	if projectDir == "" {
+	projectDirs := []string{options.ProjectDir}
+	if options.ProjectDir == "" {
 		var err error
-		projectDir, err = ClaudeProjectDir(options.CWD)
+		projectDirs, err = ClaudeProjectDirs(options.CWD)
 		if err != nil {
 			return nil, err
 		}
@@ -63,12 +63,12 @@ func WatchClaudeSession(options ClaudeWatcherOptions) (*FileWatcher, error) {
 
 	watcher, ctx := newFileWatcher()
 	tail := &claudeTail{
-		watcher:    watcher,
-		ctx:        ctx,
-		hints:      newNotifyHints(),
-		projectDir: projectDir,
-		sessionID:  options.ClaudeSessionID,
-		emitted:    make(map[string]struct{}),
+		watcher:     watcher,
+		ctx:         ctx,
+		hints:       newNotifyHints(),
+		projectDirs: projectDirs,
+		sessionID:   options.ClaudeSessionID,
+		emitted:     make(map[string]struct{}),
 	}
 	go tail.run(options.InitialDelay, options.PollInterval)
 	return watcher, nil
@@ -115,8 +115,10 @@ func (tail *claudeTail) tick() {
 	if tail.ctx.Err() != nil {
 		return
 	}
-	tail.hints.add(tail.projectDir)
-	resolution := ResolveClaudeJSONL(tail.projectDir, tail.sessionID)
+	for _, dir := range tail.projectDirs {
+		tail.hints.add(dir)
+	}
+	resolution := tail.resolve()
 	if resolution.Path != "" {
 		if tail.path == "" || (tail.path != resolution.Path && resolution.Reason == ClaudeExact) {
 			tail.attach(resolution.Path)
@@ -125,10 +127,14 @@ func (tail *claudeTail) tick() {
 		tail.unresolved = true
 		tail.watcher.emitError(tail.ctx, fmt.Errorf(
 			"unresolved JSONL for %s in %s: %s",
-			valueOr(tail.sessionID, "(no id)"), tail.projectDir, resolution.Reason,
+			valueOr(tail.sessionID, "(no id)"), strings.Join(tail.projectDirs, ", "), resolution.Reason,
 		))
 	}
 	tail.read()
+}
+
+func (tail *claudeTail) resolve() ClaudeResolution {
+	return resolveClaudeJSONLDirs(tail.projectDirs, tail.sessionID)
 }
 
 func valueOr(value, fallback string) string {

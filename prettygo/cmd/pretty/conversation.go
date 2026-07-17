@@ -23,7 +23,13 @@ func eventRole(event map[string]any) string {
 	}
 	if event["type"] == "assistant" {
 		if message, ok := eventMessageOf(event); ok && message.Role == "assistant" {
-			return "assistant"
+			// Codex emits normalized usage and task-complete metadata as
+			// assistant records with empty content. They delimit a turn but are
+			// not messages; selecting one would make `pretty last` hide the
+			// actual text reply that immediately precedes it.
+			if extractEventText(event) != "" || len(extractEventToolCalls(event)) > 0 {
+				return "assistant"
+			}
 		}
 	}
 	return ""

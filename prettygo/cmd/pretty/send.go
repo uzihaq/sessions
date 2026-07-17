@@ -65,6 +65,12 @@ var (
 	blockingPromptPattern  = regexp.MustCompile(`(?i)\b(press enter|hit enter|continue\?|confirm|are you sure|allow|deny|approve|permission|yes/no|\[y/n\]|\(y/n\)|select|choose)\b`)
 )
 
+const (
+	sendTextSettleDelay = 150 * time.Millisecond
+	sendPollInterval    = 300 * time.Millisecond
+	maxEnterRetries     = 2
+)
+
 func getComposerLines(snapshot string) []string {
 	if snapshot == "" {
 		return nil
@@ -303,6 +309,21 @@ func firstValue(value map[string]any, keys ...string) any {
 	return nil
 }
 
+// submitComposer matches prettyd/bin/pretty.cjs: preserve the text payload
+// exactly (including an existing bracketed-paste envelope), wait for the TUI
+// to register it, then send CR as a separate discrete keystroke.
+func (a *app) submitComposer(inputPath, text string) error {
+	if err := a.postJSON(inputPath, map[string]string{"data": text}, &map[string]any{}, 1); err != nil {
+		return err
+	}
+	a.sleep(sendTextSettleDelay)
+	return a.pressComposerEnter(inputPath)
+}
+
+func (a *app) pressComposerEnter(inputPath string) error {
+	return a.postJSON(inputPath, map[string]string{"data": "\r"}, &map[string]any{}, 1)
+}
+
 type eventsResponse struct {
 	Events    []map[string]any `json:"events"`
 	NextIndex int64            `json:"nextIndex"`
@@ -340,11 +361,7 @@ func (a *app) sendAndConfirm(id, text string, timeout time.Duration, noWait bool
 		}
 	}
 	inputPath := "/api/sessions/" + escapeID(id) + "/input"
-	if err := a.postJSON(inputPath, map[string]string{"data": text}, &map[string]any{}, 1); err != nil {
-		return sendResult{}, err
-	}
-	a.sleep(150 * time.Millisecond)
-	if err := a.postJSON(inputPath, map[string]string{"data": "\r"}, &map[string]any{}, 1); err != nil {
+	if err := a.submitComposer(inputPath, text); err != nil {
 		return sendResult{}, err
 	}
 	if !confirmable || noWait {
@@ -422,19 +439,19 @@ func (a *app) sendAndConfirm(id, text string, timeout time.Duration, noWait bool
 				ComposerTail: composerTail, SnapshotState: &state,
 			}, nil
 		}
-		if enterRetries < 2 {
+		if enterRetries < maxEnterRetries {
 			snapshot, err := a.getText("/api/sessions/" + escapeID(id) + "/snapshot")
 			if err != nil {
 				return sendResult{}, err
 			}
 			if snippet != "" && anyLineContains(getComposerLines(snapshot), snippet) {
-				if err := a.postJSON(inputPath, map[string]string{"data": "\r"}, &map[string]any{}, 1); err != nil {
+				if err := a.pressComposerEnter(inputPath); err != nil {
 					return sendResult{}, err
 				}
 				enterRetries++
 			}
 		}
-		a.sleep(300 * time.Millisecond)
+		a.sleep(sendPollInterval)
 	}
 }
 

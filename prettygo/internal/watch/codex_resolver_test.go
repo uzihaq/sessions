@@ -100,6 +100,48 @@ func TestResolveCodexRolloutReasons(t *testing.T) {
 	})
 }
 
+func TestResolveCodexRolloutNormalizesCWDRealpaths(t *testing.T) {
+	fixtureRoot := t.TempDir()
+	realCWD := filepath.Join(fixtureRoot, "private", "tmp")
+	aliasCWD := filepath.Join(fixtureRoot, "tmp")
+	if err := os.MkdirAll(realCWD, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realCWD, aliasCWD); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		launchCWD string
+		metaCWD   string
+	}{
+		{name: "fixture alias to realpath", launchCWD: aliasCWD, metaCWD: realCWD},
+		{name: "fixture realpath to alias", launchCWD: realCWD, metaCWD: aliasCWD},
+	}
+	if normalizeCWD("/tmp") == "/private/tmp" {
+		tests = append(tests, struct {
+			name      string
+			launchCWD string
+			metaCWD   string
+		}{name: "macOS /tmp to /private/tmp", launchCWD: "/tmp", metaCWD: "/private/tmp"})
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.Local)
+			createdAt := now.Add(-time.Second)
+			path := filepath.Join(codexDateDir(root, now), "rollout-realpath.jsonl")
+			writeRolloutFixture(t, path, test.metaCWD, now, "")
+			got := resolveCodexFixture(root, test.launchCWD, nil, createdAt, now)
+			if got.Reason != CodexFreshMatch || got.Path != path {
+				t.Fatalf("resolution = %+v, want normalized cwd match %q", got, path)
+			}
+		})
+	}
+}
+
 func TestResolveCodexRolloutReadsBeyond16KiB(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, time.July, 16, 12, 0, 0, 0, time.Local)

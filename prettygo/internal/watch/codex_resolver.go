@@ -285,6 +285,7 @@ func ResolveCodexRolloutPath(options CodexResolveOptions) CodexResolution {
 	if resumed, ok := resolveResumedCodex(root, options.Args); ok {
 		return resumed
 	}
+	targetCWD := normalizeCWD(options.CWD)
 
 	now := options.Now
 	if now.IsZero() {
@@ -306,7 +307,7 @@ func ResolveCodexRolloutPath(options CodexResolveOptions) CodexResolution {
 		}
 		for _, file := range files {
 			file.meta = readCodexSessionMeta(file.path)
-			if file.meta == nil || file.meta.cwd != options.CWD {
+			if file.meta == nil || normalizeCWD(file.meta.cwd) != targetCWD {
 				continue
 			}
 			sawCWDMatch = true
@@ -343,7 +344,7 @@ func ResolveCodexRolloutPath(options CodexResolveOptions) CodexResolution {
 	fullScan := make([]rolloutCandidate, 0)
 	for _, file := range listRolloutsRecursive(root) {
 		file.meta = readCodexSessionMeta(file.path)
-		if file.meta != nil && file.meta.cwd == options.CWD {
+		if file.meta != nil && normalizeCWD(file.meta.cwd) == targetCWD {
 			fullScan = append(fullScan, file)
 		}
 	}
