@@ -119,6 +119,10 @@ func (a *app) dispatch() error {
 		return a.cmdKeys(append([]string(nil), a.args...))
 	case "new":
 		return a.cmdNew(append([]string(nil), a.args...))
+	case "recover":
+		return a.cmdRecover(append([]string(nil), a.args...))
+	case "adopt":
+		return a.cmdAdopt(append([]string(nil), a.args...))
 	case "model":
 		return a.cmdModel(append([]string(nil), a.args...))
 	case "kill":

@@ -148,3 +148,21 @@ func TestRecoveryPlanUsesOnlyActivityAndRanksMostRecentFirst(t *testing.T) {
 		t.Fatalf("missing resume source was not retained as blocked: %#v", blocked)
 	}
 }
+
+func TestRecoveryPlanPrefersHumanInputAtEqualRecency(t *testing.T) {
+	providerA := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	providerB := "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+	events := []Event{
+		createdLedgerEvent(1, "provider", "claude-code", providerA),
+		ledgerEvent(2, "provider", EventRunnerReady, 200, emptyPayload{}),
+		ledgerEvent(3, "provider", EventActivity, 1000, activityPayload{Source: ActivityProviderEvent}),
+		createdLedgerEvent(4, "human", "codex", providerB),
+		ledgerEvent(5, "human", EventRunnerReady, 500, emptyPayload{}),
+		ledgerEvent(6, "human", EventActivity, 1000, activityPayload{Source: ActivityHumanInput}),
+	}
+	plan := BuildRecoveryPlan(ClassifyAll(Fold(events), nil))
+	if len(plan.Recipes) != 2 || plan.Recipes[0].SourceLaneID != "human" ||
+		plan.Recipes[0].LastActivitySource != ActivityHumanInput {
+		t.Fatalf("equal-recency plan=%+v, want human input first", plan.Recipes)
+	}
+}

@@ -463,7 +463,7 @@ func randomUUID() (string, error) {
 
 func validActor(actor Actor) bool {
 	switch actor {
-	case ActorUser, ActorDaemon, ActorRunner, ActorProvider, ActorRecovery:
+	case ActorUser, ActorDaemon, ActorRunner, ActorProvider, ActorRecovery, ActorAdopt:
 		return true
 	default:
 		return false

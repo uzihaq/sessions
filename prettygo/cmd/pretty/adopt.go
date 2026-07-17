@@ -1,0 +1,22 @@
+package main
+
+import (
+	"fmt"
+
+	"github.com/uzihaq/pretty-pty/prettygo/internal/recovery"
+)
+
+func (a *app) cmdAdopt(args []string) error {
+	if len(args) != 1 || args[0] == "" {
+		return fail(1, "usage: pretty adopt <path-or-uuid>")
+	}
+	var result recovery.AdoptResult
+	if err := a.postJSON("/api/recovery/adopt", map[string]string{"target": args[0]}, &result, 2); err != nil {
+		return err
+	}
+	if a.wantJSON {
+		return writeJSON(a.stdout, result, true)
+	}
+	_, err := fmt.Fprintln(a.stdout, result.LaneID)
+	return err
+}

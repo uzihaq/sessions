@@ -42,6 +42,7 @@ const (
 	ActorRunner   Actor = "runner"
 	ActorProvider Actor = "provider"
 	ActorRecovery Actor = "recovery"
+	ActorAdopt    Actor = "adopt"
 )
 
 // Event is one immutable lane_events row.
