@@ -6,16 +6,19 @@ import (
 )
 
 type LaneState struct {
-	LaneID           string
-	Name             string
-	Tool             string
-	Cwd              string
-	ResumeArgv       []string
-	ProviderUUID     string
-	CreatedAtMS      int64
-	LastEventAtMS    int64
-	LastActivityAtMS int64
-	LatestEvent      EventType
+	LaneID                   string
+	Name                     string
+	Tool                     string
+	Cwd                      string
+	ResumeArgv               []string
+	ProviderUUID             string
+	CreatedAtMS              int64
+	LastEventAtMS            int64
+	LastActivityAtMS         int64
+	LastHumanInputAtMS       int64
+	LastProviderActivityAtMS int64
+	LastActivitySource       ActivitySource
+	LatestEvent              EventType
 
 	Created           bool
 	LaunchStarted     bool
@@ -89,10 +92,25 @@ func Fold(events []Event) []LaneState {
 			state.ManagedActive = true
 		case EventActivity:
 			var payload activityPayload
-			if json.Unmarshal(event.Payload, &payload) == nil &&
-				(payload.Source == ActivityHumanInput || payload.Source == ActivityProviderEvent) &&
-				event.AtMS > state.LastActivityAtMS {
-				state.LastActivityAtMS = event.AtMS
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				valid := true
+				switch payload.Source {
+				case ActivityHumanInput:
+					if event.AtMS > state.LastHumanInputAtMS {
+						state.LastHumanInputAtMS = event.AtMS
+					}
+				case ActivityProviderEvent:
+					if event.AtMS > state.LastProviderActivityAtMS {
+						state.LastProviderActivityAtMS = event.AtMS
+					}
+				default:
+					valid = false
+				}
+				if valid && (event.AtMS > state.LastActivityAtMS ||
+					(event.AtMS == state.LastActivityAtMS && payload.Source == ActivityHumanInput)) {
+					state.LastActivityAtMS = event.AtMS
+					state.LastActivitySource = payload.Source
+				}
 			}
 		case EventRenamed:
 			var payload renamePayload
@@ -161,7 +179,7 @@ type Classification struct {
 
 func ClassifyLane(lane LaneState, runtime RuntimeState) Classification {
 	classification := Classification{Lane: lane}
-	closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped
+	closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped || lane.ReopenedAs != ""
 	switch {
 	case !lane.Created && runtime.Running:
 		classification.Class = ClassExternal
@@ -222,20 +240,21 @@ func HasAnomaly(classification Classification, anomaly Anomaly) bool {
 }
 
 type RecoveryRecipe struct {
-	SourceLaneID     string
-	Name             string
-	Tool             string
-	Cwd              string
-	Cmd              string
-	Args             []string
-	ProviderUUID     string
-	LastActivityAtMS int64
-	Blocked          bool
-	Anomalies        []Anomaly
+	SourceLaneID       string         `json:"sourceLaneId"`
+	Name               string         `json:"name,omitempty"`
+	Tool               string         `json:"tool"`
+	Cwd                string         `json:"cwd"`
+	Cmd                string         `json:"cmd"`
+	Args               []string       `json:"args"`
+	ProviderUUID       string         `json:"providerUuid"`
+	LastActivityAtMS   int64          `json:"lastActivityAtMs"`
+	LastActivitySource ActivitySource `json:"lastActivitySource,omitempty"`
+	Blocked            bool           `json:"blocked"`
+	Anomalies          []Anomaly      `json:"anomalies"`
 }
 
 type RecoveryPlan struct {
-	Recipes []RecoveryRecipe
+	Recipes []RecoveryRecipe `json:"recipes"`
 }
 
 // BuildRecoveryPlan emits only create-with-resume commands. Lost lanes whose
@@ -250,15 +269,16 @@ func BuildRecoveryPlan(classifications []Classification) RecoveryPlan {
 			continue
 		}
 		recipe := RecoveryRecipe{
-			SourceLaneID:     lane.LaneID,
-			Name:             lane.Name,
-			Tool:             lane.Tool,
-			Cwd:              lane.Cwd,
-			Cmd:              lane.ResumeArgv[0],
-			Args:             append([]string(nil), lane.ResumeArgv[1:]...),
-			ProviderUUID:     lane.ProviderUUID,
-			LastActivityAtMS: lane.LastActivityAtMS,
-			Anomalies:        append([]Anomaly(nil), classification.Anomalies...),
+			SourceLaneID:       lane.LaneID,
+			Name:               lane.Name,
+			Tool:               lane.Tool,
+			Cwd:                lane.Cwd,
+			Cmd:                lane.ResumeArgv[0],
+			Args:               append([]string(nil), lane.ResumeArgv[1:]...),
+			ProviderUUID:       lane.ProviderUUID,
+			LastActivityAtMS:   lane.LastActivityAtMS,
+			LastActivitySource: lane.LastActivitySource,
+			Anomalies:          append([]Anomaly(nil), classification.Anomalies...),
 		}
 		recipe.Blocked = HasAnomaly(classification, AnomalyResumeSourceMissing)
 		plan.Recipes = append(plan.Recipes, recipe)
@@ -266,6 +286,9 @@ func BuildRecoveryPlan(classifications []Classification) RecoveryPlan {
 	sort.Slice(plan.Recipes, func(i, j int) bool {
 		if plan.Recipes[i].LastActivityAtMS != plan.Recipes[j].LastActivityAtMS {
 			return plan.Recipes[i].LastActivityAtMS > plan.Recipes[j].LastActivityAtMS
+		}
+		if plan.Recipes[i].LastActivitySource != plan.Recipes[j].LastActivitySource {
+			return plan.Recipes[i].LastActivitySource == ActivityHumanInput
 		}
 		return plan.Recipes[i].SourceLaneID < plan.Recipes[j].SourceLaneID
 	})
