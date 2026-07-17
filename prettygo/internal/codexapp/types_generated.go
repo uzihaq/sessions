@@ -31,11 +31,13 @@ type InitializeResponse struct {
 // ThreadStartParams is the current-protocol equivalent of the legacy
 // newConversation parameters.
 type ThreadStartParams struct {
-	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
-	CWD            string `json:"cwd,omitempty"`
-	Ephemeral      *bool  `json:"ephemeral,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
+	ApprovalPolicy string         `json:"approvalPolicy,omitempty"`
+	Config         map[string]any `json:"config,omitempty"`
+	CWD            string         `json:"cwd,omitempty"`
+	Ephemeral      *bool          `json:"ephemeral,omitempty"`
+	Model          string         `json:"model,omitempty"`
+	Sandbox        string         `json:"sandbox,omitempty"`
+	ServiceTier    string         `json:"serviceTier,omitempty"`
 }
 
 type ThreadStartResponse struct {
@@ -59,6 +61,7 @@ type TurnStartParams struct {
 	Effort         string      `json:"effort,omitempty"`
 	Input          []UserInput `json:"input"`
 	Model          string      `json:"model,omitempty"`
+	ServiceTier    string      `json:"serviceTier,omitempty"`
 	ThreadID       string      `json:"threadId"`
 }
 

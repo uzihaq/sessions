@@ -558,6 +558,29 @@ func TestCodexNewSelectsStructuredKindWithRevertibleGate(t *testing.T) {
 	}
 }
 
+func TestCodexNewSurfacesCatalogValidationErrorClearly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/sessions" || request.Method != http.MethodPost {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = response.Write([]byte(`{"error":"model \"missing\" not available; valid: [alpha, beta]"}`))
+	}))
+	defer server.Close()
+	t.Setenv("HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--host", server.URL, "new", "--tool", "codex", "--model", "missing"},
+		strings.NewReader(""), &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("invalid model exited 0: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if got := stderr.String(); got != "pretty: model \"missing\" not available; valid: [alpha, beta]\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
 func TestLastAndTranscriptJSONShapes(t *testing.T) {
 	const id = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
 	events := []any{

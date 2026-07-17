@@ -193,13 +193,11 @@ func (a *app) postJSON(path string, body, target any, errorCode int) error {
 		}
 	}
 	if response.status >= 400 {
-		if response.status == http.StatusConflict {
-			var payload struct {
-				Error string `json:"error"`
-			}
-			if json.Unmarshal(response.body, &payload) == nil && payload.Error != "" {
-				return fail(errorCode, "%s", payload.Error)
-			}
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(response.body, &payload) == nil && payload.Error != "" {
+			return fail(errorCode, "%s", payload.Error)
 		}
 		return fail(errorCode, "%s → %d %s", path, response.status, prefixBytes(response.body, 200))
 	}

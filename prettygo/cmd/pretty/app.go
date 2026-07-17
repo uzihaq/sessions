@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/uzihaq/pretty-pty/prettygo/internal/codexapp"
 )
 
 type cliFailure struct {
@@ -57,16 +60,17 @@ type app struct {
 	stdout io.Writer
 	stderr io.Writer
 
-	args     []string
-	sub      string
-	host     string
-	port     string
-	wantJSON bool
-	exitCode int
-	home     string
-	now      func() time.Time
-	sleep    func(time.Duration)
-	api      *apiClient
+	args       []string
+	sub        string
+	host       string
+	port       string
+	wantJSON   bool
+	exitCode   int
+	home       string
+	now        func() time.Time
+	sleep      func(time.Duration)
+	api        *apiClient
+	listModels func(context.Context) ([]codexapp.Model, error)
 }
 
 func newApp(arguments []string, stdin io.Reader, stdout, stderr io.Writer) (*app, error) {
@@ -81,7 +85,7 @@ func newApp(arguments []string, stdin io.Reader, stdout, stderr io.Writer) (*app
 	app := &app{
 		stdin: stdin, stdout: stdout, stderr: stderr,
 		args: args, host: host, port: port, wantJSON: wantJSON,
-		home: home, now: time.Now, sleep: time.Sleep,
+		home: home, now: time.Now, sleep: time.Sleep, listModels: listLiveCodexModels,
 	}
 	if len(app.args) > 0 {
 		app.sub = app.args[0]
@@ -139,6 +143,8 @@ func (a *app) dispatch() error {
 		return a.cmdStatus(append([]string(nil), a.args...))
 	case "model":
 		return a.cmdModel(append([]string(nil), a.args...))
+	case "models":
+		return a.cmdModels(append([]string(nil), a.args...))
 	case "kill":
 		return a.cmdKill(append([]string(nil), a.args...))
 	case "tail":
@@ -362,6 +368,8 @@ Subcommands:
                            or supply --cmd / a positional command directly.
   model <id> <model> [--effort L]
                            switch model/effort on an idle Claude session.
+  models                   print the live Codex app-server model catalog.
+                           --json emits the complete catalog as JSON.
   kill <id> [<id>...]      terminate one or more sessions
   attach <id>              raw two-way stream (Ctrl+Q to detach)
   doctor                   per-session health: QoS (throttled?), spawn

@@ -52,6 +52,7 @@ type ConversationOptions struct {
 	CWD            string
 	Model          string
 	Effort         string
+	ServiceTier    string
 	ApprovalPolicy string
 	Sandbox        string
 }
@@ -63,11 +64,13 @@ type Conversation struct {
 }
 
 type threadResumeParams struct {
-	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
-	CWD            string `json:"cwd,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Sandbox        string `json:"sandbox,omitempty"`
-	ThreadID       string `json:"threadId"`
+	ApprovalPolicy string         `json:"approvalPolicy,omitempty"`
+	Config         map[string]any `json:"config,omitempty"`
+	CWD            string         `json:"cwd,omitempty"`
+	Model          string         `json:"model,omitempty"`
+	Sandbox        string         `json:"sandbox,omitempty"`
+	ServiceTier    string         `json:"serviceTier,omitempty"`
+	ThreadID       string         `json:"threadId"`
 }
 
 type threadResumeResponse struct {
@@ -80,6 +83,7 @@ type conversationDefaults struct {
 	approvalPolicy string
 	effort         string
 	model          string
+	serviceTier    string
 }
 
 type rpcError struct {
@@ -383,9 +387,11 @@ func (c *Client) NewConversation(ctx context.Context, options ConversationOption
 	var response ThreadStartResponse
 	err = c.call(ctx, "thread/start", ThreadStartParams{
 		ApprovalPolicy: approvalPolicy,
+		Config:         effortConfig(options.Effort),
 		CWD:            cwd,
 		Model:          options.Model,
 		Sandbox:        sandbox,
+		ServiceTier:    options.ServiceTier,
 	}, &response)
 	if err != nil {
 		return "", fmt.Errorf("start Codex conversation: %w", err)
@@ -398,6 +404,7 @@ func (c *Client) NewConversation(ctx context.Context, options ConversationOption
 		approvalPolicy: approvalPolicy,
 		effort:         options.Effort,
 		model:          options.Model,
+		serviceTier:    options.ServiceTier,
 	}
 	c.mu.Unlock()
 	return response.Thread.ID, nil
@@ -416,9 +423,11 @@ func (c *Client) ResumeConversation(ctx context.Context, conversationID string, 
 	var response threadResumeResponse
 	if err := c.call(ctx, "thread/resume", threadResumeParams{
 		ApprovalPolicy: defaults.approvalPolicy,
+		Config:         effortConfig(defaults.effort),
 		CWD:            cwd,
 		Model:          defaults.model,
 		Sandbox:        sandbox,
+		ServiceTier:    defaults.serviceTier,
 		ThreadID:       conversationID,
 	}, &response); err != nil {
 		return Conversation{}, fmt.Errorf("resume Codex conversation: %w", err)
@@ -461,7 +470,15 @@ func validatedConversationOptions(options ConversationOptions) (conversationDefa
 		approvalPolicy: approvalPolicy,
 		effort:         options.Effort,
 		model:          options.Model,
+		serviceTier:    options.ServiceTier,
 	}, cwd, sandbox, nil
+}
+
+func effortConfig(effort string) map[string]any {
+	if effort == "" {
+		return nil
+	}
+	return map[string]any{"model_reasoning_effort": effort}
 }
 
 // SendUserTurn starts a turn and returns its structured event stream. Result
@@ -505,6 +522,7 @@ func (c *Client) SendUserTurn(ctx context.Context, conversationID, text string) 
 		Effort:         defaults.effort,
 		Input:          []UserInput{{Type: "text", Text: text}},
 		Model:          defaults.model,
+		ServiceTier:    defaults.serviceTier,
 		ThreadID:       conversationID,
 	}, &response)
 	if err != nil {

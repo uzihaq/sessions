@@ -69,6 +69,7 @@ type ManagerOptions struct {
 	Observations     ledger.ObservationWriter
 	LedgerReader     LedgerReader
 	Notify           func(PushPayload)
+	ListCodexModels  func(context.Context, string) ([]codexapp.Model, error)
 }
 
 type DiscoverOptions struct{ Force bool }
@@ -111,6 +112,7 @@ type Manager struct {
 	observations ledger.ObservationWriter
 	ledgerReader LedgerReader
 	notify       func(PushPayload)
+	listModels   func(context.Context, string) ([]codexapp.Model, error)
 
 	deathMu     sync.Mutex
 	laneDeaths  map[string]laneDeathBurst
@@ -184,6 +186,10 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 		boundaries: selected.Boundaries, observations: selected.Observations, ledgerReader: selected.LedgerReader,
 		runtimes: make(map[string]*runtimeSession), hooks: loadGlobalHooks(config.GlobalHooksPath),
 		laneDeaths: make(map[string]laneDeathBurst),
+	}
+	manager.listModels = selected.ListCodexModels
+	if manager.listModels == nil {
+		manager.listModels = listLiveCodexModels
 	}
 	manager.notify = selected.Notify
 	if manager.notify == nil {
@@ -518,6 +524,12 @@ func (m *Manager) reconcileLedger(ctx context.Context) {
 }
 
 func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest) (state.SessionInfo, error) {
+	resolvedRequest, err := m.resolveCodexModelChoice(ctx, request)
+	if err != nil {
+		return state.SessionInfo{}, err
+	}
+	request = resolvedRequest
+
 	// Serialize the ledger query with the pre-launch binding write. Without
 	// this lock two concurrent resume requests could both observe no owner.
 	m.bindMu.Lock()

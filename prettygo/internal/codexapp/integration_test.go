@@ -86,6 +86,46 @@ func TestRealAppServerTurn(t *testing.T) {
 	}
 }
 
+// Run explicitly with:
+//
+//	CODEXAPP_INTEGRATION=1 go test -v ./internal/codexapp -run TestRealAppServerModelCatalog
+func TestRealAppServerModelCatalog(t *testing.T) {
+	if os.Getenv("CODEXAPP_INTEGRATION") != "1" {
+		t.Skip("set CODEXAPP_INTEGRATION=1 to inspect the real Codex model catalog")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	clientOptions := Options{}
+	if socketPath := os.Getenv("CODEXAPP_SOCKET"); socketPath != "" {
+		clientOptions.SkipDaemonStart = true
+		clientOptions.SocketPath = socketPath
+	}
+	client, err := NewClient(ctx, clientOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	catalog, err := client.ListModels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) == 0 {
+		t.Fatal("real app-server returned an empty model catalog")
+	}
+	for _, model := range catalog {
+		if model.ID == "" {
+			t.Fatalf("catalog contains an empty model id: %#v", model)
+		}
+	}
+	t.Logf("CATALOG %s", mustJSON(t, catalog))
+	const invalid = "pretty-model-that-must-not-exist"
+	if resolved, err := ResolveModelChoice(catalog, ModelChoice{Model: invalid}); err == nil || !strings.Contains(err.Error(), `model "`+invalid+`" not available`) {
+		t.Fatalf("invalid model resolved to %#v with error %v", resolved, err)
+	} else {
+		t.Logf("INVALID_REJECTED %s", err)
+	}
+}
+
 func TestRealAppServerFallbackHandshake(t *testing.T) {
 	if os.Getenv("CODEXAPP_FALLBACK_INTEGRATION") != "1" {
 		t.Skip("set CODEXAPP_FALLBACK_INTEGRATION=1 to test the unmanaged-install fallback")

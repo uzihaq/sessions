@@ -31,8 +31,9 @@ func TestConversationTurnStreamsStructuredEventsAndAutoApproves(t *testing.T) {
 	defer client.Close()
 
 	conversationID, err := client.NewConversation(ctx, ConversationOptions{
-		CWD:    "/tmp",
-		Effort: "high",
+		CWD:         "/tmp",
+		Effort:      "high",
+		ServiceTier: "priority",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +121,8 @@ func TestResumeConversationRestoresTurnDefaults(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		if resume.ThreadID != "thread-1" || resume.Model != "test-model" || resume.ApprovalPolicy != ApprovalNever {
+		if resume.ThreadID != "thread-1" || resume.Model != "test-model" || resume.ApprovalPolicy != ApprovalNever ||
+			resume.ServiceTier != "priority" || resume.Config["model_reasoning_effort"] != "high" {
 			serverDone <- fmt.Errorf("resume params = %+v", resume)
 			return
 		}
@@ -140,7 +142,7 @@ func TestResumeConversationRestoresTurnDefaults(t *testing.T) {
 			serverDone <- err
 			return
 		}
-		if turn.ThreadID != "thread-1" || turn.Model != "test-model" || turn.Effort != "high" {
+		if turn.ThreadID != "thread-1" || turn.Model != "test-model" || turn.Effort != "high" || turn.ServiceTier != "priority" {
 			serverDone <- fmt.Errorf("resumed turn params = %+v", turn)
 			return
 		}
@@ -166,7 +168,7 @@ func TestResumeConversationRestoresTurnDefaults(t *testing.T) {
 	}
 	defer client.Close()
 	conversation, err := client.ResumeConversation(ctx, "thread-1", ConversationOptions{
-		CWD: "/tmp", Model: "test-model", Effort: "high",
+		CWD: "/tmp", Model: "test-model", Effort: "high", ServiceTier: "priority",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +224,8 @@ func serveTestTurn(reader io.Reader, writer io.WriteCloser) error {
 	if err := json.Unmarshal(request.Params, &threadParams); err != nil {
 		return err
 	}
-	if threadParams.CWD != "/tmp" || threadParams.ApprovalPolicy != ApprovalNever || threadParams.Sandbox != SandboxDangerFullAccess {
+	if threadParams.CWD != "/tmp" || threadParams.ApprovalPolicy != ApprovalNever || threadParams.Sandbox != SandboxDangerFullAccess ||
+		threadParams.ServiceTier != "priority" || threadParams.Config["model_reasoning_effort"] != "high" {
 		return fmt.Errorf("unexpected thread/start params: %+v", threadParams)
 	}
 	if err := encode.Encode(map[string]any{
@@ -246,7 +249,8 @@ func serveTestTurn(reader io.Reader, writer io.WriteCloser) error {
 	if err := json.Unmarshal(request.Params, &turnParams); err != nil {
 		return err
 	}
-	if turnParams.ThreadID != "thread-1" || turnParams.Effort != "high" || turnParams.ApprovalPolicy != ApprovalNever {
+	if turnParams.ThreadID != "thread-1" || turnParams.Effort != "high" || turnParams.ApprovalPolicy != ApprovalNever ||
+		turnParams.ServiceTier != "priority" {
 		return fmt.Errorf("unexpected turn/start params: %+v", turnParams)
 	}
 	if len(turnParams.Input) != 1 || turnParams.Input[0].Text != "Reply with exactly APPSERVER_OK." {

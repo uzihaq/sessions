@@ -138,7 +138,8 @@ func (r *codexAppRunner) start() error {
 func codexConversationOptions(cfg config) codexapp.ConversationOptions {
 	return codexapp.ConversationOptions{
 		CWD: cfg.cwd, Model: codexArgValue(cfg.args, "--model", "-m"),
-		Effort: codexConfigValue(cfg.args, "model_reasoning_effort"),
+		Effort:      codexConfigValue(cfg.args, "model_reasoning_effort"),
+		ServiceTier: codexConfigValue(cfg.args, "service_tier"),
 	}
 }
 
