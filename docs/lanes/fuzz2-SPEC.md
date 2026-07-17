@@ -1,0 +1,8 @@
+# Lane: FUZZ-2 — adversarial hardening of the STATEFUL core (ledger/session/recovery/state)
+Work ONLY in /Users/uzair/pretty-PTY-fuzz2. FILE OWNERSHIP: internal/ledger/ + internal/recovery/ + internal/state/ (+ _test.go only in internal/session for concurrency stress — do NOT edit session non-test files, another lane may). Add adversarial + property tests; fix PRODUCT bugs found ONLY within ledger/recovery/state; a bug elsewhere → document, don't cross ownership.
+TARGETS:
+- ledger: FuzzEventFold (feed arbitrary/adversarial sequences of lane_events — out-of-order seq, duplicate event_id, unknown types, malformed payload_json, tombstone-then-reopen races — the Fold classification must never panic and must be deterministic); a concurrency test: N goroutines appending observational events + 1 doing user-kill tombstone under -race, assert tombstone-wins-forever and no lost writes.
+- recovery: property test — random fleets of {live, tombstoned, orphaned, external} sessions → the 4-way classification is always correct and the reopen plan never includes a tombstoned or live session (idempotence under repeated recover).
+- state: FuzzRunnerMetadataParse (malformed/truncated <id>.json metadata must be skipped, never panic the discovery scan); a discovery stress test with many concurrent fake runners.
+CRASH/RACE = product bug → fix in-package + seed corpus (testdata/fuzz/). NO weakened assertions, NO skips, NO t.Skip.
+GATES: CGO_ENABLED=0 build/vet green; go test ./internal/{ledger,recovery,state} -race -count=1 green; each fuzz target -fuzztime=45s no crash (paste output); crash-sim: kill a ledger writer mid-txn (helper) → DB valid + WAL recovers. docs/lanes/fuzz2-NOTES.md. No commit. Scratch only.

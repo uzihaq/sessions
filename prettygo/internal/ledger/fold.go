@@ -78,7 +78,7 @@ func Fold(events []Event) []LaneState {
 		case EventRunnerReady:
 			state.RunnerReady = true
 			state.RunnerLost = false
-			state.ManagedActive = true
+			state.ManagedActive = mayBecomeManaged(state)
 		case EventProviderBound:
 			var payload providerPayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
@@ -89,7 +89,7 @@ func Fold(events []Event) []LaneState {
 		case EventAttached:
 			state.Attached = true
 			state.RunnerLost = false
-			state.ManagedActive = true
+			state.ManagedActive = mayBecomeManaged(state)
 		case EventActivity:
 			var payload activityPayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
@@ -135,6 +135,7 @@ func Fold(events []Event) []LaneState {
 			var payload reopenedPayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
 				state.ReopenedAs = payload.NewLaneID
+				state.ManagedActive = false
 			}
 		}
 	}
@@ -145,6 +146,10 @@ func Fold(events []Event) []LaneState {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].LaneID < result[j].LaneID })
 	return result
+}
+
+func mayBecomeManaged(state *LaneState) bool {
+	return !state.UserKillRequested && !state.RunnerExited && !state.Reaped && state.ReopenedAs == ""
 }
 
 type Class string
@@ -181,10 +186,10 @@ func ClassifyLane(lane LaneState, runtime RuntimeState) Classification {
 	classification := Classification{Lane: lane}
 	closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped || lane.ReopenedAs != ""
 	switch {
-	case !lane.Created && runtime.Running:
-		classification.Class = ClassExternal
 	case closed:
 		classification.Class = ClassClosed
+	case !lane.Created && runtime.Running:
+		classification.Class = ClassExternal
 	case lane.Created && runtime.Running:
 		classification.Class = ClassLiveManaged
 	case lane.Created:

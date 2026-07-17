@@ -4,12 +4,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -162,9 +163,6 @@ func TestActivityIsCoalescedAndOnlyTypedSourcesAdvanceRecency(t *testing.T) {
 }
 
 func TestCrashSimulationKill9WriterKeepsDatabaseValid(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("kill -9 simulation requires Unix process semantics")
-	}
 	root := t.TempDir()
 	path := filepath.Join(root, "ledger", "lanes.sqlite3")
 	store, err := Open(context.Background(), Options{Path: path})
@@ -235,6 +233,88 @@ func TestCrashSimulationKill9WriterKeepsDatabaseValid(t *testing.T) {
 		t.Fatalf("post-crash events=%s, want only committed baseline", encoded)
 	}
 	t.Log("SIGKILL mid-transaction: quick_check=ok committed_rows=1 uncommitted_rows=0 WAL reopen=ok")
+}
+
+func TestConcurrentObservationsAndUserKillLoseNoWrites(t *testing.T) {
+	store := openTestStore(t, Options{})
+	ctx := context.Background()
+	const (
+		observers       = 16
+		writesPerWorker = 32
+	)
+	laneID := "concurrent-tombstone"
+	if err := store.Boundaries().RecordCreated(ctx, Created{
+		Meta: Meta{EventID: "created", LaneID: laneID},
+		Tool: "terminal", Cwd: "/tmp", LaneUUID: laneID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errors := make(chan error, observers*writesPerWorker+1)
+	var workers sync.WaitGroup
+	for worker := 0; worker < observers; worker++ {
+		worker := worker
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for write := 0; write < writesPerWorker; write++ {
+				eventID := fmt.Sprintf("ready-%02d-%02d", worker, write)
+				err := store.Observations().RecordRunnerReady(ctx, Observation{Meta: Meta{
+					EventID: eventID, LaneID: laneID,
+				}})
+				if err != nil {
+					errors <- err
+				}
+			}
+		}()
+	}
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		<-start
+		if err := store.Boundaries().RecordUserKill(ctx, UserKill{Meta: Meta{
+			EventID: "user-kill", LaneID: laneID,
+		}}); err != nil {
+			errors <- err
+		}
+	}()
+	close(start)
+	workers.Wait()
+	close(errors)
+	for err := range errors {
+		t.Errorf("concurrent append: %v", err)
+	}
+	if t.Failed() {
+		return
+	}
+
+	events, err := store.Events(ctx, laneID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEvents := 1 + observers*writesPerWorker + 1
+	if len(events) != wantEvents {
+		t.Fatalf("events=%d, want %d", len(events), wantEvents)
+	}
+	unique := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		if _, duplicate := unique[event.EventID]; duplicate {
+			t.Fatalf("duplicate committed event id %q", event.EventID)
+		}
+		unique[event.EventID] = struct{}{}
+	}
+	state := Fold(events)[0]
+	classification := ClassifyLane(state, RuntimeState{Running: true})
+	if !state.UserKillRequested || state.ManagedActive || classification.Class != ClassClosed {
+		t.Fatalf("tombstone lost after concurrent observations: state=%#v classification=%#v", state, classification)
+	}
+	if plan := BuildRecoveryPlan([]Classification{classification}); len(plan.Recipes) != 0 {
+		t.Fatalf("tombstoned lane entered recovery plan: %#v", plan)
+	}
+	t.Logf("concurrent_appends=%d observers=%d tombstones=1 lost_writes=0 class=%s",
+		len(events), observers, classification.Class)
 }
 
 func TestEventIDUniquenessIsTransactional(t *testing.T) {

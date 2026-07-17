@@ -47,11 +47,25 @@ func TestTombstoneWinsForever(t *testing.T) {
 	}
 	state := Fold(events)[0]
 	classification := ClassifyLane(state, RuntimeState{})
-	if classification.Class != ClassClosed || !state.UserKillRequested {
+	if classification.Class != ClassClosed || !state.UserKillRequested || state.ManagedActive {
 		t.Fatalf("classification=%#v state=%#v", classification, state)
 	}
 	if plan := BuildRecoveryPlan([]Classification{classification}); len(plan.Recipes) != 0 {
 		t.Fatalf("tombstoned lane entered recovery plan: %#v", plan)
+	}
+}
+
+func TestTombstoneWithoutCreatedFactStillBeatsRuntimeEvidence(t *testing.T) {
+	state := Fold([]Event{
+		ledgerEvent(1, "partial-lane", EventUserKillRequested, 100, emptyPayload{}),
+		ledgerEvent(2, "partial-lane", EventRunnerReady, 200, emptyPayload{}),
+	})[0]
+	classification := ClassifyLane(state, RuntimeState{Running: true})
+	if classification.Class != ClassClosed || !state.UserKillRequested || state.ManagedActive {
+		t.Fatalf("classification=%#v state=%#v", classification, state)
+	}
+	if plan := BuildRecoveryPlan([]Classification{classification}); len(plan.Recipes) != 0 {
+		t.Fatalf("partial tombstoned lane entered recovery plan: %#v", plan)
 	}
 }
 

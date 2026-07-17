@@ -3,11 +3,16 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
 )
 
@@ -79,4 +84,128 @@ func TestCreateRefusesMissingRunnerBeforeWritingState(t *testing.T) {
 			t.Fatalf("failed create mutated %s: %v", path, statErr)
 		}
 	}
+}
+
+func TestDiscoveryStressConcurrentFakeRunnersSkipsTruncatedMetadata(t *testing.T) {
+	const runnerCount = 96
+	root := t.TempDir()
+	runnerDir := filepath.Join(root, "runners")
+	if err := os.MkdirAll(runnerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		DefaultShell: "/bin/sh", DefaultCwd: root, DefaultCols: 80, DefaultRows: 24,
+		RunnerStateDir: runnerDir, LaunchAgentsDir: filepath.Join(root, "agents"),
+	}
+	launcher := prototest.NewLauncher()
+	registry := NewRegistry(config, launcher)
+
+	malformedID := "malformed-runner"
+	if err := os.WriteFile(filepath.Join(runnerDir, malformedID+".sock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runnerDir, malformedID+".json"), []byte(`{"id":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	writeErrors := make(chan error, runnerCount)
+	ids := make([]string, runnerCount)
+	var writers sync.WaitGroup
+	for index := 0; index < runnerCount; index++ {
+		index := index
+		ids[index] = fmt.Sprintf("%08x-0000-4000-8000-%012x", index+1, index+1)
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			<-start
+			id := ids[index]
+			socketPath := filepath.Join(runnerDir, id+".sock")
+			info := proto.RunnerInfo{
+				ID: id, Cmd: "/bin/sh", Cwd: root, Cols: 80, Rows: 24,
+				CreatedAt: int64(index + 1), SocketPath: socketPath,
+			}
+			runner, err := launcher.Launch(t.Context(), proto.LaunchRequest{Info: info})
+			if err != nil {
+				writeErrors <- err
+				return
+			}
+			if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
+				writeErrors <- err
+				return
+			}
+			metadataPath := filepath.Join(runnerDir, id+".json")
+			if err := os.WriteFile(metadataPath, []byte(`{"id":"`+id+`"`), 0o600); err != nil {
+				writeErrors <- err
+				return
+			}
+			runtime.Gosched()
+			actual := runner.Info()
+			if err := WriteMetadata(metadataPath, Metadata{
+				ID: actual.ID, Name: fmt.Sprintf("runner-%03d", index),
+				Cmd: actual.Cmd, Args: actual.Args, Cwd: actual.Cwd,
+				Cols: actual.Cols, Rows: actual.Rows, CreatedAt: actual.CreatedAt,
+				PID: actual.PID, SockPath: actual.SocketPath,
+			}); err != nil {
+				writeErrors <- err
+			}
+		}()
+	}
+	writersDone := make(chan struct{})
+	go func() {
+		writers.Wait()
+		close(writersDone)
+	}()
+	close(start)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	transientErrors := 0
+	writersFinished := false
+	for len(registry.List(false)) < runnerCount {
+		if err := registry.Discover(ctx); err != nil {
+			transientErrors++
+		}
+		select {
+		case <-writersDone:
+			writersFinished = true
+		case <-ctx.Done():
+			t.Fatalf("discovery timed out with %d/%d runners: %v", len(registry.List(false)), runnerCount, ctx.Err())
+		default:
+		}
+		if writersFinished {
+			// All files are now stable. One last scan must attach every valid
+			// runner even though the permanent malformed entry is still skipped.
+			_ = registry.Discover(ctx)
+			break
+		}
+		runtime.Gosched()
+	}
+	if !writersFinished {
+		<-writersDone
+	}
+	close(writeErrors)
+	for err := range writeErrors {
+		t.Errorf("materialize fake runner: %v", err)
+	}
+	if t.Failed() {
+		return
+	}
+	discovered := len(registry.List(false))
+	if discovered != runnerCount {
+		t.Fatalf("discovered=%d, want %d", discovered, runnerCount)
+	}
+	if _, exists := registry.Get(malformedID); exists {
+		t.Fatal("runner with truncated metadata was attached")
+	}
+	if _, err := os.Stat(filepath.Join(runnerDir, malformedID+".json")); err != nil {
+		t.Fatalf("discovery removed malformed metadata: %v", err)
+	}
+	for _, id := range ids {
+		if runner := launcher.Runner(id); runner != nil {
+			runner.Emit(proto.Event{Kind: proto.EventRunnerLost})
+		}
+	}
+	t.Logf("concurrent_fake_runners=%d discovered=%d malformed_skipped=1 transient_scans=%d",
+		runnerCount, discovered, transientErrors)
 }

@@ -543,9 +543,16 @@ func readRunnerMetadata(path string) (RunnerMetadata, error) {
 	if err != nil {
 		return RunnerMetadata{}, err
 	}
+	return parseRunnerMetadata(encoded)
+}
+
+func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 	var metadata Metadata
 	if err := json.Unmarshal(encoded, &metadata); err != nil {
 		return RunnerMetadata{}, err
+	}
+	if strings.TrimSpace(metadata.ID) == "" {
+		return RunnerMetadata{}, errors.New("runner metadata id is required")
 	}
 	return RunnerMetadata{
 		Info: proto.RunnerInfo{
