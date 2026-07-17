@@ -432,6 +432,181 @@ button:active:not(:disabled),
 }
 .layout-toggle-btn.is-active { background: var(--bg-elev-3); color: var(--fg); }
 
+/* Fleet view — one independently-polled group per configured prettyd. */
+.fleet-view {
+  height: 100%;
+  overflow-y: auto;
+  padding: 22px clamp(14px, 4vw, 48px) 48px;
+  background: var(--bg-base);
+}
+.fleet-view-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  max-width: 920px;
+  margin: 0 auto 18px;
+}
+.fleet-view-heading h1 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 20px;
+  line-height: 1.2;
+}
+.fleet-view-heading p {
+  margin: 4px 0 0;
+  color: var(--fg-faint);
+  font-size: 12px;
+}
+.fleet-server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 920px;
+  margin: 0 auto;
+}
+.fleet-server-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elev-1);
+}
+.fleet-server-group.is-unreachable {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+.fleet-server-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 7px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev-2);
+}
+.fleet-reachability-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+}
+.fleet-reachability-dot.is-reachable {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.fleet-reachability-dot.is-unreachable {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 16%, transparent);
+}
+.fleet-reachability-dot.is-checking { animation: pulse 1.2s ease-in-out infinite; }
+.fleet-server-identity {
+  min-width: 0;
+  flex: 1;
+}
+.fleet-server-identity h2 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-server-identity span {
+  display: block;
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-reachability-label {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.fleet-reachability-label.is-reachable { color: var(--ok); }
+.fleet-reachability-label.is-unreachable { color: var(--danger); font-weight: 600; }
+.fleet-session-list { transition: opacity 120ms ease, filter 120ms ease; }
+.fleet-server-group.is-unreachable .fleet-session-list {
+  opacity: 0.48;
+  filter: grayscale(0.65);
+}
+.fleet-session-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 7px 13px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+.fleet-session-row:last-of-type { border-bottom: 0; }
+.fleet-session-row:hover:not(:disabled) { background: var(--bg-elev-2); }
+.fleet-session-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.fleet-session-row:disabled { color: var(--fg-dim); cursor: default; }
+.fleet-session-icon { display: inline-flex; flex: 0 0 20px; justify-content: center; }
+.fleet-session-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+.fleet-session-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-session-cwd {
+  overflow: hidden;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-session-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 72px;
+  justify-content: flex-start;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.fleet-session-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.fleet-session-state.is-working { color: var(--ok); }
+.fleet-session-state.is-working .fleet-session-state-dot { animation: pulse 1.2s ease-in-out infinite; }
+.fleet-session-state.is-exited { color: var(--danger); }
+.fleet-session-empty,
+.fleet-session-error {
+  padding: 15px 43px;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+.fleet-session-error {
+  border-top: 1px solid var(--border);
+  color: var(--danger);
+}
+
 /* Grid view tiles. Single row of full-height columns: each cell wants
  * ≥ 320px. If enough cells fit the viewport, columns expand to share
  * the width via 1fr. If not, the cells keep their 320px floor and the
