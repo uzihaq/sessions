@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -182,11 +183,13 @@ func (a *app) cmdLS(args []string) error {
 		return err
 	}
 	if a.wantJSON {
-		var value any
-		if err := json.Unmarshal(raw.Sessions, &value); err != nil {
+		var formatted bytes.Buffer
+		if err := json.Indent(&formatted, raw.Sessions, "", "  "); err != nil {
 			return err
 		}
-		return writeJSON(a.stdout, value, true)
+		formatted.WriteByte('\n')
+		_, err := formatted.WriteTo(a.stdout)
+		return err
 	}
 	if len(sessions) == 0 {
 		_, err := io.WriteString(a.stdout, "(no sessions)\n")

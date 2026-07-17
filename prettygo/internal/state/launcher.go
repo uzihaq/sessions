@@ -24,8 +24,8 @@ func NewLaunchdLauncher(config Config) *LaunchdLauncher {
 }
 
 func (l *LaunchdLauncher) ProgramArguments(proto.LaunchRequest) []string {
-	if !filepath.IsAbs(l.config.RunnerPath) && !strings.ContainsRune(l.config.RunnerPath, filepath.Separator) {
-		return []string{"/usr/bin/env", l.config.RunnerPath}
+	if !isExecutableFile(l.config.RunnerPath) {
+		return nil
 	}
 	return []string{l.config.RunnerPath}
 }

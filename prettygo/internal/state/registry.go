@@ -119,9 +119,6 @@ func (r *Registry) CreateWithLifecycle(
 	if err != nil {
 		return SessionInfo{}, fmt.Errorf("generate session id: %w", err)
 	}
-	if err := os.MkdirAll(r.config.RunnerStateDir, 0o700); err != nil {
-		return SessionInfo{}, fmt.Errorf("create runner state directory: %w", err)
-	}
 	args := appendClaudeSessionID(cmd, request.Args, id)
 	args = withToolDefaultArgs(cmd, args)
 
@@ -145,17 +142,27 @@ func (r *Registry) CreateWithLifecycle(
 		Name: strings.TrimSpace(request.Name),
 		Tool: classifyTool(cmd),
 	}
+	if prepared.Name != "" {
+		launchRequest.Env["RUNNER_NAME"] = prepared.Name
+	}
+	programArguments := r.launcher.ProgramArguments(launchRequest)
+	if len(programArguments) == 0 || !isExecutableFile(programArguments[0]) {
+		return SessionInfo{}, errors.New("runner executable unavailable: set PRETTYD_RUNNER to an absolute path to an existing executable")
+	}
+	if err := os.MkdirAll(r.config.RunnerStateDir, 0o700); err != nil {
+		return SessionInfo{}, fmt.Errorf("create runner state directory: %w", err)
+	}
 	if lifecycle.BeforeLaunch != nil {
 		if err := lifecycle.BeforeLaunch(ctx, prepared); err != nil {
 			return SessionInfo{}, err
 		}
 	}
-	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo); err != nil {
+	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo, prepared.Name); err != nil {
 		return SessionInfo{}, err
 	}
 	_, err = writePlist(r.config.LaunchAgentsDir, plistArgs{
 		ID:               id,
-		ProgramArguments: r.launcher.ProgramArguments(launchRequest),
+		ProgramArguments: programArguments,
 		Env:              launchRequest.Env,
 		Cwd:              cwd,
 		LogPath:          filepath.Join(r.config.RunnerStateDir, id+".log"),
@@ -183,7 +190,7 @@ func (r *Registry) CreateWithLifecycle(
 	if lifecycle.RunnerReady != nil {
 		lifecycle.RunnerReady(ctx, actual)
 	}
-	if err := writeMetadata(r.config.RunnerStateDir, actual); err != nil {
+	if err := writeMetadata(r.config.RunnerStateDir, actual, prepared.Name); err != nil {
 		return SessionInfo{}, err
 	}
 	session, err := r.register(ctx, runner, strings.TrimSpace(request.Name), strings.TrimSpace(request.OnIdle))
@@ -293,13 +300,13 @@ func (r *Registry) Discover(ctx context.Context) error {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".sock")
-		metadata, err := readMetadata(filepath.Join(r.config.RunnerStateDir, id+".json"))
+		metadata, err := readRunnerMetadata(filepath.Join(r.config.RunnerStateDir, id+".json"))
 		if err != nil {
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: %w", id, err))
 			continue
 		}
-		if metadata.ID != id {
-			attachErrors = append(attachErrors, fmt.Errorf("discover %s: metadata id is %q", id, metadata.ID))
+		if metadata.Info.ID != id {
+			attachErrors = append(attachErrors, fmt.Errorf("discover %s: metadata id is %q", id, metadata.Info.ID))
 			continue
 		}
 		r.mu.RLock()
@@ -308,7 +315,7 @@ func (r *Registry) Discover(ctx context.Context) error {
 		if exists {
 			continue
 		}
-		runner, err := r.launcher.Attach(ctx, metadata)
+		runner, err := r.launcher.Attach(ctx, metadata.Info)
 		if err != nil {
 			// Sessions are sacred: an unreachable socket is never deleted here.
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: %w", id, err))
@@ -318,7 +325,7 @@ func (r *Registry) Discover(ctx context.Context) error {
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: runner id is %q", id, actual))
 			continue
 		}
-		if _, err := r.register(ctx, runner, "", ""); err != nil {
+		if _, err := r.register(ctx, runner, metadata.Name, ""); err != nil {
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: %w", id, err))
 		}
 	}
@@ -466,48 +473,54 @@ func launchdPath(value string) string {
 	return strings.Join(append(prefix, parts...), ":")
 }
 
-func writeMetadata(dir string, info proto.RunnerInfo) error {
-	metadata := struct {
-		ID         string   `json:"id"`
-		Cmd        string   `json:"cmd"`
-		Args       []string `json:"args"`
-		Cwd        string   `json:"cwd"`
-		Cols       int      `json:"cols"`
-		Rows       int      `json:"rows"`
-		CreatedAt  int64    `json:"createdAt"`
-		PID        int      `json:"pid"`
-		SocketPath string   `json:"sockPath"`
-	}{info.ID, info.Cmd, info.Args, info.Cwd, info.Cols, info.Rows, info.CreatedAt, info.PID, info.SocketPath}
-	encoded, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode runner metadata: %w", err)
+func writeMetadata(dir string, info proto.RunnerInfo, name string) error {
+	metadata := Metadata{
+		ID: info.ID, Name: name, Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
+		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
+		SockPath: info.SocketPath,
 	}
-	encoded = append(encoded, '\n')
 	path := filepath.Join(dir, info.ID+".json")
-	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+	if err := WriteMetadata(path, metadata); err != nil {
 		return fmt.Errorf("write runner metadata: %w", err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("chmod runner metadata: %w", err)
 	}
 	return nil
 }
 
-func readMetadata(path string) (proto.RunnerInfo, error) {
+type RunnerMetadata struct {
+	Info proto.RunnerInfo
+	Name string
+}
+
+func readRunnerMetadata(path string) (RunnerMetadata, error) {
 	encoded, err := os.ReadFile(path)
 	if err != nil {
-		return proto.RunnerInfo{}, err
+		return RunnerMetadata{}, err
 	}
-	var metadata proto.RunnerInfo
+	var metadata Metadata
 	if err := json.Unmarshal(encoded, &metadata); err != nil {
-		return proto.RunnerInfo{}, err
+		return RunnerMetadata{}, err
 	}
-	return metadata, nil
+	return RunnerMetadata{
+		Info: proto.RunnerInfo{
+			ID: metadata.ID, Cmd: metadata.Cmd, Args: metadata.Args, Cwd: metadata.Cwd,
+			Cols: metadata.Cols, Rows: metadata.Rows, CreatedAt: metadata.CreatedAt,
+			PID: metadata.PID, SocketPath: metadata.SockPath,
+		},
+		Name: metadata.Name,
+	}, nil
 }
 
 // ReadRunnerInfo decodes the canonical runner metadata file for startup
 // discovery. It does not mutate or validate filesystem state.
-func ReadRunnerInfo(path string) (proto.RunnerInfo, error) { return readMetadata(path) }
+func ReadRunnerInfo(path string) (proto.RunnerInfo, error) {
+	metadata, err := readRunnerMetadata(path)
+	return metadata.Info, err
+}
+
+// ReadRunnerMetadata also returns the optional session label persisted by the
+// Go daemon. Older TypeScript runner metadata remains valid because Name is
+// optional.
+func ReadRunnerMetadata(path string) (RunnerMetadata, error) { return readRunnerMetadata(path) }
 
 func randomUUID() (string, error) {
 	bytes := make([]byte, 16)

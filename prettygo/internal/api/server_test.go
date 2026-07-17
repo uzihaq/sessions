@@ -200,7 +200,7 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"id": "` + info.ID + `"`, `"cmd": "/bin/sh"`, `"sockPath"`} {
+	for _, want := range []string{`"id": "` + info.ID + `"`, `"name": "acceptance fake"`, `"cmd": "/bin/sh"`, `"sockPath"`} {
 		if !bytes.Contains(metadata, []byte(want)) {
 			t.Errorf("metadata missing %q: %s", want, metadata)
 		}
@@ -223,7 +223,7 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 
 	list = serve(t, daemon.handler, http.MethodGet, "/api/sessions", nil, "127.0.0.1:1", nil)
 	decodeBody(t, list, &listed)
-	if len(listed.Sessions) != 1 || listed.Sessions[0].ID != info.ID {
+	if len(listed.Sessions) != 1 || listed.Sessions[0].ID != info.ID || listed.Sessions[0].Name != "acceptance fake" {
 		t.Fatalf("sessions after create = %#v", listed.Sessions)
 	}
 

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -9,13 +10,19 @@ import (
 )
 
 func TestLaunchdRunnerProgramArguments(t *testing.T) {
+	root := t.TempDir()
+	runner := filepath.Join(root, "runner")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name string
 		path string
 		want []string
 	}{
-		{name: "path lookup", path: "runner", want: []string{"/usr/bin/env", "runner"}},
-		{name: "absolute", path: filepath.Join(string(filepath.Separator), "opt", "pretty", "runner"), want: []string{filepath.Join(string(filepath.Separator), "opt", "pretty", "runner")}},
+		{name: "bare relative is refused", path: "runner"},
+		{name: "missing absolute is refused", path: filepath.Join(root, "missing")},
+		{name: "absolute executable", path: runner, want: []string{runner}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

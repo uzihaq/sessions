@@ -326,7 +326,7 @@ func TestWorkingEdgeWritesSentinelAndHookEnvironment(t *testing.T) {
 	config := testConfig(root)
 	launcher := prototest.NewLauncher()
 	manager := NewManager(config, launcher, ManagerOptions{
-		DisableWatchers: true, ActivityInterval: 15 * time.Millisecond,
+		DisableWatchers: true, ActivityInterval: time.Hour,
 	})
 	t.Cleanup(manager.Close)
 	hookOutput := filepath.Join(root, "hook.txt")
@@ -337,23 +337,42 @@ func TestWorkingEdgeWritesSentinelAndHookEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The first idle sample only initializes pushWorkingObserved.
-	time.Sleep(25 * time.Millisecond)
+	manager.mu.Lock()
+	runtime := manager.runtimes[created.ID]
+	manager.mu.Unlock()
+	if runtime == nil {
+		t.Fatal("created session has no managed runtime")
+	}
+	// Drive classifier samples synchronously. The first idle sample only
+	// initializes pushWorkingObserved and must not emit an idle edge.
+	runtime.tick()
 	if _, err := os.Stat(filepath.Join(config.UserStateRoot, "idle", created.ID)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("initial idle sample wrote a sentinel: %v", err)
 	}
 	runner := launcher.Runner(created.ID)
 	// Keep the byte signal above threshold for several classifier ticks so the
 	// true state is observable even under the race detector's instrumentation.
-	runner.AddOutput("Completed cleanly, all checks passed.\n" + strings.Repeat("x", 900))
+	output := "Completed cleanly, all checks passed.\n" + strings.Repeat("x", 900)
+	runner.AddOutput(output)
 	waitFor(t, 2*time.Second, func() bool {
-		info, ok := manager.Get(created.ID)
-		return ok && info.Info().Working
+		runtime.mu.Lock()
+		defer runtime.mu.Unlock()
+		return runtime.recentBytes >= len(output)
 	})
-	waitFor(t, 2*time.Second, func() bool {
-		info, ok := manager.Get(created.ID)
-		return ok && !info.Info().Working
-	})
+	runtime.tick()
+	if info, ok := manager.Get(created.ID); !ok || !info.Info().Working {
+		t.Fatalf("synchronized working sample was not observable: ok=%v info=%#v", ok, info)
+	}
+	for attempt := 0; attempt < 10; attempt++ {
+		info, _ := manager.Get(created.ID)
+		if !info.Info().Working {
+			break
+		}
+		runtime.tick()
+	}
+	if info, ok := manager.Get(created.ID); !ok || info.Info().Working {
+		t.Fatalf("working state did not decay after controlled samples: ok=%v info=%#v", ok, info)
+	}
 	sentinelPath := filepath.Join(config.UserStateRoot, "idle", created.ID)
 	waitFor(t, 2*time.Second, func() bool {
 		_, err := os.Stat(sentinelPath)

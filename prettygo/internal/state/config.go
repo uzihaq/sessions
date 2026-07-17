@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 )
 
@@ -140,17 +141,35 @@ func resolveWebDir(explicit string) (string, error) {
 }
 
 func resolveRunnerPath(explicit string) string {
+	executable, _ := os.Executable()
+	return resolveRunnerPathFrom(explicit, executable, runtime.GOOS, runtime.GOARCH)
+}
+
+func resolveRunnerPathFrom(explicit, executable, goos, goarch string) string {
 	if explicit != "" {
-		if resolved, err := filepath.Abs(explicit); err == nil {
+		if resolved, err := filepath.Abs(explicit); err == nil && isExecutableFile(resolved) {
 			return resolved
 		}
-		return explicit
+		return ""
 	}
-	if executable, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(executable), "runner")
-		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
-			return candidate
+	if executable != "" {
+		dir := filepath.Dir(executable)
+		for _, candidate := range []string{
+			filepath.Join(dir, "runner"),
+			filepath.Join(dir, fmt.Sprintf("runner-%s-%s", goos, goarch)),
+		} {
+			if isExecutableFile(candidate) {
+				return candidate
+			}
 		}
 	}
-	return "runner"
+	return ""
+}
+
+func isExecutableFile(path string) bool {
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }

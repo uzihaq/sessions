@@ -39,18 +39,23 @@ func TestDecideSendConfirmation(t *testing.T) {
 }
 
 func TestNodeCLIGoldenOutputShapes(t *testing.T) {
-	const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
-	sessionPayload := map[string]any{
-		"id": id, "cmd": "/bin/bash", "args": []string{"-i"}, "cwd": "/tmp/go-cli-golden/work",
-		"cols": 300, "rows": 50, "createdAt": float64(1784240220437), "pid": 4242,
-		"tool": "terminal", "working": false, "lastDataAt": float64(1784240220600),
-		"lastUserMessageAt": nil, "exited": false, "exitCode": nil, "exitSignal": nil, "exitedAt": nil,
+	lsFixture, err := os.ReadFile("testdata/node-ls.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtureSessions []map[string]any
+	if err := json.Unmarshal(lsFixture, &fixtureSessions); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := fixtureSessions[0]["id"].(string)
+	if id == "" {
+		t.Fatal("node ls fixture has no session id")
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
-			_ = json.NewEncoder(response).Encode(map[string]any{"sessions": []any{sessionPayload}})
+			fmt.Fprintf(response, `{"sessions":%s}`, bytes.TrimSpace(lsFixture))
 		case request.Method == http.MethodPost && request.URL.Path == "/api/sessions/"+id+"/input":
 			_, _ = io.Copy(io.Discard, request.Body)
 			_ = json.NewEncoder(response).Encode(map[string]any{"ok": true})
@@ -65,9 +70,10 @@ func TestNodeCLIGoldenOutputShapes(t *testing.T) {
 		name    string
 		args    []string
 		fixture string
+		exact   bool
 	}{
-		{"ls", []string{"--host", server.URL, "--json", "ls"}, "testdata/node-ls.json"},
-		{"send", []string{"--host", server.URL, "--json", "send", id[:8], "echo", "GOLDEN_SEND"}, "testdata/node-send.json"},
+		{"ls", []string{"--host", server.URL, "--json", "ls"}, "testdata/node-ls.json", true},
+		{"send", []string{"--host", server.URL, "--json", "send", id[:8], "echo", "GOLDEN_SEND"}, "testdata/node-send.json", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -78,6 +84,9 @@ func TestNodeCLIGoldenOutputShapes(t *testing.T) {
 			fixtureBytes, err := os.ReadFile(test.fixture)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if test.exact && !bytes.Equal(stdout.Bytes(), fixtureBytes) {
+				t.Fatalf("exact Node golden mismatch\nactual:\n%s\nexpected:\n%s", stdout.String(), fixtureBytes)
 			}
 			var actual, fixture any
 			if err := json.Unmarshal(stdout.Bytes(), &actual); err != nil {
@@ -91,6 +100,62 @@ func TestNodeCLIGoldenOutputShapes(t *testing.T) {
 			}
 			t.Logf("%s shape matches %s", test.name, test.fixture)
 		})
+	}
+}
+
+func TestNewNameFlowsThroughPostBodyAndList(t *testing.T) {
+	const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	var posted createSessionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/api/sessions":
+			if err := json.NewDecoder(request.Body).Decode(&posted); err != nil {
+				http.Error(response, err.Error(), http.StatusBadRequest)
+				return
+			}
+			response.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id": id, "name": posted.Name, "cmd": posted.Cmd, "args": posted.Args,
+				"cwd": posted.Cwd, "cols": 300, "rows": 50, "createdAt": 1, "pid": 4242,
+				"tool": "terminal", "working": false, "lastDataAt": 1,
+				"lastUserMessageAt": nil, "exited": false, "exitCode": nil, "exitSignal": nil, "exitedAt": nil,
+			})
+		case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
+			_ = json.NewEncoder(response).Encode(map[string]any{"sessions": []any{map[string]any{
+				"id": id, "name": posted.Name, "cmd": posted.Cmd, "args": posted.Args,
+				"cwd": posted.Cwd, "cols": 300, "rows": 50, "createdAt": 1, "pid": 4242,
+				"tool": "terminal", "working": false, "lastDataAt": 1,
+				"lastUserMessageAt": nil, "exited": false, "exitCode": nil, "exitSignal": nil, "exitedAt": nil,
+			}}})
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--host", server.URL, "new", "--cmd", "/bin/sh", "--cwd", home, "--name", "  soak label  "}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("new exit=%d stderr=%q", code, stderr.String())
+	}
+	if posted.Name != "soak label" {
+		t.Fatalf("POST name = %q, want soak label", posted.Name)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"--host", server.URL, "--json", "ls"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("ls exit=%d stderr=%q", code, stderr.String())
+	}
+	var listed []map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0]["name"] != "soak label" {
+		t.Fatalf("listed sessions = %#v", listed)
 	}
 }
 

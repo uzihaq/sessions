@@ -637,11 +637,11 @@ func (m *Manager) scheduleReconnect(id string, delays []time.Duration) {
 			m.scheduleReconnect(id, delays[1:])
 			return
 		}
-		metadata, _ := state.ReadRunnerInfo(filepath.Join(m.config.RunnerStateDir, id+".json"))
-		metadata.ID = id
-		metadata.SocketPath = path
-		if runner, attachErr := m.launcher.Attach(m.ctx, metadata); attachErr == nil {
-			if session, registerErr := m.registry.Register(m.ctx, runner, "", ""); registerErr == nil {
+		metadata, _ := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, id+".json"))
+		metadata.Info.ID = id
+		metadata.Info.SocketPath = path
+		if runner, attachErr := m.launcher.Attach(m.ctx, metadata.Info); attachErr == nil {
+			if session, registerErr := m.registry.Register(m.ctx, runner, metadata.Name, ""); registerErr == nil {
 				m.manage(session)
 				log.Printf("[reconnect] runner %s reattached after unexpected disconnect", id)
 				return
@@ -675,15 +675,15 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 				continue
 			}
 			metadataPath := filepath.Join(m.config.RunnerStateDir, id+".json")
-			metadata, metadataErr := state.ReadRunnerInfo(metadataPath)
-			probe := metadata
+			metadata, metadataErr := state.ReadRunnerMetadata(metadataPath)
+			probe := metadata.Info
 			probe.ID = id
 			probe.SocketPath = filepath.Join(m.config.RunnerStateDir, entry.Name())
 			connected := false
 			for attempt := 0; attempt < m.options.DiscoveryRetries; attempt++ {
 				runner, attachErr := m.launcher.Attach(ctx, probe)
 				if attachErr == nil {
-					if session, registerErr := m.registry.Register(ctx, runner, "", ""); registerErr == nil {
+					if session, registerErr := m.registry.Register(ctx, runner, metadata.Name, ""); registerErr == nil {
 						m.manage(session)
 						connected = true
 						break
@@ -697,13 +697,13 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 				delete(candidates, id)
 				continue
 			}
-			if metadataErr == nil && metadata.PID > 0 && m.options.ProcessAlive(metadata.PID) {
-				command := m.options.ProcessCommand(metadata.PID)
+			if metadataErr == nil && metadata.Info.PID > 0 && m.options.ProcessAlive(metadata.Info.PID) {
+				command := m.options.ProcessCommand(metadata.Info.PID)
 				if command == "" || strings.Contains(command, "runner.js") || strings.Contains(command, "runner.ts") || strings.Contains(command, id) {
-					log.Printf("[discover] runner %s unreachable but pid %d alive — leaving it alone", id, metadata.PID)
+					log.Printf("[discover] runner %s unreachable but pid %d alive — leaving it alone", id, metadata.Info.PID)
 					continue
 				}
-				log.Printf("[discover] runner %s pid %d is PID reuse (%s) — treating as dead", id, metadata.PID, truncate(command, 60))
+				log.Printf("[discover] runner %s pid %d is PID reuse (%s) — treating as dead", id, metadata.Info.PID, truncate(command, 60))
 			}
 			deadArtifacts[id] = struct{}{}
 			candidates[id] = struct{}{}

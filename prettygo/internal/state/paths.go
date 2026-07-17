@@ -49,6 +49,7 @@ func EnsureDir(dir string) error {
 // same so the human-readable JSON also matches the normative implementation.
 type Metadata struct {
 	ID        string   `json:"id"`
+	Name      string   `json:"name,omitempty"`
 	Cmd       string   `json:"cmd"`
 	Args      []string `json:"args"`
 	Cwd       string   `json:"cwd"`

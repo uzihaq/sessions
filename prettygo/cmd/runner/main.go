@@ -32,6 +32,7 @@ const idleShutdown = 30 * time.Second
 
 type config struct {
 	id       string
+	name     string
 	stateDir string
 	cmd      string
 	args     []string
@@ -205,7 +206,7 @@ func run() int {
 		jsonlMissing: jsonlMissing,
 	}
 	meta := state.Metadata{
-		ID: cfg.id, Cmd: cfg.cmd, Args: cfg.args, Cwd: cfg.cwd,
+		ID: cfg.id, Name: cfg.name, Cmd: cfg.cmd, Args: cfg.args, Cwd: cfg.cwd,
 		Cols: cfg.cols, Rows: cfg.rows, CreatedAt: r.createdAt,
 		PID: command.Process.Pid, SockPath: paths.Socket,
 	}
@@ -250,6 +251,7 @@ func configFromEnv() (config, string, error) {
 	if id == "" {
 		return config{}, "", errors.New("RUNNER_ID env var required")
 	}
+	name := strings.TrimSpace(os.Getenv("RUNNER_NAME"))
 	stateDir := os.Getenv("RUNNER_STATE_DIR")
 	if stateDir == "" {
 		var err error
@@ -288,7 +290,7 @@ func configFromEnv() (config, string, error) {
 	if cols <= 0 || cols > 65535 || rows <= 0 || rows > 65535 {
 		return config{}, "", fmt.Errorf("invalid PTY size %dx%d", cols, rows)
 	}
-	return config{id: id, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows}, "", nil
+	return config{id: id, name: name, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows}, "", nil
 }
 
 func envInt(name string, fallback int) (int, error) {
