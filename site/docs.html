@@ -136,26 +136,34 @@
     <section class="hero">
       <p class="kicker">field manual</p>
       <h1>The useful bits,<br><em>close at hand.</em></h1>
-      <p class="lede">The short reference for starting sessions, steering them from scripts, changing model controls, and getting tapped when an agent stops.</p>
+      <p class="lede">The Go CLI reference for starting sessions, running headless lanes, moving work between machines, and getting tapped when an agent stops.</p>
       <span class="early">early access · interface may move</span>
     </section>
 
     <section class="doc" id="cli">
       <p class="kicker">CLI</p>
-      <h2>One command, <em>eleven moves.</em></h2>
-      <p class="section-lede">Session IDs can be full IDs or unique prefixes from <code>pretty ls</code>.</p>
+      <h2>One CLI, <em>nineteen moves.</em></h2>
+      <p class="section-lede">Session IDs can be full IDs or unique prefixes from <code>pretty ls</code>. Add the global <code>--json</code> flag when a script needs structured output.</p>
       <div class="reference">
-        <div class="command-row"><code>pretty new --tool claude</code><p>Start a Claude, Codex, or shell session. Add <code>--cwd</code>, <code>--name</code>, or tool arguments as needed.</p></div>
+        <div class="command-row"><code>pretty new --tool claude|codex|shell</code><p>Start an interactive session. Add <code>--cwd</code>, <code>--name</code>, <code>--model</code>, <code>--effort</code>, or <code>--on-idle</code> as needed.</p></div>
         <div class="command-row"><code>pretty ls</code><p>List live sessions. Add <code>-a</code> to include exited sessions or <code>--json</code> for scripts.</p></div>
-        <div class="command-row"><code>pretty send &lt;id&gt; "…"</code><p>Send text plus Enter, then confirm that Claude or Codex received it. Add <code>--file path</code> for long prompts.</p></div>
-        <div class="command-row"><code>pretty wait &lt;id&gt;</code><p>Block until the session stays idle for 2 seconds. Tune with <code>--idle</code> and <code>--timeout</code>.</p></div>
-        <div class="command-row"><code>pretty last &lt;id&gt;</code><p>Print the latest user and assistant messages. Filter with <code>--role</code> or take more with <code>-n</code>.</p></div>
-        <div class="command-row"><code>pretty transcript &lt;id&gt;</code><p>Print the full clean user/assistant transcript. Add <code>--json</code> for structured turns.</p></div>
+        <div class="command-row"><code>pretty send &lt;id&gt; "…"</code><p>Send text plus Enter, then confirm that Claude or Codex received it. Add <code>--file path</code> for a prompt file or <code>--no-wait</code> for fire-and-forget.</p></div>
+        <div class="command-row"><code>pretty ask &lt;id&gt; "…"</code><p>Send with confirmation, wait for the working → idle edge, and print the last assistant reply.</p></div>
+        <div class="command-row"><code>pretty wait &lt;id&gt;</code><p>Block until a session is idle or a lane exits. Tune with <code>--idle</code> and <code>--timeout</code>; condition waits can watch a commit, file content, or stable idle period.</p></div>
+        <div class="command-row"><code>pretty run [options] -- &lt;command…&gt;</code><p>Start a supervised, headless lane. Add <code>--name</code>, <code>--cwd</code>, or <code>--spec</code> to record its context.</p></div>
+        <div class="command-row"><code>pretty lanes</code><p>List running and completed lanes with exit codes, durations, working directories, and names.</p></div>
+        <div class="command-row"><code>pretty status &lt;id&gt;</code><p>Show a compact session card with activity, git state, runtime state, and the latest producer verdict.</p></div>
+        <div class="command-row"><code>pretty verdict &lt;id&gt;</code><p>Read the latest explicit verdict. Use <code>pretty verdict emit &lt;id&gt;</code> with schema-versioned JSON to append one.</p></div>
+        <div class="command-row"><code>pretty recover [--reopen]</code><p>Inspect unexpectedly lost lanes, then explicitly reopen the recoverable ones.</p></div>
+        <div class="command-row"><code>pretty adopt &lt;path-or-uuid&gt;</code><p>Bring an existing Claude or Codex provider session under pretty's supervision.</p></div>
+        <div class="command-row"><code>pretty move &lt;id&gt; --to &lt;endpoint&gt;</code><p>Prepare and resume a session on another pretty daemon. Preview with <code>--dry-run</code>; dirty worktrees require <code>--allow-dirty</code>.</p></div>
+        <div class="command-row"><code>pretty backup enable|now|status</code><p>Configure Somewhere backup, push one now, or inspect the latest backup result.</p></div>
+        <div class="command-row"><code>pretty remote enable|status|disable</code><p>Manage tailnet-only Tailscale HTTPS, print the hosted-app QR link, and verify the remote health check.</p></div>
         <div class="command-row"><code>pretty model &lt;id&gt; &lt;model&gt;</code><p>Switch an idle Claude session live. Add <code>--effort level</code>; respawn Codex sessions to change models.</p></div>
         <div class="command-row"><code>pretty kill &lt;id&gt; […]</code><p>Terminate one or more sessions and remove their supervised runners.</p></div>
-        <div class="command-row"><code>pretty remote enable|status|disable</code><p>Manage tailnet-only Tailscale HTTPS and verify the remote health check.</p></div>
-        <div class="command-row"><code>pretty doctor</code><p>Check the native PTY, daemon, and per-session health; flag runners that need to be recreated.</p></div>
-        <div class="command-row"><code>pretty install</code><p>Register the daemon as a macOS LaunchAgent and start it. Safe to run again.</p></div>
+        <div class="command-row"><code>pretty doctor</code><p>Check the daemon and per-session health; flag runners that need attention.</p></div>
+        <div class="command-row"><code>pretty install</code><p>Register <code>prettyd</code> as a macOS LaunchAgent, start it, check health, and print the local URL and token. Safe to run again.</p></div>
+        <div class="command-row"><code>pretty uninstall</code><p>Stop the daemon and remove its launchd registration without deleting session or recovery data.</p></div>
       </div>
     </section>
 

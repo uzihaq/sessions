@@ -219,7 +219,7 @@
   <div class="step">
     <div class="step-head"><div class="num">0</div><div><div class="step-title">Before you start</div><div class="step-sub">a 10-second inventory</div></div></div>
     <div class="step-body">
-      <p class="note">You need an <b style="color:var(--cream)">Apple Silicon Mac</b>, either <b style="color:var(--cream)">Homebrew</b> or <code>curl</code>, and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — pretty runs the agents you already have; it doesn't replace them. Node and npm are not required.</p>
+      <p class="note">You need an <b style="color:var(--cream)">Apple Silicon Mac</b>, either <b style="color:var(--cream)">Homebrew</b> or <code>curl</code>, and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — pretty runs the agents you already have; it doesn't replace them. You do not need Node, npm, Xcode, or a native build toolchain.</p>
     </div>
   </div>
 
@@ -229,14 +229,15 @@
     <div class="step-body">
       <span class="pill">early access — static Go binaries</span>
       <div class="cmd"><code>brew install uzihaq/tap/pretty</code><button class="copy">copy</button></div>
+      <p class="note" style="margin-top:18px">That's the whole package install: static binaries, with no dependency installer and no script piped into your shell.</p>
       <p class="note" style="margin-top:18px">Prefer a manual install? Download the checksummed release archive, then keep <code>pretty</code>, <code>prettyd</code>, and <code>runner</code> together:</p>
       <div class="cmd"><code>curl -fLO https://github.com/uzihaq/pretty-PTY/releases/download/v&lt;version&gt;/pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</code><button class="copy">copy</button></div>
       <div class="cmd"><code>tar -xzf pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</code><button class="copy">copy</button></div>
       <div class="cmd"><code>mkdir -p "$HOME/.local/bin" &amp;&amp; install -m 0755 pretty prettyd runner "$HOME/.local/bin/"</code><button class="copy">copy</button></div>
-      <p class="note">Replace <code>&lt;version&gt;</code> with the release number. Check the SHA-256 first; the <a href="docs.html">full docs</a> have verification steps and Linux archive names.</p>
+      <p class="note">Replace <code>&lt;version&gt;</code> with the release number. Check the SHA-256 first; the <a href="https://github.com/uzihaq/pretty-PTY/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">installation guide</a> has the verification steps and Linux archive names.</p>
       <div class="cmd"><code>pretty install</code><button class="copy">copy</button></div>
-      <p class="note"><code>pretty install</code> registers a small background daemon that <b>survives restarts and reboots</b>, then starts it. Your sessions live in it — close terminals, close the laptop lid, they keep going.</p>
-      <a class="btn-open" href="http://localhost:8787" target="_blank" rel="noopener">Open it on this Mac <span class="arr">→</span></a>
+      <p class="note"><code>pretty install</code> registers the Go daemon with launchd, starts it, checks its health, and prints the local URL. Open that URL. Your sessions survive daemon restarts and Mac reboots — close terminals, close the laptop lid, they keep going.</p>
+      <a class="btn-open" href="http://localhost:8787" target="_blank" rel="noopener">Open the local URL <span class="arr">→</span></a>
       <div class="tip"><b>Stuck on install?</b> Keep all three binaries in the same directory and make sure it is on <code>PATH</code>. <code>pretty doctor</code> checks the daemon and session runners.</div>
       <details class="trouble">
         <summary>Installation troubleshooting</summary>
@@ -247,7 +248,7 @@
           </div>
           <div class="fix">
             <b>The daemon is down</b>
-            <p>Run <code>pretty doctor</code>. It checks the native PTY, daemon, and session runners and tells you what needs attention.</p>
+            <p>Run <code>pretty doctor</code>. It checks the daemon and session runners and tells you what needs attention. There is no native-module or Xcode build step to repair.</p>
           </div>
         </div>
       </details>
@@ -302,9 +303,8 @@
   <section class="uninstall" id="uninstall">
     <div class="kicker">leave no daemon behind</div>
     <h2>Uninstall cleanly.</h2>
-    <p class="note">End any sessions you still need first. Then stop the daemon, remove its login item, and uninstall the package. Each line is separate so it is safe to copy and run one step at a time.</p>
-    <div class="cmd"><code>launchctl bootout gui/"$(id -u)" "$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist"</code><button class="copy">copy</button></div>
-    <div class="cmd"><code>rm -f "$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist"</code><button class="copy">copy</button></div>
+    <p class="note">End any sessions you still need first. Then let pretty stop the daemon and remove its launchd registration before uninstalling the Homebrew package. Session and recovery data are left in place.</p>
+    <div class="cmd"><code>pretty uninstall</code><button class="copy">copy</button></div>
     <div class="cmd"><code>brew uninstall pretty</code><button class="copy">copy</button></div>
   </section>
 

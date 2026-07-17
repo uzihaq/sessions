@@ -286,6 +286,10 @@
         <p>No analytics, no third-party scripts, no telemetry. View source on this page — it's one HTML file. What you can read is all there is.</p>
       </div>
       <div class="never-row">
+        <span class="no">run install scripts</span>
+        <p>Each piece is a single static Go binary — CLI, daemon, and runner — and the release archive contains those same auditable files. No Node runtime, no npm, no native-module build, and no script piped from the internet.</p>
+      </div>
+      <div class="never-row">
         <span class="no">ship what we don't run</span>
         <p>We run our own fleet — dozens of concurrent agent sessions, every day — on exactly the setup documented below. If it breaks, it breaks us first.</p>
       </div>
@@ -332,7 +336,7 @@
       <span class="prompt">$</span> <span class="cmd">pretty remote enable</span> &nbsp;<span class="c"># optional — phone access via Tailscale</span>
     </div>
 
-    <p class="status">Early access — see the <a href="docs.html">docs</a> for checksums, static install steps, Linux archives, and troubleshooting.</p>
+    <p class="status">Early access — once you're running, keep the <a href="docs.html">Go CLI reference</a> close for sessions, lanes, recovery, and remote access.</p>
   </section>
 
   <footer>

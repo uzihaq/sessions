@@ -149,8 +149,8 @@
     <section class="hero">
       <p class="kicker">dead-shell entry</p>
       <h1>Back to your <em>sessions</em>.</h1>
-      <p class="lede">This page checks the private address printed by <strong><code>pretty remote enable</code></strong>, then hands your browser straight to the daemon on your Mac.</p>
-      <p class="privacy"><span class="lock">◆</span><span><strong>your address and token never touch our servers — this page is static files.</strong> The token is sent only to the pretty endpoint encoded in your link.</span></p>
+      <p class="lede">This page checks the private address printed by <strong><code>pretty remote enable</code></strong>, then opens the full hosted app against the daemon on your Mac.</p>
+      <p class="privacy"><span class="lock">◆</span><span><strong>your address and token never touch our servers — this page and the hosted app are static files.</strong> After handoff, the app talks straight from this browser to your pretty endpoint.</span></p>
 
       <div class="shell" id="shell">
         <div class="shell-bar"><span class="led"></span><span id="stateLabel">waiting for a connect link</span></div>
@@ -158,13 +158,13 @@
           <div class="verdict-mark" id="verdictMark">No address yet.</div>
           <p class="status-copy" id="statusCopy" aria-live="polite">Run the remote command on your Mac, then scan the QR code it prints.</p>
           <p class="endpoint" id="endpointLine" hidden>checking <code id="endpointText"></code></p>
-          <a class="open" id="openButton" href="index.html" target="_top">Open your pretty →</a>
+          <a class="open" id="openButton" href="https://pretty-pty.somewhere.site/" target="_top">Open the hosted app →</a>
           <div class="instructions" id="instructions">
             <p>On the Mac where pretty is installed:</p>
             <div class="command">pretty remote enable</div>
             <p>Keep Tailscale connected on both devices, then scan the QR code. It brings the address and token here in the link fragment.</p>
           </div>
-          <p class="safe">Saved only in this browser under <code>pretty-pty:hosted-connect</code>. No analytics. No relay. No third-party scripts.</p>
+          <p class="safe">Saved only in this browser under <code>pretty-pty:hosted-connect</code>. The handoff stays in a URL fragment, which is scrubbed before the app loads. No analytics. No relay. No third-party scripts.</p>
           <noscript><p class="status-copy">JavaScript is required to read and immediately scrub the private link fragment.</p></noscript>
         </div>
       </div>
@@ -263,8 +263,8 @@
           ? ' ' + health.sessionsLoaded + ' session' + (health.sessionsLoaded === 1 ? '' : 's') + ' loaded.'
           : '';
         var fallbackNote = usedFallback ? ' The public health check answered without the token.' : '';
-        setState('connected', 'connected', 'Your Mac answered.', 'The private endpoint is live.' + sessionNote + fallbackNote);
-        openButton.href = endpoint;
+        setState('connected', 'connected', 'Your Mac answered.', 'The private endpoint is live. Open the hosted app to use your sessions.' + sessionNote + fallbackNote);
+        openButton.href = 'https://pretty-pty.somewhere.site/#endpoint=' + encodeURIComponent(endpoint) + '&token=' + encodeURIComponent(token);
         openButton.classList.add('visible');
       } else {
         var detail = response ? 'The daemon answered HTTP ' + response.status + '.' : 'The endpoint did not answer within 8 seconds.';
