@@ -85,6 +85,248 @@ button:active:not(:disabled),
   transition: transform 0.06s ease;
 }
 
+/* Hosted/static first run. This is intentionally part of the same bundle as
+ * the session UI: after a successful health probe the gate unmounts and the
+ * normal app shell takes over without navigating through a relay page. */
+.connect-screen {
+  min-height: 100%;
+  overflow-y: auto;
+  padding: clamp(28px, 6vw, 72px) 20px;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(45, 212, 191, 0.14), transparent 32rem),
+    linear-gradient(145deg, #090909 0%, #0c1110 52%, #080808 100%);
+}
+.connect-panel {
+  width: min(760px, 100%);
+  margin: 0 auto;
+}
+.connect-brand {
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+.connect-kicker {
+  margin: 54px 0 12px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.connect-kicker::before { content: '// '; color: var(--fg-faint); }
+.connect-panel > h1 {
+  max-width: 650px;
+  margin: 0;
+  color: #f2f2ed;
+  font-size: clamp(38px, 7vw, 68px);
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+.connect-lede {
+  max-width: 620px;
+  margin: 22px 0 32px;
+  color: var(--fg-dim);
+  font-size: 15px;
+  line-height: 1.65;
+}
+.connect-actions,
+.connect-remembered,
+.connect-setup {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: rgba(20, 20, 20, 0.88);
+  box-shadow: var(--shadow-2);
+}
+.connect-remembered {
+  margin-bottom: 16px;
+  padding: 18px;
+}
+.connect-remembered h2,
+.connect-setup h2 {
+  margin: 0 0 12px;
+  color: var(--fg);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.connect-server-list { display: grid; gap: 8px; }
+.connect-server-row {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-base);
+}
+.connect-server-pick {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(120px, 0.6fr) minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.connect-server-pick:hover { background: var(--bg-elev-2); }
+.connect-server-name,
+.connect-server-endpoint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connect-server-name { font-weight: 650; }
+.connect-server-endpoint { color: var(--fg-faint); font-family: var(--font-mono); font-size: 11px; }
+.connect-server-pick > span:last-child { color: var(--accent); font-size: 12px; }
+.connect-server-remove {
+  width: 42px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.connect-server-remove:hover { background: rgba(239, 68, 68, 0.14); color: var(--danger); }
+.connect-local-button {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 20px;
+  border: 0;
+  background: linear-gradient(100deg, rgba(45, 212, 191, 0.13), rgba(45, 212, 191, 0.035));
+  text-align: left;
+  cursor: pointer;
+}
+.connect-local-button:hover { background-color: var(--accent-bg-medium); }
+.connect-local-button > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; gap: 4px; }
+.connect-local-button strong { color: var(--fg); font-size: 15px; }
+.connect-local-button small { color: var(--fg-dim); font-family: var(--font-mono); }
+.connect-local-button > span:last-child { color: var(--accent); font-size: 20px; }
+.connect-local-icon {
+  display: grid;
+  flex: 0 0 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid var(--accent-border-soft);
+  border-radius: 50%;
+  background: var(--accent-bg-soft);
+  color: var(--accent);
+  font-size: 24px;
+}
+.connect-divider {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 2px 20px;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.connect-divider::before,
+.connect-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.connect-form {
+  display: grid;
+  grid-template-columns: 0.65fr 1.35fr;
+  gap: 12px;
+  padding: 20px;
+  border-top: 1px solid var(--border);
+}
+.connect-form label { display: flex; min-width: 0; flex-direction: column; gap: 7px; }
+.connect-form label:nth-of-type(3) { grid-column: 1 / -1; }
+.connect-form label > span {
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.connect-form label small { color: var(--fg-faint); font-weight: 400; text-transform: none; }
+.connect-form input {
+  width: 100%;
+  height: 42px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  outline: 0;
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.connect-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.connect-submit {
+  grid-column: 1 / -1;
+  min-height: 44px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #07110f;
+  font-size: 13px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.connect-submit:hover:not(:disabled) { background: var(--accent-hover); }
+.connect-submit:disabled,
+.connect-local-button:disabled,
+.connect-server-pick:disabled,
+.connect-server-remove:disabled { opacity: 0.55; cursor: wait; }
+.connect-status,
+.connect-error {
+  margin: 14px 0 0;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.connect-status { border: 1px solid var(--accent-border-soft); background: var(--accent-bg-soft); color: var(--accent); }
+.connect-error { border: 1px solid rgba(239, 68, 68, 0.35); background: rgba(239, 68, 68, 0.08); color: #fca5a5; }
+.connect-setup { margin-top: 18px; padding: 20px; box-shadow: none; }
+.connect-setup ol { display: grid; gap: 15px; margin: 0; padding-left: 24px; }
+.connect-setup li { padding-left: 7px; color: var(--fg-dim); font-size: 13px; line-height: 1.5; }
+.connect-setup li::marker { color: var(--accent); font-family: var(--font-mono); }
+.connect-setup code {
+  display: block;
+  margin-top: 7px;
+  padding: 9px 11px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.connect-privacy {
+  margin: 18px 4px 0;
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+@media (max-width: 620px) {
+  .connect-screen { padding: 24px 14px 44px; }
+  .connect-kicker { margin-top: 44px; }
+  .connect-panel > h1 { font-size: clamp(38px, 13vw, 54px); }
+  .connect-form { grid-template-columns: 1fr; padding: 16px; }
+  .connect-form label:nth-of-type(3),
+  .connect-submit { grid-column: 1; }
+  .connect-server-pick { grid-template-columns: 1fr auto; gap: 3px 10px; }
+  .connect-server-endpoint { grid-column: 1 / -1; grid-row: 2; }
+  .connect-server-pick > span:last-child { grid-column: 2; grid-row: 1; }
+}
+
 /* App shell — top header / main / mobile-nav stack.
  * The top header holds: brand + tab strip + connection pill.
  * The main fills the rest. The mobile nav is fixed-bottom and only

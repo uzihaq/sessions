@@ -30,7 +30,10 @@
 // Vite replaces this marker in the emitted sw.js with a unique build hash,
 // so every production build evicts the previous app-shell cache.
 const CACHE_VERSION = 'pretty-pty-__BUILD_HASH__';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg', '/icon-maskable.svg'];
+const SCOPE_URL = self.registration.scope;
+const scoped = (path) => new URL(path, SCOPE_URL).href;
+const INDEX_URL = scoped('index.html');
+const SHELL = [scoped('./'), INDEX_URL, scoped('manifest.webmanifest'), scoped('icon.svg'), scoped('icon-maskable.svg')];
 
 self.addEventListener('install', (event) => {
   // skipWaiting() lets the new SW take over immediately without waiting for
@@ -79,7 +82,7 @@ self.addEventListener('push', (event) => {
       {
         body: typeof payload.body === 'string' ? payload.body : undefined,
         data: data,
-        icon: '/icon.svg',
+        icon: scoped('icon.svg'),
         tag: sessionId
       }
     )
@@ -101,7 +104,7 @@ self.addEventListener('notificationclick', (event) => {
           if (message) client.postMessage(message);
         });
       }
-      return self.clients.openWindow('/').then((client) => {
+      return self.clients.openWindow(SCOPE_URL).then((client) => {
         if (client && message) client.postMessage(message);
       });
     })
@@ -135,11 +138,11 @@ self.addEventListener('fetch', (event) => {
       fetch(req)
         .then((res) => {
           const clone = res.clone();
-          caches.open(CACHE_VERSION).then((c) => c.put('/index.html', clone)).catch(() => {});
+          caches.open(CACHE_VERSION).then((c) => c.put(INDEX_URL, clone)).catch(() => {});
           return res;
         })
         .catch(() =>
-          caches.match('/index.html').then((m) => m || new Response('offline', { status: 503 }))
+          caches.match(INDEX_URL).then((m) => m || new Response('offline', { status: 503 }))
         )
     );
     return;

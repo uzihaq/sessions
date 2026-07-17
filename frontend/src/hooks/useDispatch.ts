@@ -222,7 +222,8 @@ export interface DispatchAPI {
 }
 
 export function useDispatch({ sessionId, blocks = [], eventUserContentCounts, send }: Args): DispatchAPI {
-  const activeServerId = useServers((s) => s.activeId);
+  // Session views only mount behind App's active-server gate.
+  const activeServerId = useServers((s) => s.activeId!);
   const [messages, setMessages] = useState<DispatchMessage[]>(() =>
     readStored(activeServerId, sessionId)
   );

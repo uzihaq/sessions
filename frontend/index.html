@@ -12,9 +12,9 @@
     <title>Pretty PTY</title>
     <meta name="description" content="A PTY-first runtime for Pretty — Claude from anywhere, on a real terminal stream." />
     <meta name="theme-color" content="#0a0a0a" />
-    <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
-    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
     <!-- These tell iOS / Android Chrome to launch full-screen without
          browser chrome when the user opens the app from the home
          screen. Pair with manifest.display="standalone". -->
@@ -48,8 +48,9 @@
           }
         } else {
           window.addEventListener('load', function () {
+            var swBase = new URL('.', document.baseURI);
             navigator.serviceWorker
-              .register('/sw.js', { scope: '/' })
+              .register(new URL('sw.js', swBase), { scope: swBase.pathname })
               .catch(function () { /* registration failures are non-fatal */ });
           });
         }
@@ -58,6 +59,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

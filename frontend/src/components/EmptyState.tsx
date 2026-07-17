@@ -9,7 +9,7 @@ export function EmptyState({ onNew }: Props): JSX.Element {
           the page reads as "loaded, just empty" rather than "blank /
           broken." Sits behind the call-to-action card. */}
       <img
-        src="/claude.png"
+        src={`${import.meta.env.BASE_URL}claude.png`}
         alt=""
         aria-hidden
         className="empty-watermark"

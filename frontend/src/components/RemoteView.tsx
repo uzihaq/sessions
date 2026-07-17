@@ -326,7 +326,7 @@ export function RemoteView({
         {messages.length === 0 ? (
           <div className="remote-empty">
             <img
-              src="/claude.png"
+              src={`${import.meta.env.BASE_URL}claude.png`}
               alt=""
               aria-hidden
               className="remote-empty-watermark"

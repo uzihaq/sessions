@@ -49,6 +49,9 @@ if (ANY_BIND.has(VITE_HOST) || ANY_BIND.has(PRETTYD_HOST)) {
 }
 
 export default defineConfig({
+  // Relative asset URLs let the exact same dist work at a hosted project
+  // root, under a static preview subpath, and from prettyd's embedded UI.
+  base: './',
   plugins: [react(), injectServiceWorkerBuildHash()],
   server: {
     host: VITE_HOST,
