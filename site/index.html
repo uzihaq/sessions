@@ -229,7 +229,7 @@
         <span class="term-title">pretty — 31 sessions, all alive</span>
       </div>
       <div class="term-body">
-        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">npm install -g pretty-pty &amp;&amp; pretty install</span></span>
+        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/pretty &amp;&amp; pretty install</span></span>
         <span class="ln p2"><span class="ok">✓</span> <span class="out">daemon registered with launchd — survives reboots</span></span>
         <span class="ln p3"><span class="ok">✓</span> <span class="out">web ui → </span><span class="am">http://localhost:8787</span></span>
         <span class="ln p4"><span class="prompt">$</span> <span class="cmd">pretty new --tool claude --name refactor</span></span>
@@ -303,7 +303,7 @@
         <h3>On your Mac</h3>
         <p class="when">Same machine, right now — no account, no network config, nothing.</p>
         <ol class="steps">
-          <li><span class="k">1</span><code>npm install -g pretty-pty</code></li>
+          <li><span class="k">1</span><code>brew install uzihaq/tap/pretty</code></li>
           <li><span class="k">2</span><code>pretty install</code></li>
           <li><span class="k">3</span>open the local app — done.</li>
         </ol>
@@ -324,13 +324,15 @@
     </div>
 
     <div class="install-box">
-      <span class="c"># the whole install, honestly:</span><br>
-      <span class="prompt">$</span> <span class="cmd">npm install -g pretty-pty</span><br>
+      <span class="c"># Homebrew — no Node, npm, or install script:</span><br>
+      <span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/pretty</span><br>
       <span class="prompt">$</span> <span class="cmd">pretty install</span> &nbsp;<span class="c"># registers the daemon, prints your local URL</span><br>
+      <span class="c"># or download the static archive directly:</span><br>
+      <span class="prompt">$</span> <span class="cmd">curl -fLO https://github.com/uzihaq/pretty-PTY/releases/download/v&lt;version&gt;/pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</span><br>
       <span class="prompt">$</span> <span class="cmd">pretty remote enable</span> &nbsp;<span class="c"># optional — phone access via Tailscale</span>
     </div>
 
-    <p class="status">Early access — the npm package is landing shortly. This page is live so you can hold us to the contract above while we finish it.</p>
+    <p class="status">Early access — see the <a href="docs.html">docs</a> for checksums, static install steps, Linux archives, and troubleshooting.</p>
   </section>
 
   <footer>
