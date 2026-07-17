@@ -17,3 +17,4 @@ frontend/vite.config.d.ts
 frontend/vite.config.js
 node_modules
 node_modules/
+prettygo/dist-go/
