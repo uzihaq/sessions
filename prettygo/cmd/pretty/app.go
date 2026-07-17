@@ -107,6 +107,8 @@ func (a *app) dispatch() error {
 		return a.cmdLSDispatch(append([]string(nil), a.args...))
 	case "lanes":
 		return a.cmdLanes(append([]string(nil), a.args...))
+	case "backup":
+		return a.cmdBackup(append([]string(nil), a.args...))
 	case "run":
 		return a.cmdRun(append([]string(nil), a.args...))
 	case "snap":

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/backup"
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
@@ -27,6 +28,7 @@ type Server struct {
 	registry sessionService
 	push     pushService
 	tokens   tokenStore
+	backups  *backup.Service
 }
 
 type sessionService interface {
@@ -57,7 +59,14 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 		}
 		notifications = sessionruntime.NewPushService(root)
 	}
-	return &Server{config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath}}
+	server := &Server{config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath}}
+	if home, ok := backupHome(config.UserStateRoot); ok {
+		server.backups = backup.NewService(backup.Options{
+			ConfigPath: backup.ConfigPath(home), RunnerStateDir: config.RunnerStateDir,
+		}, func() []state.SessionInfo { return registry.List(true) })
+		_ = server.backups.ReloadPeriodic()
+	}
+	return server
 }
 
 func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) {
@@ -160,6 +169,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if path == "/api/sessions" && request.Method == http.MethodGet {
 		includeExited := request.URL.Query().Get("include_exited") == "1"
 		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": s.registry.List(includeExited)}, corsOrigin)
+		return
+	}
+	if s.handleBackupRoute(response, request, corsOrigin) {
 		return
 	}
 	if s.handleLanesRoute(response, request, corsOrigin) {
