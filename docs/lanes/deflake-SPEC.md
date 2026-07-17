@@ -1,0 +1,5 @@
+# Lane: DEFLAKE TestPrettyWaitCLIEndToEnd — diagnose ROOT CAUSE first
+Work ONLY in /Users/uzair/pretty-PTY-deflake. The test fails ~2/5 under full-suite parallel load (-count=1), passes isolated.
+MANDATE — diagnosis before fix: determine whether this is (a) a TEST-side timing assumption, or (b) a PRODUCT race in the wait implementation. Specifically audit the register/subscribe/recheck ordering in internal/waitcond + the CLI path: the known design hazard is missing "snapshot baseline → subscribe watcher → RE-CHECK predicate" ordering (an event landing between baseline and subscribe is lost forever; under load the window widens → exactly this flake signature). Also audit fsnotify-hint handling (coalesced events) and the 5s poll fallback actually firing.
+If PRODUCT: fix the race properly (subscribe THEN recheck; poll fallback as safety), keep behavior per wait-SPEC. If TEST: make it synchronize on observable state / controllable clock, without weakening assertions.
+PROOF: full suite -count=1 green 10 consecutive runs (script the loop, show output) + explain the root cause in one paragraph. docs/lanes/deflake-NOTES.md. No commit.

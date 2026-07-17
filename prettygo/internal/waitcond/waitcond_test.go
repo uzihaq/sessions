@@ -34,6 +34,69 @@ func TestCommitFiresOnRealCommit(t *testing.T) {
 	t.Logf("commit wait: baseline=%s commit=%s subject=%q history_rewritten=%v", result.Baseline, result.Commit, result.Subject, result.HistoryRewritten)
 }
 
+func TestCommitRechecksAfterWatcherRegistration(t *testing.T) {
+	repo := newGitRepo(t)
+	condition, err := NewCommit(context.Background(), "gap-session", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(repo, "work.txt"), "landed before subscribe\n")
+	git(t, repo, "add", "work.txt")
+	git(t, repo, "commit", "-q", "-m", "event before watcher")
+
+	// The mutation and its fsnotify event happened before Wait registered its
+	// watcher. A short deadline proves the immediate post-registration check
+	// sees the new HEAD instead of waiting for the five-second poll fallback.
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	result, err := condition.Wait(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Subject != "event before watcher" || result.Commit == result.Baseline {
+		t.Fatalf("unexpected gap result: %#v", result)
+	}
+}
+
+func TestCommitFiveSecondPollFallback(t *testing.T) {
+	repo := newGitRepo(t)
+	condition, err := NewCommit(context.Background(), "poll-session", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := condition.(*commitCondition)
+	// Force watcher.Add to fail by pointing at a nonexistent parent. The real
+	// five-second ticker must remain sufficient for liveness.
+	commit.logPath = filepath.Join(t.TempDir(), "missing", "logs", "HEAD")
+
+	type outcome struct {
+		result Result
+		err    error
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
+	defer cancel()
+	started := time.Now()
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := commit.Wait(ctx)
+		done <- outcome{result: result, err: err}
+	}()
+	time.Sleep(100 * time.Millisecond)
+	writeFile(t, filepath.Join(repo, "work.txt"), "poll only\n")
+	git(t, repo, "add", "work.txt")
+	git(t, repo, "commit", "-q", "-m", "poll fallback")
+
+	observed := <-done
+	if observed.err != nil {
+		t.Fatal(observed.err)
+	}
+	elapsed := time.Since(started)
+	if observed.result.Subject != "poll fallback" || elapsed < commitPollInterval {
+		t.Fatalf("poll fallback result=%#v elapsed=%s", observed.result, elapsed)
+	}
+	t.Logf("poll-only commit observed after %s (fallback=%s)", elapsed.Round(time.Millisecond), commitPollInterval)
+}
+
 func TestCommitFlagsForceResetHistoryRewrite(t *testing.T) {
 	repo := newGitRepo(t)
 	writeFile(t, filepath.Join(repo, "work.txt"), "second\n")

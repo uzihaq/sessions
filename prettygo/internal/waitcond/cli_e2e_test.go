@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,16 +27,13 @@ func TestPrettyWaitCLIEndToEnd(t *testing.T) {
 		repo := newGitRepo(t)
 		id := "commit-fallback-session"
 		writeRunnerMetadata(t, stateDir, id, repo)
+		initial := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
 
-		go func() {
-			// Leave room for the deliberately unavailable daemon probe to hit
-			// its bounded timeout before mutating the Git baseline.
-			time.Sleep(time.Second)
+		code, stdout, stderr := runPrettyCLIOnBaseline(t, binary, environment, func() {
 			writeFile(t, filepath.Join(repo, "work.txt"), "next\n")
 			git(t, repo, "add", "work.txt")
 			git(t, repo, "commit", "-q", "-m", "CLI real commit")
-		}()
-		code, stdout, stderr := runPrettyCLI(t, binary, environment,
+		},
 			"--port", "1", "--json", "wait", id, "--until", "commit", "--timeout", "3s")
 		if code != 0 {
 			t.Fatalf("exit = %d, stdout=%s stderr=%s", code, stdout, stderr)
@@ -50,7 +48,7 @@ func TestPrettyWaitCLIEndToEnd(t *testing.T) {
 		if err := json.Unmarshal(stdout, &commitOutput); err != nil {
 			t.Fatal(err)
 		}
-		if commitOutput.Session != id || commitOutput.Subject != "CLI real commit" || commitOutput.Commit == commitOutput.Baseline || commitOutput.HistoryRewritten {
+		if commitOutput.Session != id || commitOutput.Subject != "CLI real commit" || commitOutput.Baseline != initial || commitOutput.Commit == commitOutput.Baseline || commitOutput.HistoryRewritten {
 			t.Fatalf("unexpected output: %#v", commitOutput)
 		}
 		t.Logf("commit JSON: %s", bytes.TrimSpace(stdout))
@@ -68,11 +66,10 @@ func TestPrettyWaitCLIEndToEnd(t *testing.T) {
 		}
 		t.Logf("timeout exit=%d JSON: %s", code, bytes.TrimSpace(stdout))
 
-		go func() {
-			time.Sleep(time.Second)
+		beforeReset := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+		code, stdout, stderr = runPrettyCLIOnBaseline(t, binary, environment, func() {
 			git(t, repo, "reset", "--hard", "HEAD^")
-		}()
-		code, stdout, stderr = runPrettyCLI(t, binary, environment,
+		},
 			"--port", "1", "--json", "wait", id, "--until", "commit", "--timeout", "3s")
 		if code != 0 {
 			t.Fatalf("exit = %d, stdout=%s stderr=%s", code, stdout, stderr)
@@ -80,11 +77,12 @@ func TestPrettyWaitCLIEndToEnd(t *testing.T) {
 		var resetOutput struct {
 			HistoryRewritten bool   `json:"history_rewritten"`
 			Subject          string `json:"subject"`
+			Baseline         string `json:"baseline"`
 		}
 		if err := json.Unmarshal(stdout, &resetOutput); err != nil {
 			t.Fatal(err)
 		}
-		if !resetOutput.HistoryRewritten || resetOutput.Subject != "initial" {
+		if !resetOutput.HistoryRewritten || resetOutput.Subject != "initial" || resetOutput.Baseline != beforeReset {
 			t.Fatalf("unexpected force-reset output: %#v", resetOutput)
 		}
 		t.Logf("force-reset JSON: %s", bytes.TrimSpace(stdout))
@@ -186,6 +184,97 @@ func runPrettyCLI(t *testing.T, binary string, environment []string, args ...str
 	}
 	t.Fatalf("run pretty: %v", err)
 	return -1, nil, nil
+}
+
+// runPrettyCLIOnBaseline waits for the CLI's first successful
+// `git rev-parse --verify HEAD` to finish before mutating the repository. The
+// wrapper makes baseline capture observable without adding a production test
+// hook; the mutation may then race ahead of fsnotify registration, which also
+// exercises the required subscribe-then-recheck ordering end to end.
+func runPrettyCLIOnBaseline(t *testing.T, binary string, environment []string, mutate func(), args ...string) (int, []byte, []byte) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapperDir := t.TempDir()
+	marker := filepath.Join(wrapperDir, "baseline-ready")
+	wrapper := filepath.Join(wrapperDir, "git")
+	script := `#!/bin/sh
+output=$("$PRETTY_WAIT_REAL_GIT" "$@")
+status=$?
+if [ "$status" -eq 0 ] && [ "$#" -ge 5 ] && [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "--verify" ] && [ "$5" = "HEAD" ]; then
+  : > "$PRETTY_WAIT_BASELINE_READY"
+fi
+if [ -n "$output" ]; then
+  printf '%s\n' "$output"
+fi
+exit "$status"
+`
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	environment = setTestEnv(environment, "PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	environment = setTestEnv(environment, "PRETTY_WAIT_REAL_GIT", realGit)
+	environment = setTestEnv(environment, "PRETTY_WAIT_BASELINE_READY", marker)
+
+	command := exec.Command(binary, args...)
+	command.Env = environment
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := false
+	t.Cleanup(func() {
+		if !waited {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(marker); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			waited = true
+			t.Fatalf("inspect baseline marker: %v", err)
+		}
+		if time.Now().After(deadline) {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			waited = true
+			t.Fatalf("CLI did not capture its Git baseline; stdout=%s stderr=%s", stdout.String(), stderr.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	mutate()
+	err = command.Wait()
+	waited = true
+	if err == nil {
+		return 0, stdout.Bytes(), stderr.Bytes()
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode(), stdout.Bytes(), stderr.Bytes()
+	}
+	t.Fatalf("run pretty: %v", err)
+	return -1, nil, nil
+}
+
+func setTestEnv(environment []string, key, value string) []string {
+	prefix := key + "="
+	updated := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			updated = append(updated, entry)
+		}
+	}
+	return append(updated, prefix+value)
 }
 
 func writeRunnerMetadata(t *testing.T, stateDir, id, cwd string) {
