@@ -1,6 +1,7 @@
 package interop
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,19 +15,24 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
 )
 
 type interopToolchain struct {
 	repoRoot   string
 	buildRoot  string
 	goDaemon   string
+	goPretty   string
 	goRunner   string
 	node       string
 	nodeDaemon string
@@ -66,8 +72,14 @@ func TestMain(m *testing.M) {
 	goRoot := filepath.Join(repoRoot, "prettygo")
 	goEnv := envWith(os.Environ(), map[string]string{"CGO_ENABLED": "0"})
 	goDaemon := filepath.Join(buildRoot, "prettyd")
+	goPretty := filepath.Join(buildRoot, "pretty")
 	goRunner := filepath.Join(buildRoot, "runner")
 	if err := runBuild(goRoot, goEnv, "go", "build", "-o", goDaemon, "./cmd/prettyd"); err != nil {
+		fmt.Fprintf(os.Stderr, "cutover interop setup: %v\n", err)
+		_ = os.RemoveAll(buildRoot)
+		os.Exit(1)
+	}
+	if err := runBuild(goRoot, goEnv, "go", "build", "-o", goPretty, "./cmd/pretty"); err != nil {
 		fmt.Fprintf(os.Stderr, "cutover interop setup: %v\n", err)
 		_ = os.RemoveAll(buildRoot)
 		os.Exit(1)
@@ -82,6 +94,7 @@ func TestMain(m *testing.M) {
 		repoRoot:   repoRoot,
 		buildRoot:  buildRoot,
 		goDaemon:   goDaemon,
+		goPretty:   goPretty,
 		goRunner:   goRunner,
 		node:       node,
 		nodeDaemon: filepath.Join(repoRoot, "prettyd", "dist", "server.js"),
@@ -167,11 +180,188 @@ func TestGoRunnerUnderNodeDaemonRegression(t *testing.T) {
 	t.Logf("Go runner discovered by node daemon: id=%s marker=%s", id, marker)
 }
 
+func TestGoManagerAdoptsFiveScratchRunnersAtOnceWithoutReaping(t *testing.T) {
+	requireDarwin(t)
+	scratch := newScratch(t, "scale")
+	const runnerCount = 5
+	runners := make([]*managedProcess, 0, runnerCount)
+	ids := make([]string, 0, runnerCount)
+	for index := 0; index < runnerCount; index++ {
+		id := fmt.Sprintf("scratch-scale-%d-%d", os.Getpid(), index)
+		runner := startScratchGoRunner(t, scratch, id, "/bin/bash", []string{"-i"})
+		runners = append(runners, runner)
+		ids = append(ids, id)
+		writeAgedScratchPlist(t, scratch, id)
+	}
+
+	launcher := newScratchSocketLauncher(scratch)
+	manager := session.NewManager(interopConfig(scratch), launcher, session.ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		DiscoveryRetries: 1, DiscoveryDelay: time.Millisecond,
+	})
+	t.Cleanup(manager.Close)
+	if err := manager.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	attached, reaped := launcher.counts()
+	if attached != runnerCount || len(manager.List(false)) != runnerCount || len(reaped) != 0 {
+		t.Fatalf("scale discovery: attached=%d sessions=%d reaped=%v", attached, len(manager.List(false)), reaped)
+	}
+	for index, id := range ids {
+		if _, present := manager.Get(id); !present {
+			t.Errorf("scale runner %s was not registered", id)
+		}
+		assertRunnerSurvived(t, runners[index], filepath.Join(scratch.runnerDir, id+".sock"))
+	}
+	t.Logf("scale discovery attached=%d live=%d reaped=%d", attached, len(manager.List(false)), len(reaped))
+}
+
+func TestGuardedDiscoveryReapsOnlyFourDeadScratchArtifacts(t *testing.T) {
+	requireDarwin(t)
+	scratch := newScratch(t, "orphan-guard")
+	const liveCount = 2
+	const deadCount = session.DefaultMassKillLimit + 1
+	liveIDs := make([]string, 0, liveCount)
+	liveRunners := make([]*managedProcess, 0, liveCount)
+	for index := 0; index < liveCount; index++ {
+		id := fmt.Sprintf("scratch-orphan-live-%d-%d", os.Getpid(), index)
+		liveIDs = append(liveIDs, id)
+		liveRunners = append(liveRunners, startScratchGoRunner(t, scratch, id, "/bin/bash", []string{"-i"}))
+		writeAgedScratchPlist(t, scratch, id)
+	}
+
+	deadIDs := make([]string, 0, deadCount)
+	for index := 0; index < deadCount; index++ {
+		id := fmt.Sprintf("scratch-orphan-dead-%d-%d", os.Getpid(), index)
+		deadIDs = append(deadIDs, id)
+		writeDeadScratchMetadata(t, scratch, id, exitedScratchPID(t))
+		writeAgedScratchPlist(t, scratch, id)
+	}
+
+	launcher := newScratchSocketLauncher(scratch)
+	manager := session.NewManager(interopConfig(scratch), launcher, session.ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		DiscoveryRetries: 1, DiscoveryDelay: time.Millisecond,
+	})
+	t.Cleanup(manager.Close)
+	err := manager.Discover(context.Background())
+	var guardErr *session.MassKillError
+	if !errors.As(err, &guardErr) || guardErr.Count != deadCount {
+		t.Fatalf("guarded discovery error = %v, want %d-candidate mass-kill refusal", err, deadCount)
+	}
+	attached, reaped := launcher.counts()
+	if attached != liveCount || len(reaped) != 0 {
+		t.Fatalf("guarded pass attached=%d reaped=%v", attached, reaped)
+	}
+	assertScratchArtifactsPresent(t, scratch, deadIDs)
+	for index, id := range liveIDs {
+		if _, present := manager.Get(id); !present {
+			t.Fatalf("guarded pass did not attach live runner %s", id)
+		}
+		assertRunnerSurvived(t, liveRunners[index], filepath.Join(scratch.runnerDir, id+".sock"))
+	}
+
+	if err := manager.DiscoverWithOptions(context.Background(), session.DiscoverOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	_, reaped = launcher.counts()
+	sort.Strings(reaped)
+	sort.Strings(deadIDs)
+	if strings.Join(reaped, "\n") != strings.Join(deadIDs, "\n") {
+		t.Fatalf("forced pass reaped %v, want only %v", reaped, deadIDs)
+	}
+	for _, id := range deadIDs {
+		for _, path := range []string{
+			filepath.Join(scratch.runnerDir, id+".json"),
+			state.RunnerPlistPath(scratch.launchAgentsDir, id),
+		} {
+			if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("forced pass left dead artifact %s: %v", path, statErr)
+			}
+		}
+	}
+	for index, id := range liveIDs {
+		assertRunnerSurvived(t, liveRunners[index], filepath.Join(scratch.runnerDir, id+".sock"))
+		if _, statErr := os.Stat(state.RunnerPlistPath(scratch.launchAgentsDir, id)); statErr != nil {
+			t.Fatalf("forced pass removed live scratch plist %s: %v", id, statErr)
+		}
+	}
+	t.Logf("orphan discovery guarded=%d forced_reaps=%d live_preserved=%d", guardErr.Count, len(reaped), liveCount)
+}
+
+func TestRealClaudeRunnerReattachesAndReResolvesStructuredHistory(t *testing.T) {
+	requireDarwin(t)
+	if os.Getenv("PRETTY_INTEROP_REAL_CLAUDE") != "1" {
+		t.Skip("set PRETTY_INTEROP_REAL_CLAUDE=1 to run the authenticated provider interop")
+	}
+	claude, err := exec.LookPath("claude")
+	if err != nil {
+		t.Fatal("real claude executable is required")
+	}
+	realHome := os.Getenv("HOME")
+	if realHome == "" {
+		t.Fatal("HOME is required for the authenticated Claude session")
+	}
+	scratch := newScratch(t, "real-claude")
+	cleanupScratchClaudeProjects(t, realHome, scratch.workDir)
+	id := newUUID(t)
+	firstMarker := "CLAUDE_BEFORE_RESTART_" + strings.ToUpper(randomHex(t, 4))
+	args := []string{
+		"--session-id", id, "--dangerously-skip-permissions", "--tools", "",
+		"--prompt-suggestions", "false", "--no-chrome",
+	}
+	runner := startScratchGoRunnerWithEnv(t, scratch, id, claude, args, map[string]string{
+		"HOME":                realHome,
+		"USER":                os.Getenv("USER"),
+		"DISABLE_AUTOUPDATER": "1",
+	})
+
+	port := unusedPort(t)
+	daemonEnv := scratch.env(map[string]string{
+		"HOME":                       realHome,
+		"USER":                       os.Getenv("USER"),
+		"PRETTYD_HOST":               "127.0.0.1",
+		"PRETTYD_PORT":               fmt.Sprint(port),
+		"PRETTYD_STATE_DIR":          scratch.runnerDir,
+		"PRETTYD_RUNNER":             tools.goRunner,
+		"PRETTY_LEDGER_PATH":         filepath.Join(scratch.root, "ledger", "lanes.sqlite3"),
+		"PRETTYD_DISCOVERY_INTERVAL": "100ms",
+	})
+	daemon := startProcess(t, "go-daemon-claude", scratch.root, daemonEnv, tools.goDaemon)
+	t.Cleanup(func() { daemon.stop(t, false) })
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	provider := waitForSessionMetadata(t, baseURL, id)
+	if filepath.Base(provider.Cmd) != "claude" || provider.Tool != state.ToolClaude {
+		t.Fatalf("provider metadata mismatch: %#v", provider)
+	}
+	runPretty(t, daemonEnv, scratch.workDir, "--json", "send", id, "--no-wait", "Reply with exactly "+firstMarker+" and no other text.")
+	waitForClaudeSubmission(t, baseURL, id, firstMarker)
+	waitForClaudeJSONL(t, realHome, scratch.workDir, id, baseURL, runner)
+	before := waitForPrettyLast(t, daemonEnv, scratch.workDir, id, firstMarker)
+
+	daemon.stop(t, true)
+	assertRunnerSurvived(t, runner, filepath.Join(scratch.runnerDir, id+".sock"))
+	restarted := startProcess(t, "go-daemon-claude-restarted", scratch.root, daemonEnv, tools.goDaemon)
+	t.Cleanup(func() { restarted.stop(t, false) })
+	waitForSessionMetadata(t, baseURL, id)
+	afterRestart := waitForPrettyLast(t, daemonEnv, scratch.workDir, id, firstMarker)
+
+	secondMarker := "CLAUDE_AFTER_RESTART_" + strings.ToUpper(randomHex(t, 4))
+	runPretty(t, daemonEnv, scratch.workDir, "--json", "send", id, "--no-wait", "Reply with exactly "+secondMarker+" and no other text.")
+	waitForClaudeSubmission(t, baseURL, id, secondMarker)
+	afterResume := waitForPrettyLast(t, daemonEnv, scratch.workDir, id, secondMarker)
+	if !strings.Contains(before, firstMarker) || !strings.Contains(afterRestart, firstMarker) || !strings.Contains(afterResume, secondMarker) {
+		t.Fatal("pretty last did not retain and resume the structured Claude history")
+	}
+	t.Logf("real Claude structured history survived daemon restart: id=%s before=%s after=%s", id, firstMarker, secondMarker)
+}
+
 type scratchState struct {
-	root      string
-	home      string
-	workDir   string
-	runnerDir string
+	root            string
+	home            string
+	workDir         string
+	runnerDir       string
+	launchAgentsDir string
 }
 
 func newScratch(t *testing.T, name string) scratchState {
@@ -185,7 +375,8 @@ func newScratch(t *testing.T, name string) scratchState {
 		root: root, home: filepath.Join(root, "home"), workDir: filepath.Join(root, "work"),
 	}
 	state.runnerDir = filepath.Join(root, "state", "runners")
-	for _, dir := range []string{state.home, state.workDir, state.runnerDir} {
+	state.launchAgentsDir = filepath.Join(root, "LaunchAgents")
+	for _, dir := range []string{state.home, state.workDir, state.runnerDir, state.launchAgentsDir} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -219,6 +410,295 @@ func (s scratchState) env(overrides map[string]string) []string {
 		base[key] = value
 	}
 	return envWith(os.Environ(), base)
+}
+
+type scratchSocketLauncher struct {
+	scratch scratchState
+
+	mu       sync.Mutex
+	attached int
+	reaped   []string
+}
+
+func newScratchSocketLauncher(scratch scratchState) *scratchSocketLauncher {
+	return &scratchSocketLauncher{scratch: scratch}
+}
+
+func (l *scratchSocketLauncher) ProgramArguments(proto.LaunchRequest) []string {
+	return []string{tools.goRunner}
+}
+
+func (l *scratchSocketLauncher) Launch(context.Context, proto.LaunchRequest) (proto.Runner, error) {
+	return nil, errors.New("scratch socket launcher does not launch processes")
+}
+
+func (l *scratchSocketLauncher) Attach(ctx context.Context, info proto.RunnerInfo) (proto.Runner, error) {
+	runner, err := proto.DialRunner(ctx, info.SocketPath)
+	if err != nil {
+		return nil, err
+	}
+	l.mu.Lock()
+	l.attached++
+	l.mu.Unlock()
+	return runner, nil
+}
+
+func (l *scratchSocketLauncher) Reap(id string) error {
+	path := state.RunnerPlistPath(l.scratch.launchAgentsDir, id)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	l.mu.Lock()
+	l.reaped = append(l.reaped, id)
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *scratchSocketLauncher) counts() (int, []string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.attached, append([]string(nil), l.reaped...)
+}
+
+func interopConfig(scratch scratchState) state.Config {
+	return state.Config{
+		Host: "127.0.0.1", Port: state.DefaultPort,
+		DefaultShell: "/bin/bash", DefaultCwd: scratch.workDir,
+		DefaultCols: state.DefaultCols, DefaultRows: state.DefaultRows,
+		StateRoot:       filepath.Dir(scratch.runnerDir),
+		UserStateRoot:   filepath.Join(scratch.root, "user-state"),
+		RunnerStateDir:  scratch.runnerDir,
+		TokenPath:       filepath.Join(scratch.root, "state", "token"),
+		OpenPath:        filepath.Join(scratch.root, "state", "open"),
+		LaunchAgentsDir: scratch.launchAgentsDir,
+		GlobalHooksPath: filepath.Join(scratch.root, "config", "hooks.json"),
+		RunnerPath:      tools.goRunner,
+	}
+}
+
+func startScratchGoRunner(t *testing.T, scratch scratchState, id, command string, args []string) *managedProcess {
+	t.Helper()
+	return startScratchGoRunnerWithEnv(t, scratch, id, command, args, nil)
+}
+
+func startScratchGoRunnerWithEnv(
+	t *testing.T,
+	scratch scratchState,
+	id, command string,
+	args []string,
+	overrides map[string]string,
+) *managedProcess {
+	t.Helper()
+	encodedArgs, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runnerEnv := map[string]string{
+		"RUNNER_ID":        id,
+		"RUNNER_STATE_DIR": scratch.runnerDir,
+		"RUNNER_CMD":       command,
+		"RUNNER_ARGS_JSON": string(encodedArgs),
+		"RUNNER_CWD":       scratch.workDir,
+		"RUNNER_COLS":      "120",
+		"RUNNER_ROWS":      "40",
+	}
+	for key, value := range overrides {
+		runnerEnv[key] = value
+	}
+	environment := envWithoutKeys(scratch.env(runnerEnv),
+		"CLAUDECODE",
+		"CLAUDE_CODE_BRIDGE_SESSION_ID",
+		"CLAUDE_CODE_CHILD_SESSION",
+		"CLAUDE_CODE_ENTRYPOINT",
+		"CLAUDE_CODE_EXECPATH",
+		"CLAUDE_CODE_SESSION_ID",
+	)
+	runner := startProcess(t, "go-runner-"+id, scratch.root, environment, tools.goRunner)
+	t.Cleanup(func() { runner.stop(t, false) })
+	waitForRunnerState(t, runner, scratch.runnerDir, id)
+	return runner
+}
+
+func writeAgedScratchPlist(t *testing.T, scratch scratchState, id string) {
+	t.Helper()
+	path := state.RunnerPlistPath(scratch.launchAgentsDir, id)
+	if err := os.WriteFile(path, []byte("scratch-only label "+id+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exitedScratchPID(t *testing.T) int {
+	t.Helper()
+	command := exec.Command("/usr/bin/true")
+	if err := command.Run(); err != nil {
+		t.Fatal(err)
+	}
+	pid := command.ProcessState.Pid()
+	if process, err := os.FindProcess(pid); err == nil && process.Signal(syscall.Signal(0)) == nil {
+		t.Fatalf("scratch process %d unexpectedly remained alive", pid)
+	}
+	return pid
+}
+
+func writeDeadScratchMetadata(t *testing.T, scratch scratchState, id string, pid int) {
+	t.Helper()
+	path := filepath.Join(scratch.runnerDir, id+".json")
+	if err := state.WriteMetadata(path, state.Metadata{
+		ID: id, Cmd: "/bin/bash", Args: []string{"-i"}, Cwd: scratch.workDir,
+		Cols: 120, Rows: 40, CreatedAt: time.Now().Add(-time.Minute).UnixMilli(), PID: pid,
+		SockPath: filepath.Join(scratch.runnerDir, id+".sock"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertScratchArtifactsPresent(t *testing.T, scratch scratchState, ids []string) {
+	t.Helper()
+	for _, id := range ids {
+		for _, path := range []string{
+			filepath.Join(scratch.runnerDir, id+".json"),
+			state.RunnerPlistPath(scratch.launchAgentsDir, id),
+		} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("guarded pass mutated %s: %v", path, err)
+			}
+		}
+	}
+}
+
+func cleanupScratchClaudeProjects(t *testing.T, realHome, cwd string) {
+	t.Helper()
+	projectsRoot := filepath.Join(realHome, ".claude", "projects")
+	for _, path := range watch.ClaudeProjectDirsUnder(projectsRoot, cwd) {
+		relative, err := filepath.Rel(projectsRoot, path)
+		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			t.Fatalf("refusing unsafe Claude scratch cleanup path %s", path)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Claude scratch project path already exists: %s (%v)", path, err)
+		}
+		cleanupPath := path
+		t.Cleanup(func() {
+			// The runner sends its PTY child SIGHUP and exits immediately. Claude
+			// may finish one last JSONL write just after that wrapper exits, so
+			// keep removing only this exact scratch directory through the short
+			// child-shutdown window instead of allowing a late recreation.
+			for attempt := 0; attempt < 20; attempt++ {
+				if err := os.RemoveAll(cleanupPath); err != nil {
+					t.Errorf("remove scratch Claude project %s: %v", cleanupPath, err)
+					return
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+			if err := os.RemoveAll(cleanupPath); err != nil {
+				t.Errorf("final remove scratch Claude project %s: %v", cleanupPath, err)
+			} else if _, err := os.Stat(cleanupPath); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("scratch Claude project was recreated after cleanup: %s (%v)", cleanupPath, err)
+			}
+		})
+	}
+}
+
+func waitForClaudeJSONL(
+	t *testing.T,
+	realHome, cwd, id, baseURL string,
+	runner *managedProcess,
+) string {
+	t.Helper()
+	projectsRoot := filepath.Join(realHome, ".claude", "projects")
+	paths := make([]string, 0, 2)
+	for _, dir := range watch.ClaudeProjectDirsUnder(projectsRoot, cwd) {
+		paths = append(paths, filepath.Join(dir, id+".jsonl"))
+	}
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, path := range paths {
+			if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+				return path
+			}
+			entries, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "*.jsonl"))
+			if len(entries) == 1 {
+				if info, err := os.Stat(entries[0]); err == nil && info.Size() > 0 {
+					return entries[0]
+				}
+			}
+		}
+		if !runner.alive() {
+			t.Fatalf("Claude runner exited before JSONL appeared: %v\n%s", runner.waitErr, readLog(runner.logPath))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	snapshot := ""
+	if response, err := httpClient().Get(baseURL + "/api/sessions/" + id + "/snapshot"); err == nil {
+		encoded, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		snapshot = string(encoded)
+	}
+	t.Fatalf("Claude JSONL did not appear at %v; snapshot=%q\n%s", paths, snapshot, readLog(runner.logPath))
+	return ""
+}
+
+func waitForClaudeSubmission(t *testing.T, baseURL, id, marker string) {
+	t.Helper()
+	deadline := time.Now().Add(45 * time.Second)
+	lastSnapshot := ""
+	for time.Now().Before(deadline) {
+		if events, err := httpClient().Get(baseURL + "/api/sessions/" + id + "/events?tail=20"); err == nil {
+			encoded, _ := io.ReadAll(events.Body)
+			_ = events.Body.Close()
+			if strings.Contains(string(encoded), marker) {
+				return
+			}
+		}
+		snapshot, err := httpClient().Get(baseURL + "/api/sessions/" + id + "/snapshot")
+		if err == nil {
+			encoded, _ := io.ReadAll(snapshot.Body)
+			_ = snapshot.Body.Close()
+			lastSnapshot = string(encoded)
+			lines := strings.Split(lastSnapshot, "\n")
+			if len(lines) > 8 {
+				lines = lines[len(lines)-8:]
+			}
+			composerHasMarker := false
+			for _, line := range lines {
+				if strings.Contains(line, "❯") && strings.Contains(line, marker) {
+					composerHasMarker = true
+					break
+				}
+			}
+			if composerHasMarker {
+				postSessionInput(t, baseURL, id, "\r")
+			}
+		}
+		time.Sleep(350 * time.Millisecond)
+	}
+	t.Fatalf("Claude did not persist submitted marker %s; snapshot=%q", marker, lastSnapshot)
+}
+
+func postSessionInput(t *testing.T, baseURL, id, data string) {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]string{"data": data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, baseURL+"/api/sessions/"+id+"/input", strings.NewReader(string(encoded)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := httpClient().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("input status=%d body=%s", response.StatusCode, body)
+	}
 }
 
 type managedProcess struct {
@@ -314,6 +794,15 @@ func waitForRunnerState(t *testing.T, runner *managedProcess, dir, id string) {
 
 func waitForSession(t *testing.T, baseURL, id string) state.SessionInfo {
 	t.Helper()
+	found := waitForSessionMetadata(t, baseURL, id)
+	if found.Cmd != "/bin/bash" || len(found.Args) != 1 || found.Args[0] != "-i" || found.PID <= 0 {
+		t.Fatalf("discovered session metadata mismatch: %#v", found)
+	}
+	return found
+}
+
+func waitForSessionMetadata(t *testing.T, baseURL, id string) state.SessionInfo {
+	t.Helper()
 	var found state.SessionInfo
 	waitFor(t, 20*time.Second, func() (bool, string) {
 		response, err := httpClient().Get(baseURL + "/api/sessions")
@@ -342,10 +831,41 @@ func waitForSession(t *testing.T, baseURL, id string) state.SessionInfo {
 		}
 		return false, fmt.Sprintf("session %s absent from %s", id, body)
 	})
-	if found.Cmd != "/bin/bash" || len(found.Args) != 1 || found.Args[0] != "-i" || found.PID <= 0 {
-		t.Fatalf("discovered session metadata mismatch: %#v", found)
-	}
 	return found
+}
+
+func runPretty(t *testing.T, env []string, dir string, args ...string) string {
+	t.Helper()
+	output, err := runPrettyCommand(env, dir, args...)
+	if err != nil {
+		t.Fatalf("pretty %s: %v\n%s", strings.Join(args, " "), err, output)
+	}
+	return output
+}
+
+func runPrettyCommand(env []string, dir string, args ...string) (string, error) {
+	command := exec.Command(tools.goPretty, args...)
+	command.Dir = dir
+	command.Env = env
+	output, err := command.CombinedOutput()
+	return string(output), err
+}
+
+func waitForPrettyLast(t *testing.T, env []string, dir, id, marker string) string {
+	t.Helper()
+	var output string
+	waitFor(t, 120*time.Second, func() (bool, string) {
+		var err error
+		output, err = runPrettyCommand(env, dir, "--json", "last", id, "--role", "assistant")
+		if err != nil {
+			return false, fmt.Sprintf("pretty last: %v output=%s", err, output)
+		}
+		if strings.Contains(output, marker) {
+			return true, ""
+		}
+		return false, fmt.Sprintf("assistant marker %s absent from %s", marker, output)
+	})
+	return output
 }
 
 func roundTrip(t *testing.T, baseURL, id, prefix string) string {
@@ -451,6 +971,15 @@ func newUUID(t *testing.T) string {
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
 }
 
+func randomHex(t *testing.T, byteCount int) string {
+	t.Helper()
+	bytes := make([]byte, byteCount)
+	if _, err := rand.Read(bytes); err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(bytes)
+}
+
 func runBuild(dir string, env []string, argv ...string) error {
 	command := exec.Command(argv[0], argv[1:]...)
 	command.Dir = dir
@@ -475,6 +1004,24 @@ func envWith(current []string, overrides map[string]string) []string {
 	}
 	for key, value := range overrides {
 		result = append(result, key+"="+value)
+	}
+	return result
+}
+
+func envWithoutKeys(current []string, keys ...string) []string {
+	removed := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		removed[key] = struct{}{}
+	}
+	result := make([]string, 0, len(current))
+	for _, entry := range current {
+		key, _, found := strings.Cut(entry, "=")
+		if !found {
+			continue
+		}
+		if _, drop := removed[key]; !drop {
+			result = append(result, entry)
+		}
 	}
 	return result
 }

@@ -49,6 +49,177 @@ type compositionRunner struct {
 	laneID   string
 }
 
+// rediscoveryLauncher models one live runner process with replaceable
+// daemon-side connections. Closing a connection emits runner-lost only to the
+// daemon; the process remains attachable and records any accidental reap.
+type rediscoveryLauncher struct {
+	mu          sync.Mutex
+	process     *rediscoveryProcess
+	connections []*rediscoveryConnection
+	attachCount int
+	attachFails int
+	reaped      []string
+}
+
+type rediscoveryProcess struct {
+	mu      sync.Mutex
+	info    proto.RunnerInfo
+	outputs []proto.OutputEvent
+	alive   bool
+}
+
+type rediscoveryConnection struct {
+	process *rediscoveryProcess
+	mu      sync.Mutex
+	stream  chan proto.Event
+	closed  bool
+}
+
+func (l *rediscoveryLauncher) ProgramArguments(proto.LaunchRequest) []string {
+	return []string{"/usr/bin/true"}
+}
+
+func (l *rediscoveryLauncher) Launch(_ context.Context, request proto.LaunchRequest) (proto.Runner, error) {
+	request.Info.PID = os.Getpid()
+	request.Info.ProtocolVersion = proto.ProtocolVersion
+	process := &rediscoveryProcess{info: request.Info, alive: true}
+	connection := &rediscoveryConnection{process: process}
+	l.mu.Lock()
+	l.process = process
+	l.connections = append(l.connections, connection)
+	l.mu.Unlock()
+	return connection, nil
+}
+
+func (l *rediscoveryLauncher) Attach(_ context.Context, info proto.RunnerInfo) (proto.Runner, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.process == nil || !l.process.isAlive() || l.process.info.ID != info.ID {
+		return nil, errors.New("scratch runner is unavailable")
+	}
+	l.attachCount++
+	if l.attachFails > 0 {
+		l.attachFails--
+		return nil, errors.New("scratch runner socket is temporarily unavailable")
+	}
+	connection := &rediscoveryConnection{process: l.process}
+	l.connections = append(l.connections, connection)
+	return connection, nil
+}
+
+func (l *rediscoveryLauncher) Reap(id string) error {
+	l.mu.Lock()
+	l.reaped = append(l.reaped, id)
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *rediscoveryLauncher) firstConnection() *rediscoveryConnection {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.connections[0]
+}
+
+func (l *rediscoveryLauncher) counts() (int, int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.attachCount, len(l.reaped)
+}
+
+func (l *rediscoveryLauncher) failNextAttaches(count int) {
+	l.mu.Lock()
+	l.attachFails = count
+	l.mu.Unlock()
+}
+
+func (p *rediscoveryProcess) isAlive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.alive
+}
+
+func (p *rediscoveryProcess) runnerInfo() proto.RunnerInfo {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	info := p.info
+	info.Args = append([]string(nil), p.info.Args...)
+	if len(p.outputs) > 0 {
+		info.CurrentSeq = p.outputs[len(p.outputs)-1].Seq
+	}
+	return info
+}
+
+func (c *rediscoveryConnection) Info() proto.RunnerInfo { return c.process.runnerInfo() }
+
+func (c *rediscoveryConnection) Replay(_ context.Context, after uint32) proto.ReplayWindow {
+	c.process.mu.Lock()
+	defer c.process.mu.Unlock()
+	events := make([]proto.OutputEvent, 0, len(c.process.outputs))
+	for _, event := range c.process.outputs {
+		if event.Seq > after {
+			events = append(events, event)
+		}
+	}
+	current := uint32(0)
+	if len(c.process.outputs) > 0 {
+		current = c.process.outputs[len(c.process.outputs)-1].Seq
+	}
+	return proto.ReplayWindow{Events: events, Current: current}
+}
+
+func (c *rediscoveryConnection) Input(context.Context, string) error {
+	if !c.process.isAlive() {
+		return errors.New("scratch runner exited")
+	}
+	return nil
+}
+
+func (c *rediscoveryConnection) Resize(context.Context, int, int) error { return nil }
+
+func (c *rediscoveryConnection) Kill(context.Context) error {
+	c.process.mu.Lock()
+	c.process.alive = false
+	c.process.mu.Unlock()
+	zero := 0
+	c.finish(proto.Event{Kind: proto.EventExit, Exit: proto.ExitEvent{Code: &zero}})
+	return nil
+}
+
+func (c *rediscoveryConnection) Subscribe() (<-chan proto.Event, func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stream == nil {
+		c.stream = make(chan proto.Event, 8)
+	}
+	stream := c.stream
+	return stream, func() {
+		c.mu.Lock()
+		if !c.closed {
+			c.closed = true
+			close(stream)
+		}
+		c.mu.Unlock()
+	}
+}
+
+func (c *rediscoveryConnection) blip() {
+	c.finish(proto.Event{Kind: proto.EventRunnerLost, Exit: proto.ExitEvent{Reason: "scratch-socket-blip"}})
+}
+
+func (c *rediscoveryConnection) finish(event proto.Event) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	if c.stream == nil {
+		c.stream = make(chan proto.Event, 8)
+	}
+	c.stream <- event
+	close(c.stream)
+}
+
 func (r *compositionRunner) Kill(ctx context.Context) error {
 	events, err := r.launcher.store.Events(ctx, r.laneID)
 	if err != nil {
@@ -137,6 +308,100 @@ func TestMassKillGuardThenTombstoneThenRunnerKillComposition(t *testing.T) {
 			}
 			return false
 		})
+	}
+}
+
+func TestPeriodicDiscoveryReattachesAfterDaemonSideSocketBlipWithoutReapingLiveRunner(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	launcher := &rediscoveryLauncher{}
+	manager := NewManager(config, launcher, ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		DiscoveryRetries: 1, DiscoveryDelay: time.Millisecond,
+	})
+	t.Cleanup(manager.Close)
+	t.Setenv(discoveryIntervalEnv, "20ms")
+	go manager.RunDiscoveryLoop()
+
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "/bin/sh", Cwd: root,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	socketPath := filepath.Join(config.RunnerStateDir, created.ID+".sock")
+	if err := os.WriteFile(socketPath, []byte("scratch daemon-side socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	launcher.firstConnection().blip()
+	deadline := time.Now().Add(750 * time.Millisecond) // well below the 1s reconnect timer
+	for {
+		attachCount, reapCount := launcher.counts()
+		session, present := manager.Get(created.ID)
+		if attachCount > 0 && present && !session.Info().Exited {
+			if reapCount != 0 {
+				t.Fatalf("periodic discovery reaped a live runner %d times", reapCount)
+			}
+			if !launcher.process.isAlive() {
+				t.Fatal("daemon-side socket blip killed the scratch runner process")
+			}
+			t.Logf("periodic discovery reattached %s after %d attach attempt(s); reaps=%d", created.ID, attachCount, reapCount)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("periodic discovery did not reattach before reconnect timer: attaches=%d present=%v reaps=%d", attachCount, present, reapCount)
+		}
+		runtime.Gosched()
+	}
+}
+
+func TestReconnectRepeatsFinalBackoffUntilLiveRunnerReappears(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	launcher := &rediscoveryLauncher{}
+	manager := NewManager(config, launcher, ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+	})
+	t.Cleanup(manager.Close)
+
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "/bin/sh", Cwd: root,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(config.RunnerStateDir, created.ID+".sock"), []byte("scratch socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	launcher.firstConnection().blip()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for {
+		if _, present := manager.Get(created.ID); !present {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("lost scratch connection remained registered")
+		}
+		runtime.Gosched()
+	}
+
+	launcher.failNextAttaches(2)
+	manager.scheduleReconnect(created.ID, []time.Duration{10 * time.Millisecond})
+	for {
+		attempts, reaps := launcher.counts()
+		reattached, present := manager.Get(created.ID)
+		if attempts == 3 && present && !reattached.Info().Exited {
+			if reaps != 0 || !launcher.process.isAlive() {
+				t.Fatalf("reconnect harmed live runner: reaps=%d alive=%v", reaps, launcher.process.isAlive())
+			}
+			t.Logf("terminal reconnect backoff repeated through %d attempts", attempts)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("terminal reconnect delay exhausted: attempts=%d present=%v", attempts, present)
+		}
+		runtime.Gosched()
 	}
 }
 
