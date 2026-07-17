@@ -336,6 +336,9 @@ func (a *app) cmdKill(ids []string) error {
 }
 
 func (a *app) cmdWait(args []string) error {
+	if isWaitUntilArgs(args) {
+		return a.cmdWaitUntil(args)
+	}
 	if len(args) == 0 || args[0] == "" {
 		return fail(1, "usage: pretty wait <id> [--idle 2s] [--timeout 30s]")
 	}
