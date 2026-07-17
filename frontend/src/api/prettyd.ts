@@ -1,5 +1,5 @@
 import type { CreateSessionRequest, SessionInfo, DirectoryCandidate } from '../types';
-import { getActiveServer, isLocalServer } from '../lib/servers';
+import { getActiveServer, isLocalServer, type ServerConfig } from '../lib/servers';
 import { isTauri } from '../lib/tauriBridge';
 
 // Thrown when the daemon returns HTTP 401 (token required / wrong token).
@@ -31,12 +31,11 @@ export class AuthError extends Error {
 //     prettyd is wildcarded, so the direct cross-port call just works.
 //   • Tauri OR a non-local server entry (e.g. the Mac Mini from a
 //     MacBook Tauri install) — absolute URL from the configured host.
-function useSameOriginDaemon(s: ReturnType<typeof getActiveServer>): boolean {
+function useSameOriginDaemon(s: ServerConfig): boolean {
   return !isTauri() && isLocalServer(s) && !import.meta.env.DEV;
 }
 
-function httpBase(): string {
-  const s = getActiveServer();
+function httpBaseForServer(s: ServerConfig): string {
   if (useSameOriginDaemon(s)) {
     return window.location.origin;
   }
@@ -47,6 +46,10 @@ function httpBase(): string {
     return `${scheme}://${window.location.hostname}:${s.port}`;
   }
   return `${scheme}://${s.host}:${s.port}`;
+}
+
+function httpBase(): string {
+  return httpBaseForServer(getActiveServer());
 }
 
 function wsBase(): string {
@@ -63,19 +66,21 @@ function wsBase(): string {
   return `${scheme}://${s.host}:${s.port}`;
 }
 
-// Returns `{ Authorization: 'Bearer <token>' }` when the active server has a
-// token configured, or an empty object when open (no auth).
-function authHeaders(): Record<string, string> {
-  const s = getActiveServer();
+// Returns `{ Authorization: 'Bearer <token>' }` when the supplied server has
+// a token configured, or an empty object when open (no auth).
+function authHeaders(s: ServerConfig): Record<string, string> {
   return s.token ? { Authorization: `Bearer ${s.token}` } : {};
 }
 
-// Drop-in replacement for the raw `fetch()` calls below.  Injects auth
-// headers from the active server config and translates a 401 response into
-// an AuthError so the UI can prompt for a token instead of showing a
-// generic "prettyd 401" error.
-async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const extra = authHeaders();
+// Shared fetch path for active-server and explicit fleet requests. Injects
+// auth when requested and translates 401 into the existing AuthError.
+async function serverFetch(
+  server: ServerConfig,
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  authenticate = true
+): Promise<Response> {
+  const extra = authenticate ? authHeaders(server) : {};
   const merged: RequestInit = {
     ...init,
     headers: { ...extra, ...(init?.headers as Record<string, string> | undefined) }
@@ -83,6 +88,10 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   const res = await fetch(input, merged);
   if (res.status === 401) throw new AuthError();
   return res;
+}
+
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return serverFetch(getActiveServer(), input, init);
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -95,6 +104,48 @@ async function json<T>(res: Response): Promise<T> {
 
 export async function listSessions(): Promise<SessionInfo[]> {
   const r = await apiFetch(`${httpBase()}/api/sessions`);
+  const body = await json<{ sessions: SessionInfo[] }>(r);
+  return body.sessions;
+}
+
+export interface ServerHealth {
+  ok: boolean;
+  name: string;
+  version: string;
+  listen: { host: string; port: number };
+  discovering: boolean;
+  sessionsLoaded: number;
+}
+
+// Fleet probes never mutate the active-server store. Every request is
+// resolved from the supplied config so all configured daemons can be polled
+// concurrently by the browser without proxying through another prettyd.
+export async function fetchServerHealth(
+  server: ServerConfig,
+  signal?: AbortSignal
+): Promise<ServerHealth> {
+  const r = await serverFetch(
+    server,
+    `${httpBaseForServer(server)}/api/health`,
+    { signal },
+    false
+  );
+  const health = await json<ServerHealth>(r);
+  if (!health.ok || health.name !== 'prettyd') {
+    throw new Error('unexpected health response');
+  }
+  return health;
+}
+
+export async function listServerSessions(
+  server: ServerConfig,
+  signal?: AbortSignal
+): Promise<SessionInfo[]> {
+  const r = await serverFetch(
+    server,
+    `${httpBaseForServer(server)}/api/sessions?include_exited=1`,
+    { signal }
+  );
   const body = await json<{ sessions: SessionInfo[] }>(r);
   return body.sessions;
 }

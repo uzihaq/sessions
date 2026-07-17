@@ -7,6 +7,7 @@ import { ResumeDialog } from './components/ResumeDialog';
 import { MobileNav } from './components/MobileNav';
 import { ConnectionStatus, fromTerminalStatus } from './components/ConnectionStatus';
 import { GridView } from './components/GridView';
+import { FleetView } from './components/FleetView';
 import { useSessions } from './store/sessions';
 import { useServers, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
@@ -54,15 +55,16 @@ function readSingleModeParams(): { sessionId: string } | null {
   return sessionId ? { sessionId } : null;
 }
 
-// Layout mode: tabs (default) or grid (Mac-mini-monitor tile view).
+// Layout mode: tabs (default), fleet (all configured machines), or grid
+// (active-machine monitor tiles).
 // Persisted per-window in localStorage so each window remembers its
 // last choice. Grid is best when N ≥ 2 and the window is wide.
-type LayoutMode = 'tabs' | 'grid';
+type LayoutMode = 'tabs' | 'fleet' | 'grid';
 const LAYOUT_KEY = 'pretty-pty:layout-mode';
 function readStoredLayout(): LayoutMode {
   try {
     const v = window.localStorage.getItem(LAYOUT_KEY);
-    if (v === 'tabs' || v === 'grid') return v;
+    if (v === 'tabs' || v === 'fleet' || v === 'grid') return v;
   } catch { /* ignore */ }
   return 'tabs';
 }
@@ -143,6 +145,12 @@ export function App(): JSX.Element {
   useEffect(() => {
     try { window.localStorage.setItem(LAYOUT_KEY, layoutMode); } catch { /* ignore */ }
   }, [layoutMode]);
+
+  const openFleetSession = useCallback((serverId: string, sessionId: string): void => {
+    useServers.getState().setActive(serverId);
+    setActive(sessionId);
+    setLayoutMode('tabs');
+  }, [setActive]);
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const onMessage = (event: MessageEvent<unknown>): void => {
@@ -241,7 +249,7 @@ export function App(): JSX.Element {
     <div className={`app-shell text-size-${textSize.toLowerCase()}`}>
       <header className="app-header">
         <div className="app-brand" aria-hidden>pretty-PTY</div>
-        {/* Tabs stay in both single-session and grid mode — the
+        {/* Tabs stay in single-session, fleet, and grid modes — the
             header always has the logo on the left, so reclaiming the
             space had limited value. In grid mode the tab strip just
             acts as a quick "jump back to single view" affordance plus
@@ -251,7 +259,7 @@ export function App(): JSX.Element {
           activeId={activeId}
           statusBySession={statusBySession}
           iconBySession={iconBySession}
-          onSwitch={setActive}
+          onSwitch={(id) => { setActive(id); setLayoutMode('tabs'); }}
           onAdd={() => setDialogOpen("new")}
           onResume={() => setDialogOpen("resume")}
           onClose={(id) => kill(id)}
@@ -272,6 +280,14 @@ export function App(): JSX.Element {
             </button>
             <button
               type="button"
+              className={`layout-toggle-btn${layoutMode === 'fleet' ? ' is-active' : ''}`}
+              onClick={() => setLayoutMode('fleet')}
+              title="See sessions across every configured machine"
+            >
+              fleet
+            </button>
+            <button
+              type="button"
               className={`layout-toggle-btn${layoutMode === 'grid' ? ' is-active' : ''}`}
               onClick={() => setLayoutMode('grid')}
               title="Tile every session"
@@ -281,7 +297,9 @@ export function App(): JSX.Element {
           </div>
         ) : null}
         <ConnectionStatus
-          status={activeId ? fromTerminalStatus(activeStatus.terminalStatus) : null}
+          status={effectiveLayout !== 'fleet' && activeId
+            ? fromTerminalStatus(activeStatus.terminalStatus)
+            : null}
         />
         <SettingsMenu
           textSize={textSize}
@@ -291,7 +309,9 @@ export function App(): JSX.Element {
       </header>
 
       <main className="app-main">
-        {effectiveLayout === 'grid' ? (
+        {effectiveLayout === 'fleet' ? (
+          <FleetView onOpenSession={openFleetSession} />
+        ) : effectiveLayout === 'grid' ? (
           sessions.length > 0 ? (
             <GridView
               sessions={sessions}
