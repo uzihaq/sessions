@@ -163,7 +163,10 @@ type failingBoundary struct {
 	killErr   error
 }
 
-func (f failingBoundary) RecordCreated(context.Context, ledger.Created) error   { return f.createErr }
+func (f failingBoundary) RecordCreated(context.Context, ledger.Created) error { return f.createErr }
+func (f failingBoundary) RecordProviderRebound(context.Context, ledger.ProviderRebound) error {
+	return nil
+}
 func (f failingBoundary) RecordUserKill(context.Context, ledger.UserKill) error { return f.killErr }
 
 type countingLauncher struct {

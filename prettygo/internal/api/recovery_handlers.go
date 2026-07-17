@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/recovery"
+	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 )
 
 // Recovery mutations are serialized inside one daemon. Together with the
@@ -25,6 +27,13 @@ func (s *Server) handleRecovery(response http.ResponseWriter, request *http.Requ
 		defer store.Close()
 		s.sendJSON(response, http.StatusOK, report, corsOrigin)
 	case request.URL.Path == "/api/recovery/reopen" && request.Method == http.MethodPost:
+		var body struct {
+			Force bool `json:"force,omitempty"`
+		}
+		if err := readJSON(request, &body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
 		recoveryMutationMu.Lock()
 		defer recoveryMutationMu.Unlock()
 		store, report, ok := s.openRecoveryReport(request.Context(), response, corsOrigin)
@@ -32,12 +41,13 @@ func (s *Server) handleRecovery(response http.ResponseWriter, request *http.Requ
 			return
 		}
 		defer store.Close()
-		result := recovery.Reopen(request.Context(), report, s.registry, store.Observations())
+		result := recovery.Reopen(request.Context(), report, s.registry, store.Observations(), recovery.ReopenOptions{Force: body.Force})
 		s.sendJSON(response, http.StatusOK, result, corsOrigin)
 	case request.URL.Path == "/api/recovery/adopt" && request.Method == http.MethodPost:
 		var body struct {
 			Target string `json:"target"`
 			Name   string `json:"name,omitempty"`
+			Force  bool   `json:"force,omitempty"`
 		}
 		if err := readJSON(request, &body); err != nil {
 			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
@@ -49,7 +59,7 @@ func (s *Server) handleRecovery(response http.ResponseWriter, request *http.Requ
 		}
 		recoveryMutationMu.Lock()
 		defer recoveryMutationMu.Unlock()
-		store, report, ok := s.openRecoveryReport(request.Context(), response, corsOrigin)
+		store, _, ok := s.openRecoveryReport(request.Context(), response, corsOrigin)
 		if !ok {
 			return
 		}
@@ -59,19 +69,18 @@ func (s *Server) handleRecovery(response http.ResponseWriter, request *http.Requ
 			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
 			return
 		}
-		for _, lane := range report.Lanes {
-			if lane.Class == ledger.ClassLiveManaged && lane.ProviderUUID == adoption.ProviderUUID {
-				s.sendJSON(response, http.StatusConflict, map[string]any{
-					"error": "provider is already live", "providerUuid": adoption.ProviderUUID, "laneId": lane.ID,
-				}, corsOrigin)
-				return
-			}
-		}
 		result, err := recovery.Adopt(
 			request.Context(), adoption, body.Name, s.registry, store.Boundaries(), store.Observations(),
+			recovery.AdoptOptions{Force: body.Force},
 		)
 		if err != nil {
-			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error(), "laneId": result.LaneID}, corsOrigin)
+			status := http.StatusBadRequest
+			var live *sessionruntime.ConversationLiveError
+			var moved *sessionruntime.ConversationMovedError
+			if errors.As(err, &live) || errors.As(err, &moved) {
+				status = http.StatusConflict
+			}
+			s.sendJSON(response, status, map[string]any{"error": err.Error(), "laneId": result.LaneID}, corsOrigin)
 			return
 		}
 		s.sendJSON(response, http.StatusCreated, result, corsOrigin)

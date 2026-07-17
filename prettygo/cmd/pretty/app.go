@@ -319,7 +319,7 @@ Subcommands:
   new --tool <claude|codex|shell> [--cwd P] [--name L]
                            [--model M] [--effort L] [--fast]
                            [--on-idle C] [--wait-ready] [--no-skip-perms]
-                           [--codex-appserver|--pty-codex] [extra args]
+                           [--codex-appserver|--pty-codex] [--force] [extra args]
   new [--cwd P] [--name L] [--model M] [--effort L] [--fast]
                            [--on-idle C] [--wait-ready] [--cmd C] [args...]
                            create a session.  --tool is the easy path:
@@ -332,6 +332,7 @@ Subcommands:
                            --name labels the session in ` + "`pretty ls`" + `.
                            --on-idle runs a shell command on working→idle.
                            --wait-ready waits for tool startup before returning.
+                           --force overrides a live/moved conversation guard.
                            or supply --cmd / a positional command directly.
   model <id> <model> [--effort L]
                            switch model/effort on an idle Claude session.

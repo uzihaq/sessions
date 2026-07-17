@@ -7,11 +7,12 @@ import (
 )
 
 func (a *app) cmdAdopt(args []string) error {
+	force := removeFirst(&args, "--force")
 	if len(args) != 1 || args[0] == "" {
-		return fail(1, "usage: pretty adopt <path-or-uuid>")
+		return fail(1, "usage: pretty adopt <path-or-uuid> [--force]")
 	}
 	var result recovery.AdoptResult
-	if err := a.postJSON("/api/recovery/adopt", map[string]string{"target": args[0]}, &result, 2); err != nil {
+	if err := a.postJSON("/api/recovery/adopt", map[string]any{"target": args[0], "force": force}, &result, 2); err != nil {
 		return err
 	}
 	if a.wantJSON {

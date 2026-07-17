@@ -31,6 +31,10 @@ type LaneState struct {
 	RunnerLost        bool
 	Reaped            bool
 	ReopenedAs        string
+	ProviderReboundAs string
+	MovedToMachine    string
+	MovedToLaneID     string
+	MovedToSeq        int64
 }
 
 // Fold reduces an event stream in seq order. Input order is irrelevant as
@@ -86,6 +90,11 @@ func Fold(events []Event) []LaneState {
 				state.ProviderUUID = payload.ProviderUUID
 				state.ResumeArgv = append([]string(nil), payload.ResumeArgv...)
 			}
+		case EventProviderRebound:
+			var payload providerReboundPayload
+			if json.Unmarshal(event.Payload, &payload) == nil && payload.ProviderUUID == state.ProviderUUID {
+				state.ProviderReboundAs = payload.NewLaneID
+			}
 		case EventAttached:
 			state.Attached = true
 			state.RunnerLost = false
@@ -136,6 +145,13 @@ func Fold(events []Event) []LaneState {
 			if json.Unmarshal(event.Payload, &payload) == nil {
 				state.ReopenedAs = payload.NewLaneID
 				state.ManagedActive = false
+			}
+		case EventMovedTo:
+			var payload movedToPayload
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				state.MovedToMachine = payload.TargetEndpoint
+				state.MovedToLaneID = payload.NewLaneID
+				state.MovedToSeq = event.Seq
 			}
 		}
 	}

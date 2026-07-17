@@ -55,6 +55,7 @@ type CreateSessionRequest struct {
 	SpecPath  string            `json:"specPath,omitempty"`
 	OnIdle    string            `json:"onIdle,omitempty"`
 	WaitReady bool              `json:"waitReady,omitempty"`
+	Force     bool              `json:"force,omitempty"`
 }
 
 type ClaudeEventsWindow struct {

@@ -36,17 +36,20 @@ type ReopenResult struct {
 	Outcomes []ReopenOutcome `json:"outcomes"`
 }
 
+type ReopenOptions struct {
+	Force bool
+}
+
 // Reopen creates at most one live lane per provider UUID. Every lost lane is
 // represented in the result, including provider-unbound and missing-source
 // refusals, so callers never silently omit an unsafe recovery candidate.
-func Reopen(ctx context.Context, report Report, creator SessionCreator, observations ledger.ObservationWriter) ReopenResult {
-	result := ReopenResult{OK: true, Outcomes: make([]ReopenOutcome, 0)}
-	liveProviders := make(map[string]string)
-	for _, lane := range report.Lanes {
-		if lane.Class == ledger.ClassLiveManaged && lane.ProviderUUID != "" {
-			liveProviders[lane.ProviderUUID] = lane.ID
-		}
+func Reopen(ctx context.Context, report Report, creator SessionCreator, observations ledger.ObservationWriter, options ...ReopenOptions) ReopenResult {
+	selected := ReopenOptions{}
+	if len(options) > 0 {
+		selected = options[0]
 	}
+	result := ReopenResult{OK: true, Outcomes: make([]ReopenOutcome, 0)}
+	createdProviders := make(map[string]string)
 	recipes := make(map[string]ledger.RecoveryRecipe, len(report.Plan.Recipes))
 	for _, recipe := range report.Plan.Recipes {
 		recipes[recipe.SourceLaneID] = recipe
@@ -90,7 +93,7 @@ func Reopen(ctx context.Context, report Report, creator SessionCreator, observat
 			result.Outcomes = append(result.Outcomes, outcome)
 			continue
 		}
-		if liveID := liveProviders[lane.ProviderUUID]; liveID != "" {
+		if liveID := createdProviders[lane.ProviderUUID]; liveID != "" {
 			outcome.Status = ReopenSkipped
 			outcome.NewLaneID = liveID
 			if observations != nil && lane.ReopenedAs == "" {
@@ -107,7 +110,7 @@ func Reopen(ctx context.Context, report Report, creator SessionCreator, observat
 		}
 		created, err := creator.Create(ctx, state.CreateSessionRequest{
 			Cmd: recipe.Cmd, Args: append([]string(nil), recipe.Args...),
-			Cwd: recipe.Cwd, Name: recipe.Name,
+			Cwd: recipe.Cwd, Name: recipe.Name, Force: selected.Force,
 		})
 		if err != nil {
 			outcome.Status = ReopenFailed
@@ -118,7 +121,7 @@ func Reopen(ctx context.Context, report Report, creator SessionCreator, observat
 		}
 		outcome.Status = ReopenCreated
 		outcome.NewLaneID = created.ID
-		liveProviders[lane.ProviderUUID] = created.ID
+		createdProviders[lane.ProviderUUID] = created.ID
 		if observations != nil {
 			if err := observations.RecordReopened(ctx, ledger.Reopened{
 				Meta: ledger.Meta{LaneID: lane.ID}, NewLaneID: created.ID,

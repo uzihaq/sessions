@@ -45,6 +45,35 @@ func SafeResumeRecipe(tool, cmd string, args []string) (providerUUID string, arg
 	return "", nil
 }
 
+// ExistingProviderResume recognizes only commands which reopen an existing
+// conversation. In particular, Claude --session-id is deliberately excluded:
+// Pretty generates that UUID for a fresh session and it is not a reattach.
+func ExistingProviderResume(cmd string, args []string) (providerUUID string, argv []string) {
+	base := strings.ToLower(filepath.Base(cmd))
+	if base == "claude" {
+		for index := 0; index+1 < len(args); index++ {
+			if args[index] == "--resume" && providerIDPattern.MatchString(args[index+1]) {
+				return args[index+1], []string{cmd, "--resume", args[index+1]}
+			}
+		}
+		return "", nil
+	}
+	if base == "codex" {
+		for index, argument := range args {
+			if (argument == "resume" || argument == "--resume") && index+1 < len(args) && providerIDPattern.MatchString(args[index+1]) {
+				return args[index+1], []string{cmd, "resume", args[index+1]}
+			}
+			if strings.HasPrefix(argument, "--resume=") {
+				candidate := strings.TrimPrefix(argument, "--resume=")
+				if providerIDPattern.MatchString(candidate) {
+					return candidate, []string{cmd, "resume", candidate}
+				}
+			}
+		}
+	}
+	return "", nil
+}
+
 // ResumeRecipeForProvider builds the minimal recipe used after a provider is
 // bound asynchronously (notably a fresh Codex rollout).
 func ResumeRecipeForProvider(tool, cmd, providerUUID string) []string {

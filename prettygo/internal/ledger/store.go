@@ -239,6 +239,23 @@ func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error 
 	return w.store.append(ctx, EventCreated, value.Meta, payload, false)
 }
 
+func (w boundaryWriter) RecordProviderRebound(ctx context.Context, value ProviderRebound) error {
+	if value.ProviderUUID == "" || !providerIDPattern.MatchString(value.ProviderUUID) {
+		return fmt.Errorf("record provider rebound: invalid provider UUID %q", value.ProviderUUID)
+	}
+	if value.NewLaneID == "" {
+		return errors.New("record provider rebound: new lane id is required")
+	}
+	if value.LaneID == value.NewLaneID {
+		return errors.New("record provider rebound: old and new lane ids must differ")
+	}
+	if value.Actor == "" {
+		value.Actor = ActorUser
+	}
+	payload := providerReboundPayload{ProviderUUID: value.ProviderUUID, NewLaneID: value.NewLaneID}
+	return w.store.append(ctx, EventProviderRebound, value.Meta, payload, false)
+}
+
 func (w boundaryWriter) RecordUserKill(ctx context.Context, value UserKill) error {
 	if value.Actor == "" {
 		value.Actor = ActorUser
@@ -458,6 +475,11 @@ type createdPayload struct {
 type providerPayload struct {
 	ProviderUUID string   `json:"provider_uuid"`
 	ResumeArgv   []string `json:"argv"`
+}
+
+type providerReboundPayload struct {
+	ProviderUUID string `json:"provider_uuid"`
+	NewLaneID    string `json:"new_lane_id"`
 }
 
 type activityPayload struct {

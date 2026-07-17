@@ -74,6 +74,27 @@ type DiscoverOptions struct{ Force bool }
 
 type LedgerReader interface {
 	Events(context.Context, string) ([]ledger.Event, error)
+	LiveBindingFor(context.Context, string) (*ledger.LiveBinding, error)
+	MovedBinding(context.Context, string) (*ledger.MovedConversation, error)
+}
+
+type ConversationLiveError struct {
+	ProviderUUID string
+	Binding      ledger.LiveBinding
+}
+
+func (e *ConversationLiveError) Error() string {
+	return fmt.Sprintf("conversation %s is already live as %q (session %s) — attach with `pretty attach %s`, or re-run with --force to take over.",
+		e.ProviderUUID, e.Binding.Name, e.Binding.SessionID, e.Binding.SessionID)
+}
+
+type ConversationMovedError struct {
+	ProviderUUID string
+	Machine      string
+}
+
+func (e *ConversationMovedError) Error() string {
+	return fmt.Sprintf("conversation moved to %s; reopening here forks it. --force to fork.", e.Machine)
 }
 
 type Manager struct {
@@ -93,6 +114,7 @@ type Manager struct {
 	deathMu     sync.Mutex
 	laneDeaths  map[string]laneDeathBurst
 	discoveryMu sync.Mutex
+	bindMu      sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -393,8 +415,56 @@ func (m *Manager) reconcileLedger(ctx context.Context) {
 }
 
 func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest) (state.SessionInfo, error) {
+	// Serialize the ledger query with the pre-launch binding write. Without
+	// this lock two concurrent resume requests could both observe no owner.
+	m.bindMu.Lock()
+	defer m.bindMu.Unlock()
+
+	providerUUID, _ := ledger.ExistingProviderResume(request.Cmd, request.Args)
+	var takeover *ledger.LiveBinding
+	if providerUUID != "" && m.ledgerReader != nil {
+		binding, err := m.ledgerReader.LiveBindingFor(ctx, providerUUID)
+		if err != nil {
+			return state.SessionInfo{}, fmt.Errorf("check live conversation binding: %w", err)
+		}
+		moved, err := m.ledgerReader.MovedBinding(ctx, providerUUID)
+		if err != nil {
+			return state.SessionInfo{}, fmt.Errorf("check moved conversation binding: %w", err)
+		}
+		if moved != nil && !request.Force {
+			return state.SessionInfo{}, &ConversationMovedError{ProviderUUID: providerUUID, Machine: moved.Machine}
+		}
+		if binding != nil && !request.Force {
+			return state.SessionInfo{}, &ConversationLiveError{ProviderUUID: providerUUID, Binding: *binding}
+		}
+		if binding != nil {
+			takeover = binding
+		} else if moved != nil {
+			// A moved source can be tombstoned locally while its remote driver
+			// remains live. Record the forced fork against that source lane.
+			takeover = &ledger.LiveBinding{SessionID: moved.SourceSessionID}
+		}
+	}
+
+	beforeLaunch := func(ctx context.Context, prepared state.PreparedSession) error {
+		if err := m.recordCreated(ctx, prepared); err != nil {
+			return err
+		}
+		if takeover == nil {
+			return nil
+		}
+		if m.boundaries == nil {
+			return errors.New("record forced conversation takeover before launch: ledger writer is unavailable")
+		}
+		if err := m.boundaries.RecordProviderRebound(ctx, ledger.ProviderRebound{
+			Meta: ledger.Meta{LaneID: takeover.SessionID}, ProviderUUID: providerUUID, NewLaneID: prepared.Info.ID,
+		}); err != nil {
+			return fmt.Errorf("record forced conversation takeover before launch: %w", err)
+		}
+		return nil
+	}
 	info, err := m.registry.CreateWithLifecycle(ctx, request, state.CreateLifecycle{
-		BeforeLaunch:  m.recordCreated,
+		BeforeLaunch:  beforeLaunch,
 		LaunchStarted: m.recordLaunchStarted,
 		RunnerReady:   m.recordRunnerReady,
 	})

@@ -227,6 +227,10 @@ func readConversationIdentity(path string) (provider, cwd string, codex bool, er
 	return provider, cwd, codex, nil
 }
 
+type AdoptOptions struct {
+	Force bool
+}
+
 // Adopt creates through the normal manager boundary, then appends explicit
 // actor=adopt facts. The normal created event remains the write-ahead record;
 // the adopt-authored pair makes the user's explicit external adoption
@@ -238,7 +242,12 @@ func Adopt(
 	creator SessionCreator,
 	boundaries ledger.BoundaryWriter,
 	observations ledger.ObservationWriter,
+	options ...AdoptOptions,
 ) (AdoptResult, error) {
+	selected := AdoptOptions{}
+	if len(options) > 0 {
+		selected = options[0]
+	}
 	if adoption.ProviderUUID == "" || len(adoption.Args) == 0 {
 		return AdoptResult{}, errors.New("provider-unbound: adoption has no safe provider resume recipe")
 	}
@@ -247,7 +256,7 @@ func Adopt(
 	}
 	created, err := creator.Create(ctx, state.CreateSessionRequest{
 		Cmd: adoption.Cmd, Args: append([]string(nil), adoption.Args...),
-		Cwd: adoption.Cwd, Name: name,
+		Cwd: adoption.Cwd, Name: name, Force: selected.Force,
 	})
 	if err != nil {
 		return AdoptResult{}, err

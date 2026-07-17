@@ -1,0 +1,12 @@
+# Lane: COLLISION-GUARD — refuse/warn when binding a conversation UUID already live (board tsk_a265e5e1)
+Work ONLY in /Users/uzair/pretty-PTY-collision. FILE OWNERSHIP: internal/ledger (add a query), internal/session (the bind/create path guard), cmd/pretty (a --force flag + the warning message). Read the task design + internal/ledger + internal/session Create/reattach.
+PROBLEM (real, user-hit): reopening a conversation that's already live (or was moved) → two drivers fight over ONE claude/codex conversation (same provider UUID). A conversation must have EXACTLY ONE live driver. sessions-are-sacred at the conversation layer.
+BUILD (what's buildable NOW — local provider_bound; moved_to is stubbed until the move feature lands):
+1. internal/ledger: a query `LiveBindingFor(providerUUID) -> {sessionId, name, kind} | none` — folds the ledger to find a session currently bound to that provider conversation UUID that is NOT closed/exited/tombstoned (i.e. live-managed). Also `MovedBinding(providerUUID) -> {machine} | none` reading moved_to events (return none for now; wire the field so it works once move lands).
+2. internal/session Create/reattach path: BEFORE binding a new session to a provider conversation UUID (the claude --resume / codex conversationId), call the guard:
+   - live local binding exists → REFUSE (error) by default: "conversation <uuid> is already live as \"<name>\" (session <id>) — attach with `pretty attach <id>`, or re-run with --force to take over." --force → append a takeover/rebind event and proceed (the old session keeps running but is flagged; do NOT kill it — sessions sacred).
+   - moved_to exists → WARN + refuse without --force: "conversation moved to <machine>; reopening here forks it. --force to fork."
+   - none → proceed normally.
+   Applies to create-with-resume, recover --reopen, adopt. Fresh sessions (new UUID pretty just generated) are never collisions — only RESUME/adopt of an existing UUID.
+3. cmd/pretty: thread --force through the relevant commands; clear human message.
+GATES: CGO_ENABLED=0 build/vet/full-suite -count=1 green; tests: (a) create session bound to UUID-X, then create-with-resume UUID-X → refused with the message; (b) --force → proceeds + takeover event recorded; (c) fresh new session (new UUID) → never refused; (d) after the first session is killed/tombstoned, resuming UUID-X → allowed (no live binding). docs/lanes/collision-NOTES.md. No commit. Scratch state only.

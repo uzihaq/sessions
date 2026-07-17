@@ -13,12 +13,16 @@ import (
 
 func (a *app) cmdRecover(args []string) error {
 	reopen := removeFirst(&args, "--reopen")
+	force := removeFirst(&args, "--force")
 	if len(args) != 0 {
-		return fail(1, "usage: pretty recover [--reopen]")
+		return fail(1, "usage: pretty recover [--reopen [--force]]")
+	}
+	if force && !reopen {
+		return fail(1, "--force requires --reopen")
 	}
 	if reopen {
 		var result recovery.ReopenResult
-		if err := a.postJSON("/api/recovery/reopen", map[string]any{}, &result, 2); err != nil {
+		if err := a.postJSON("/api/recovery/reopen", map[string]any{"force": force}, &result, 2); err != nil {
 			return err
 		}
 		if a.wantJSON {

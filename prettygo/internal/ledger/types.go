@@ -32,6 +32,7 @@ const (
 	EventDaemonRestart     EventType = "daemon_restart"
 	EventMovedTo           EventType = "moved_to"
 	EventMovedFrom         EventType = "moved_from"
+	EventProviderRebound   EventType = "provider_rebound"
 )
 
 // Actor identifies the subsystem that observed or requested a lifecycle fact.
@@ -96,6 +97,15 @@ type ProviderBound struct {
 	ResumeArgv   []string
 }
 
+// ProviderRebound records an explicit forced transfer of the provider
+// identity from the lane in Meta to NewLaneID. It does not terminate or reap
+// the previous lane; the fact only changes which lane owns the binding.
+type ProviderRebound struct {
+	Meta
+	ProviderUUID string
+	NewLaneID    string
+}
+
 type ActivitySource string
 
 const (
@@ -139,11 +149,12 @@ type MovedFrom struct {
 	SourceLaneID   string
 }
 
-// BoundaryWriter exposes only the two actions that must durably commit before
-// their irreversible side effect. Creation errors forbid launch; kill errors
-// forbid sending the runner's kill frame.
+// BoundaryWriter exposes actions that must durably commit before their
+// irreversible side effect. Creation and provider-rebind errors forbid
+// launch; kill errors forbid sending the runner's kill frame.
 type BoundaryWriter interface {
 	RecordCreated(context.Context, Created) error
+	RecordProviderRebound(context.Context, ProviderRebound) error
 	RecordUserKill(context.Context, UserKill) error
 }
 

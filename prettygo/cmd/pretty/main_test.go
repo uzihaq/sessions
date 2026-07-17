@@ -288,6 +288,47 @@ func TestNewNameFlowsThroughPostBodyAndList(t *testing.T) {
 	}
 }
 
+func TestForceThreadsThroughConversationBindingCommands(t *testing.T) {
+	provider := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	tests := []struct {
+		name string
+		args []string
+		path string
+		body string
+	}{
+		{name: "new resume", args: []string{"new", "--cmd", "claude", "--resume", provider, "--force"}, path: "/api/sessions", body: `{"id":"new-lane"}`},
+		{name: "recover reopen", args: []string{"recover", "--reopen", "--force"}, path: "/api/recovery/reopen", body: `{"ok":true,"outcomes":[]}`},
+		{name: "adopt", args: []string{"adopt", provider, "--force"}, path: "/api/recovery/adopt", body: `{"ok":true,"laneId":"adopted-lane","adoption":{}}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var posted map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodPost || request.URL.Path != test.path {
+					http.NotFound(response, request)
+					return
+				}
+				if err := json.NewDecoder(request.Body).Decode(&posted); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				response.Header().Set("Content-Type", "application/json")
+				response.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(response, test.body)
+			}))
+			defer server.Close()
+			t.Setenv("HOME", t.TempDir())
+			arguments := append([]string{"--host", server.URL}, test.args...)
+			var stdout, stderr bytes.Buffer
+			if code := run(arguments, strings.NewReader(""), &stdout, &stderr); code != 0 {
+				t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if forced, ok := posted["force"].(bool); !ok || !forced {
+				t.Fatalf("posted body = %#v, want force=true", posted)
+			}
+		})
+	}
+}
+
 func compareJSONShape(path string, actual, expected any) string {
 	if actual == nil || expected == nil {
 		if actual == nil && expected == nil {

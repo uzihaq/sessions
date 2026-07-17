@@ -61,6 +61,7 @@ type createSessionRequest struct {
 	OnIdle    string   `json:"onIdle,omitempty"`
 	WaitReady bool     `json:"waitReady,omitempty"`
 	Kind      string   `json:"kind,omitempty"`
+	Force     bool     `json:"force,omitempty"`
 }
 
 type agentControls struct {
@@ -177,6 +178,7 @@ func pluckControl(args *[]string, name string) (*string, error) {
 
 func (a *app) cmdNew(args []string) error {
 	var body createSessionRequest
+	body.Force = removeFirst(&args, "--force")
 	forceAppServer := removeFirst(&args, "--codex-appserver")
 	forcePTYCodex := removeFirst(&args, "--pty-codex")
 	if forceAppServer && forcePTYCodex {

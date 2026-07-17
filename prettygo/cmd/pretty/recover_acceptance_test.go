@@ -163,11 +163,24 @@ func TestAdoptCLIExplicitlyBindsScratchCodexConversation(t *testing.T) {
 	if code := run([]string{"--host", server.URL, "adopt", provider}, strings.NewReader(""), &stdout, &stderr); code != 2 {
 		t.Fatalf("duplicate adopt exit=%d stderr=%q", code, stderr.String())
 	}
-	if len(launcher.Launches) != 1 || !strings.Contains(stderr.String(), "provider is already live") {
+	if len(launcher.Launches) != 1 || !strings.Contains(stderr.String(), "conversation "+provider+" is already live") ||
+		!strings.Contains(stderr.String(), "pretty attach "+laneID) || !strings.Contains(stderr.String(), "--force") {
 		t.Fatalf("duplicate adopt launches=%d stderr=%q", len(launcher.Launches), stderr.String())
 	}
-	t.Logf("scratch adopt lane=%s launches=%d actor_created=%t actor_bound=%t duplicate_refused=true",
-		laneID, len(launcher.Launches), actorCreated, actorBound)
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"--host", server.URL, "adopt", provider, "--force"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("adopt --force exit=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	forcedID := strings.TrimSpace(stdout.String())
+	if len(launcher.Launches) != 2 || forcedID == "" || !cliHasLedgerEvent(t, store, laneID, ledger.EventProviderRebound) {
+		t.Fatalf("forced adopt lane=%q launches=%d rebound=%t", forcedID, len(launcher.Launches), cliHasLedgerEvent(t, store, laneID, ledger.EventProviderRebound))
+	}
+	if original, present := manager.Get(laneID); !present || original.Info().Exited {
+		t.Fatal("adopt --force killed the original session")
+	}
+	t.Logf("scratch adopt lane=%s forced=%s launches=%d actor_created=%t actor_bound=%t duplicate_refused=true original_live=true rebound=true",
+		laneID, forcedID, len(launcher.Launches), actorCreated, actorBound)
 }
 
 func cliRecoveryConfig(root string) state.Config {

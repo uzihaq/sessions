@@ -215,7 +215,13 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		}
 		info, err := s.registry.Create(request.Context(), body)
 		if err != nil {
-			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			status := http.StatusBadRequest
+			var live *sessionruntime.ConversationLiveError
+			var moved *sessionruntime.ConversationMovedError
+			if errors.As(err, &live) || errors.As(err, &moved) {
+				status = http.StatusConflict
+			}
+			s.sendJSON(response, status, map[string]any{"error": err.Error()}, corsOrigin)
 			return
 		}
 		s.sendJSON(response, http.StatusCreated, info, corsOrigin)
