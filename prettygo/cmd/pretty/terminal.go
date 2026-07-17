@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -109,6 +110,30 @@ func (a *app) cmdAttach(args []string) error {
 	id, err := a.resolveSessionID(args[0])
 	if err != nil {
 		return err
+	}
+	sessions, err := a.listSessions(true)
+	if err != nil {
+		return err
+	}
+	for _, current := range sessions {
+		if current.ID != id || current.Kind != "codex-app-server" {
+			continue
+		}
+		if current.ConversationID == "" || current.RemoteEndpoint == "" {
+			return fail(2, "structured Codex session %s is missing its remote attachment metadata", id)
+		}
+		input, inputOK := a.stdin.(*os.File)
+		output, outputOK := a.stdout.(*os.File)
+		errorOutput, errorOK := a.stderr.(*os.File)
+		if !inputOK || !outputOK || !errorOK || !term.IsTerminal(input.Fd()) {
+			return fail(2, "attach requires an interactive terminal")
+		}
+		command := exec.Command("codex", "resume", "--remote", current.RemoteEndpoint, "--no-alt-screen", current.ConversationID)
+		command.Dir = current.Cwd
+		command.Stdin = input
+		command.Stdout = output
+		command.Stderr = errorOutput
+		return command.Run()
 	}
 	input, ok := a.stdin.(*os.File)
 	if !ok || !term.IsTerminal(input.Fd()) {

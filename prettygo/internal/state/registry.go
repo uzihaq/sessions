@@ -98,7 +98,7 @@ func (r *Registry) CreateWithLifecycle(
 		return SessionInfo{}, errors.New("runner launcher is unavailable")
 	}
 	kind := strings.TrimSpace(request.Kind)
-	if kind != "" && kind != KindLane {
+	if kind != "" && kind != KindLane && kind != KindCodexAppServer {
 		return SessionInfo{}, fmt.Errorf("unsupported session kind %q", kind)
 	}
 	cmd := request.Cmd
@@ -139,6 +139,10 @@ func (r *Registry) CreateWithLifecycle(
 	tool := classifyTool(cmd)
 	if kind == KindLane {
 		tool = ToolLane
+	} else if kind == KindCodexAppServer {
+		if tool != ToolCodex {
+			return SessionInfo{}, errors.New("codex app-server sessions require the codex command")
+		}
 	} else {
 		args = appendClaudeSessionID(cmd, args, id)
 		args = withToolDefaultArgs(cmd, args)
@@ -459,6 +463,7 @@ func (r *Registry) runnerEnvironment(info proto.RunnerInfo, caller map[string]st
 		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
 		"http_proxy", "https_proxy", "no_proxy", "all_proxy",
 		"NODE_EXTRA_CA_CERTS", "GIT_SSH_COMMAND",
+		"CODEX_HOME", "OPENAI_API_KEY", "PRETTY_CODEX_APP_SERVER_SOCKET",
 	}
 	environment := make(map[string]string)
 	for _, key := range passthroughKeys {
@@ -522,7 +527,8 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 		ID: info.ID, Name: sessionMetadata.Name, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
 		Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
-		SockPath: info.SocketPath,
+		SockPath:       info.SocketPath,
+		ConversationID: info.ConversationID, RemoteEndpoint: info.RemoteEndpoint,
 	}
 	path := filepath.Join(dir, info.ID+".json")
 	if err := WriteMetadata(path, metadata); err != nil {
@@ -559,6 +565,7 @@ func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 			ID: metadata.ID, Cmd: metadata.Cmd, Args: metadata.Args, Cwd: metadata.Cwd,
 			Cols: metadata.Cols, Rows: metadata.Rows, CreatedAt: metadata.CreatedAt,
 			PID: metadata.PID, SocketPath: metadata.SockPath,
+			ConversationID: metadata.ConversationID, RemoteEndpoint: metadata.RemoteEndpoint,
 		},
 		Name: metadata.Name, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 	}, nil

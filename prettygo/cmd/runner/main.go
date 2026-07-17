@@ -54,6 +54,8 @@ type hello struct {
 	PID             int      `json:"pid"`
 	CurrentSeq      uint32   `json:"currentSeq"`
 	ProtocolVersion int      `json:"protocolVersion"`
+	ConversationID  string   `json:"conversationId,omitempty"`
+	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
 }
 
 type exitInfo struct {
@@ -157,6 +159,9 @@ func run() int {
 	defer logFile.Close()
 	_ = os.Chmod(paths.Log, 0o644)
 	logger := log.New(io.MultiWriter(os.Stderr, logFile), "runner: ", log.LstdFlags|log.Lmicroseconds)
+	if cfg.kind == state.KindCodexAppServer {
+		return runCodexAppServer(cfg, paths, logger)
+	}
 
 	spawnArgs, jsonlMissing := respawnArgs(cfg, paths.Events)
 	command := exec.Command(cfg.cmd, spawnArgs...)
@@ -278,7 +283,7 @@ func configFromEnv() (config, string, error) {
 	}
 	name := strings.TrimSpace(os.Getenv("RUNNER_NAME"))
 	kind := strings.TrimSpace(os.Getenv("RUNNER_KIND"))
-	if kind != "" && kind != state.KindLane {
+	if kind != "" && kind != state.KindLane && kind != state.KindCodexAppServer {
 		return config{}, "", fmt.Errorf("unsupported RUNNER_KIND=%q", kind)
 	}
 	specPath := strings.TrimSpace(os.Getenv("RUNNER_SPEC_PATH"))
@@ -349,6 +354,7 @@ func childEnv() []string {
 		"RUNNER_CWD": {}, "RUNNER_COLS": {}, "RUNNER_ROWS": {},
 		"RUNNER_STATE_DIR": {}, "RUNNER_NAME": {}, "RUNNER_KIND": {},
 		"RUNNER_SPEC_PATH": {}, "TERM": {}, "COLORTERM": {},
+		"PRETTY_CODEX_APP_SERVER_SOCKET": {},
 	}
 	out := make([]string, 0, len(os.Environ())+2)
 	for _, entry := range os.Environ() {

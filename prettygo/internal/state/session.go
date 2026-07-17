@@ -56,6 +56,8 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 	tool := classifyTool(info.Cmd)
 	if metadata.Kind == KindLane {
 		tool = SessionTool("lane:" + filepath.Base(info.Cmd))
+	} else if metadata.Kind == KindCodexAppServer {
+		tool = ToolCodex
 	}
 	model, effort, fast := spawnControls(tool, info.Args)
 	now := time.Now().UnixMilli()
@@ -68,6 +70,7 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 			Cwd: info.Cwd, Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt,
 			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: metadata.OnIdle,
 			Model: model, Effort: effort, Fast: fast,
+			ConversationID: info.ConversationID, RemoteEndpoint: info.RemoteEndpoint,
 		},
 		nextSeq: 1,
 		subs:    make(map[uint64]chan proto.Event),
@@ -76,6 +79,10 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 	replay := runner.Replay(ctx, 0)
 	for _, event := range replay.Events {
 		session.appendOutputLocked(event)
+	}
+	for _, event := range replay.Structured {
+		replayed := proto.Event{Kind: proto.EventCodex, CodexEvent: event}
+		session.recordCodexLocked(&replayed)
 	}
 	if replay.Current >= session.nextSeq {
 		session.nextSeq = replay.Current + 1
@@ -110,6 +117,11 @@ func (s *Session) applyEvent(event proto.Event) bool {
 		}
 	case proto.EventClaude:
 		event.ClaudeActivityAt = s.recordClaudeLocked(&event)
+	case proto.EventCodex:
+		event.ClaudeActivityAt = s.recordCodexLocked(&event)
+		if event.ClaudeActivityAt > s.info.LastDataAt {
+			s.info.LastDataAt = event.ClaudeActivityAt
+		}
 	case proto.EventExit, proto.EventRunnerLost:
 		now := time.Now().UnixMilli()
 		exit := event.Exit
@@ -271,6 +283,9 @@ func (s *Session) Snapshot(_ context.Context, cols int) (string, uint32, error) 
 		}
 		return text, seq, nil
 	}
+	if s.info.Kind == KindCodexAppServer {
+		return structuredSnapshot(s.claude), seq, nil
+	}
 	if cols > 0 {
 		return s.mirror.ReflowTo(cols), seq, nil
 	}
@@ -337,6 +352,12 @@ func (s *Session) SetWorking(working bool) (previous bool, exited bool) {
 // and subscriber stream used for runner-provided events.
 func (s *Session) RecordClaudeEvent(event json.RawMessage) {
 	s.applyEvent(proto.Event{Kind: proto.EventClaude, ClaudeEvent: append(json.RawMessage(nil), event...)})
+}
+
+// RecordCodexEvent adds one app-server event to the canonical structured
+// history without involving the Codex rollout watcher.
+func (s *Session) RecordCodexEvent(event json.RawMessage) {
+	s.applyEvent(proto.Event{Kind: proto.EventCodex, CodexEvent: append(json.RawMessage(nil), event...)})
 }
 
 // ClaudeEventLog returns a defensive copy for completion-summary extraction.

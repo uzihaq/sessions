@@ -60,6 +60,7 @@ type createSessionRequest struct {
 	Name      string   `json:"name,omitempty"`
 	OnIdle    string   `json:"onIdle,omitempty"`
 	WaitReady bool     `json:"waitReady,omitempty"`
+	Kind      string   `json:"kind,omitempty"`
 }
 
 type agentControls struct {
@@ -176,6 +177,11 @@ func pluckControl(args *[]string, name string) (*string, error) {
 
 func (a *app) cmdNew(args []string) error {
 	var body createSessionRequest
+	forceAppServer := removeFirst(&args, "--codex-appserver")
+	forcePTYCodex := removeFirst(&args, "--pty-codex")
+	if forceAppServer && forcePTYCodex {
+		return fail(1, "--codex-appserver and --pty-codex cannot be combined")
+	}
 	model, err := pluckControl(&args, "--model")
 	if err != nil {
 		return err
@@ -217,6 +223,16 @@ func (a *app) cmdNew(args []string) error {
 			body.Args = append([]string(nil), chosen...)
 		}
 		body.Args = append(body.Args, args...)
+		if strings.EqualFold(tool, "codex") {
+			if forceAppServer && noSkipPermissions {
+				return fail(1, "--codex-appserver requires skip-permissions mode; remove --no-skip-perms or use --pty-codex")
+			}
+			if !noSkipPermissions && !forcePTYCodex && (forceAppServer || codexAppServerEnabled()) {
+				body.Kind = "codex-app-server"
+			}
+		} else if forceAppServer || forcePTYCodex {
+			return fail(1, "--codex-appserver and --pty-codex are only valid with --tool codex")
+		}
 		if strings.EqualFold(tool, "claude") && !hasAnyArg(body.Args, "--session-id", "--resume") {
 			id, err := randomUUID()
 			if err != nil {
@@ -225,6 +241,9 @@ func (a *app) cmdNew(args []string) error {
 			body.Args = append(body.Args, "--session-id", id)
 		}
 	} else {
+		if forceAppServer || forcePTYCodex {
+			return fail(1, "--codex-appserver and --pty-codex require --tool codex")
+		}
 		if command, present := pluck(&args, "--cmd"); present {
 			body.Cmd = command
 			body.Args = append([]string(nil), args...)
@@ -248,6 +267,15 @@ func (a *app) cmdNew(args []string) error {
 	}
 	_, err = fmt.Fprintln(a.stdout, info["id"])
 	return err
+}
+
+func codexAppServerEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("PRETTY_CODEX_APPSERVER"))) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
 }
 
 func (a *app) cmdModel(args []string) error {

@@ -56,6 +56,26 @@ type ConversationOptions struct {
 	Sandbox        string
 }
 
+// Conversation is the durable app-server thread identity returned when an
+// existing thread is resumed after a runner or daemon restart.
+type Conversation struct {
+	ID string
+}
+
+type threadResumeParams struct {
+	ApprovalPolicy string `json:"approvalPolicy,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Sandbox        string `json:"sandbox,omitempty"`
+	ThreadID       string `json:"threadId"`
+}
+
+type threadResumeResponse struct {
+	Thread struct {
+		ID string `json:"id"`
+	} `json:"thread"`
+}
+
 type conversationDefaults struct {
 	approvalPolicy string
 	effort         string
@@ -383,6 +403,67 @@ func (c *Client) NewConversation(ctx context.Context, options ConversationOption
 	return response.Thread.ID, nil
 }
 
+// ResumeConversation reconnects this client to a durable app-server thread.
+// It also restores the per-turn defaults required by SendUserTurn.
+func (c *Client) ResumeConversation(ctx context.Context, conversationID string, options ConversationOptions) (Conversation, error) {
+	if conversationID == "" {
+		return Conversation{}, errors.New("conversation id is required")
+	}
+	defaults, cwd, sandbox, err := validatedConversationOptions(options)
+	if err != nil {
+		return Conversation{}, err
+	}
+	var response threadResumeResponse
+	if err := c.call(ctx, "thread/resume", threadResumeParams{
+		ApprovalPolicy: defaults.approvalPolicy,
+		CWD:            cwd,
+		Model:          defaults.model,
+		Sandbox:        sandbox,
+		ThreadID:       conversationID,
+	}, &response); err != nil {
+		return Conversation{}, fmt.Errorf("resume Codex conversation: %w", err)
+	}
+	if response.Thread.ID == "" {
+		return Conversation{}, errors.New("resume Codex conversation: empty thread id")
+	}
+	if response.Thread.ID != conversationID {
+		return Conversation{}, fmt.Errorf("resume Codex conversation: got thread %q, want %q", response.Thread.ID, conversationID)
+	}
+	c.mu.Lock()
+	c.convs[conversationID] = defaults
+	c.mu.Unlock()
+	return Conversation{ID: conversationID}, nil
+}
+
+func validatedConversationOptions(options ConversationOptions) (conversationDefaults, string, string, error) {
+	if options.CWD == "" {
+		return conversationDefaults{}, "", "", errors.New("conversation cwd is required")
+	}
+	cwd, err := filepath.Abs(options.CWD)
+	if err != nil {
+		return conversationDefaults{}, "", "", fmt.Errorf("resolve conversation cwd: %w", err)
+	}
+	approvalPolicy := options.ApprovalPolicy
+	if approvalPolicy == "" {
+		approvalPolicy = ApprovalNever
+	}
+	if !validApprovalPolicy(approvalPolicy) {
+		return conversationDefaults{}, "", "", fmt.Errorf("unsupported approval policy %q", approvalPolicy)
+	}
+	sandbox := options.Sandbox
+	if sandbox == "" {
+		sandbox = SandboxDangerFullAccess
+	}
+	if !validSandbox(sandbox) {
+		return conversationDefaults{}, "", "", fmt.Errorf("unsupported sandbox %q", sandbox)
+	}
+	return conversationDefaults{
+		approvalPolicy: approvalPolicy,
+		effort:         options.Effort,
+		model:          options.Model,
+	}, cwd, sandbox, nil
+}
+
 // SendUserTurn starts a turn and returns its structured event stream. Result
 // can be awaited independently while Events is drained concurrently or later.
 func (c *Client) SendUserTurn(ctx context.Context, conversationID, text string) (*TurnStream, error) {
@@ -414,6 +495,10 @@ func (c *Client) SendUserTurn(ctx context.Context, conversationID, text string) 
 	c.turns[conversationID] = state
 	c.mu.Unlock()
 
+	// Queue the lifecycle edge before issuing turn/start. It is only exposed if
+	// turn/start succeeds, but it remains ordered ahead of notifications that
+	// can legally race the response.
+	state.started("")
 	var response TurnStartResponse
 	err := c.call(ctx, "turn/start", TurnStartParams{
 		ApprovalPolicy: defaults.approvalPolicy,

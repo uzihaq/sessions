@@ -33,6 +33,9 @@ const (
 	Exit        Type = 0x22
 	SnapshotRes Type = 0x23
 	ReplayDone  Type = 0x24
+	// Structured is a Go-runner extension carrying one normalized provider
+	// event as JSON. Unknown frames remain safely ignored by older daemons.
+	Structured Type = 0x25
 )
 
 var (

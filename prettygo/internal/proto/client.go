@@ -32,8 +32,9 @@ type SocketRunner struct {
 }
 
 type replayRequest struct {
-	done   chan struct{}
-	events []OutputEvent
+	done       chan struct{}
+	events     []OutputEvent
+	structured []json.RawMessage
 }
 
 // DialRunner connects and requires the server-first HELLO frame before
@@ -119,6 +120,10 @@ func (r *SocketRunner) Replay(ctx context.Context, after uint32) ReplayWindow {
 
 	r.mu.Lock()
 	events := append([]OutputEvent(nil), request.events...)
+	structured := make([]json.RawMessage, len(request.structured))
+	for index := range request.structured {
+		structured[index] = append(json.RawMessage(nil), request.structured[index]...)
+	}
 	current := r.info.CurrentSeq
 	if r.replay == request {
 		r.replay = nil
@@ -129,7 +134,7 @@ func (r *SocketRunner) Replay(ctx context.Context, after uint32) ReplayWindow {
 		oldest = events[0].Seq
 	}
 	return ReplayWindow{
-		Events:  events,
+		Events: events, Structured: structured,
 		Gap:     current > after && (len(events) == 0 || after+1 < oldest),
 		Oldest:  oldest,
 		Current: current,
@@ -250,6 +255,15 @@ func (r *SocketRunner) readLoop() {
 			if request != nil {
 				r.finishReplay(request)
 			}
+		case Structured:
+			raw := append(json.RawMessage(nil), frame.Payload...)
+			r.mu.Lock()
+			if r.replay != nil {
+				r.replay.structured = append(r.replay.structured, raw)
+			} else {
+				r.broadcastLocked(Event{Kind: EventCodex, CodexEvent: raw}, false)
+			}
+			r.mu.Unlock()
 		case Hello, SnapshotRes:
 			// HELLO is consumed during DialRunner. Extra HELLO and legacy
 			// snapshot replies are harmless forward-compatible traffic.

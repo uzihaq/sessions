@@ -11,25 +11,27 @@ import (
 
 // Paths is the complete on-disk file group for one runner.
 type Paths struct {
-	Dir      string
-	ID       string
-	Socket   string
-	Meta     string
-	Events   string
-	Log      string
-	Manifest string
+	Dir        string
+	ID         string
+	Socket     string
+	Meta       string
+	Events     string
+	Log        string
+	Manifest   string
+	Structured string
 }
 
 func For(dir, id string) Paths {
 	base := filepath.Join(dir, id)
 	return Paths{
-		Dir:      dir,
-		ID:       id,
-		Socket:   base + ".sock",
-		Meta:     base + ".json",
-		Events:   base + ".events",
-		Log:      base + ".log",
-		Manifest: base + ".manifest.json",
+		Dir:        dir,
+		ID:         id,
+		Socket:     base + ".sock",
+		Meta:       base + ".json",
+		Events:     base + ".events",
+		Log:        base + ".log",
+		Manifest:   base + ".manifest.json",
+		Structured: base + ".codexapp.jsonl",
 	}
 }
 
@@ -50,18 +52,20 @@ func EnsureDir(dir string) error {
 // Metadata mirrors prettyd/src/runner.ts SessionMeta. Field order is kept the
 // same so the human-readable JSON also matches the normative implementation.
 type Metadata struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name,omitempty"`
-	Kind      string   `json:"kind,omitempty"`
-	SpecPath  string   `json:"specPath,omitempty"`
-	Cmd       string   `json:"cmd"`
-	Args      []string `json:"args"`
-	Cwd       string   `json:"cwd"`
-	Cols      int      `json:"cols"`
-	Rows      int      `json:"rows"`
-	CreatedAt int64    `json:"createdAt"`
-	PID       int      `json:"pid"`
-	SockPath  string   `json:"sockPath"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name,omitempty"`
+	Kind           string   `json:"kind,omitempty"`
+	SpecPath       string   `json:"specPath,omitempty"`
+	Cmd            string   `json:"cmd"`
+	Args           []string `json:"args"`
+	Cwd            string   `json:"cwd"`
+	Cols           int      `json:"cols"`
+	Rows           int      `json:"rows"`
+	CreatedAt      int64    `json:"createdAt"`
+	PID            int      `json:"pid"`
+	SockPath       string   `json:"sockPath"`
+	ConversationID string   `json:"conversationId,omitempty"`
+	RemoteEndpoint string   `json:"remoteEndpoint,omitempty"`
 }
 
 // CompletionManifest is the durable terminal fact emitted by a headless lane.

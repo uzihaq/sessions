@@ -13,11 +13,121 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/codexapp"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
+
+func TestCodexAppServerStructuredHistoryAndLifecycleAreAuthoritative(t *testing.T) {
+	root := t.TempDir()
+	launcher := prototest.NewLauncher()
+	manager := NewManager(testConfig(root), launcher, ManagerOptions{
+		ActivityInterval: time.Hour,
+		Notify:           func(PushPayload) {},
+	})
+	t.Cleanup(manager.Close)
+
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "codex", Cwd: root, Kind: state.KindCodexAppServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Kind != state.KindCodexAppServer || created.Tool != state.ToolCodex {
+		t.Fatalf("created structured session = %#v", created)
+	}
+	runner := launcher.Runner(created.ID)
+	user, err := codexapp.UserHistoryEvent("conversation-1", "hello", time.Unix(1, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.AddCodexEvent(json.RawMessage(user))
+	started, _ := codexapp.HistoryEvent(codexapp.TurnStarted{ConversationID: "conversation-1", TurnID: "turn-1"}, time.Unix(2, 0))
+	runner.AddCodexEvent(json.RawMessage(started))
+	awaitCondition(t, func() bool {
+		info, ok := manager.Get(created.ID)
+		return ok && info.Info().Working
+	})
+	manager.mu.Lock()
+	runtime := manager.runtimes[created.ID]
+	manager.mu.Unlock()
+	runtime.mu.Lock()
+	runtime.pushWorkingObserved = false
+	runtime.mu.Unlock()
+
+	phase := "final_answer"
+	assistant, _ := codexapp.HistoryEvent(codexapp.ItemCompleted{
+		ConversationID: "conversation-1", TurnID: "turn-1", CompletedAtMS: 3000,
+		Item: codexapp.ThreadItem{ID: "message-1", Type: "agentMessage", Text: "STRUCTURED_OK", Phase: &phase},
+	}, time.Unix(3, 0))
+	runner.AddCodexEvent(json.RawMessage(assistant))
+	completed, _ := codexapp.HistoryEvent(codexapp.TurnComplete{
+		ConversationID: "conversation-1", TurnID: "turn-1", Status: "completed",
+	}, time.Unix(4, 0))
+	runner.AddCodexEvent(json.RawMessage(completed))
+	awaitCondition(t, func() bool {
+		info, ok := manager.Get(created.ID)
+		return ok && !info.Info().Working && info.ClaudeEventCount() == 4
+	})
+	session, _ := manager.Get(created.ID)
+	window := session.EventsWindow(nil, nil, nil)
+	if len(window.Events) != 4 || !strings.Contains(string(window.Events[2]), `"source":"codex-app-server"`) {
+		t.Fatalf("structured history = %s", window.Events)
+	}
+	snapshot, _, err := session.Snapshot(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snapshot, "[user]\nhello") || !strings.Contains(snapshot, "[assistant]\nSTRUCTURED_OK") {
+		t.Fatalf("structured snapshot = %q", snapshot)
+	}
+}
+
+type codexBoundLauncher struct{ *prototest.Launcher }
+
+func (l codexBoundLauncher) Launch(ctx context.Context, request proto.LaunchRequest) (proto.Runner, error) {
+	request.Info.ConversationID = "019f7181-cb32-76e0-952d-2f5f7862e668"
+	request.Info.RemoteEndpoint = "unix:///tmp/codex-test.sock"
+	return l.Launcher.Launch(ctx, request)
+}
+
+func TestCodexAppServerConversationPersistsInMetadataAndLedger(t *testing.T) {
+	root := t.TempDir()
+	store, err := ledger.Open(context.Background(), ledger.Options{Path: filepath.Join(root, "ledger.sqlite3")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	launcher := codexBoundLauncher{Launcher: prototest.NewLauncher()}
+	manager := NewManager(testConfig(root), launcher, ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+	})
+	t.Cleanup(manager.Close)
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "codex", Cwd: root, Kind: state.KindCodexAppServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := state.ReadRunnerMetadata(filepath.Join(manager.config.RunnerStateDir, created.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Info.ConversationID != "019f7181-cb32-76e0-952d-2f5f7862e668" || metadata.Info.RemoteEndpoint != "unix:///tmp/codex-test.sock" {
+		t.Fatalf("persisted metadata = %#v", metadata.Info)
+	}
+	events, err := store.Events(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes := ledger.Fold(events)
+	if len(lanes) != 1 || lanes[0].ProviderUUID != "019f7181-cb32-76e0-952d-2f5f7862e668" {
+		t.Fatalf("ledger state = %#v", lanes)
+	}
+}
 
 type compositionLauncher struct {
 	base  *prototest.Launcher

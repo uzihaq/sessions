@@ -318,13 +318,17 @@ Subcommands:
   status <id> [--json]     compact session, git, activity, and verdict card
   new --tool <claude|codex|shell> [--cwd P] [--name L]
                            [--model M] [--effort L] [--fast]
-                           [--on-idle C] [--wait-ready] [--no-skip-perms] [extra args]
+                           [--on-idle C] [--wait-ready] [--no-skip-perms]
+                           [--codex-appserver|--pty-codex] [extra args]
   new [--cwd P] [--name L] [--model M] [--effort L] [--fast]
                            [--on-idle C] [--wait-ready] [--cmd C] [args...]
                            create a session.  --tool is the easy path:
                               pretty new --tool claude
                               pretty new --tool claude --cwd ~/foo
                               pretty new --tool codex --no-skip-perms
+                           Codex uses the structured app-server by default.
+                           PRETTY_CODEX_APPSERVER=0 or --pty-codex restores
+                           the original PTY-backed Codex session.
                            --name labels the session in ` + "`pretty ls`" + `.
                            --on-idle runs a shell command on working→idle.
                            --wait-ready waits for tool startup before returning.

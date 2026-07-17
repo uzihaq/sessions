@@ -17,6 +17,7 @@ import (
 type session struct {
 	ID                string          `json:"id"`
 	Name              string          `json:"name,omitempty"`
+	Kind              string          `json:"kind,omitempty"`
 	Cmd               string          `json:"cmd"`
 	Args              []string        `json:"args"`
 	Cwd               string          `json:"cwd"`
@@ -32,6 +33,8 @@ type session struct {
 	ExitCode          *int            `json:"exitCode"`
 	ExitSignal        *string         `json:"exitSignal"`
 	ExitedAt          *int64          `json:"exitedAt"`
+	ConversationID    string          `json:"conversationId,omitempty"`
+	RemoteEndpoint    string          `json:"remoteEndpoint,omitempty"`
 	Extra             json.RawMessage `json:"-"`
 }
 

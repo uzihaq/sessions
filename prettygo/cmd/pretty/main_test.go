@@ -474,6 +474,49 @@ func TestAgentControlTranslation(t *testing.T) {
 	}
 }
 
+func TestCodexNewSelectsStructuredKindWithRevertibleGate(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		args []string
+		kind string
+	}{
+		{name: "default-on", kind: "codex-app-server"},
+		{name: "environment-off", env: "0"},
+		{name: "flag-off", args: []string{"--pty-codex"}},
+		{name: "flag-on-overrides-environment", env: "0", args: []string{"--codex-appserver"}, kind: "codex-app-server"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("PRETTY_CODEX_APPSERVER", test.env)
+			var request createSessionRequest
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, httpRequest *http.Request) {
+				if httpRequest.URL.Path != "/api/sessions" || httpRequest.Method != http.MethodPost {
+					http.NotFound(response, httpRequest)
+					return
+				}
+				if err := json.NewDecoder(httpRequest.Body).Decode(&request); err != nil {
+					t.Errorf("decode create request: %v", err)
+				}
+				response.Header().Set("Content-Type", "application/json")
+				response.WriteHeader(http.StatusCreated)
+				_, _ = response.Write([]byte(`{"id":"session-1"}`))
+			}))
+			defer server.Close()
+			t.Setenv("HOME", t.TempDir())
+			arguments := []string{"--host", server.URL, "new", "--tool", "codex"}
+			arguments = append(arguments, test.args...)
+			var stdout, stderr bytes.Buffer
+			if code := run(arguments, strings.NewReader(""), &stdout, &stderr); code != 0 {
+				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+			}
+			if request.Kind != test.kind {
+				t.Fatalf("create kind = %q, want %q", request.Kind, test.kind)
+			}
+		})
+	}
+}
+
 func TestLastAndTranscriptJSONShapes(t *testing.T) {
 	const id = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
 	events := []any{

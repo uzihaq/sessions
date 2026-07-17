@@ -10,6 +10,13 @@ type Event interface {
 	isCodexAppEvent()
 }
 
+type TurnStarted struct {
+	ConversationID string `json:"conversationId"`
+	TurnID         string `json:"turnId"`
+}
+
+func (TurnStarted) isCodexAppEvent() {}
+
 type AgentMessageDelta struct {
 	ConversationID string `json:"conversationId"`
 	TurnID         string `json:"turnId"`
@@ -128,6 +135,10 @@ func (s *turnState) emit(event Event) {
 	}
 	s.applyLocked(event)
 	s.events.send(event)
+}
+
+func (s *turnState) started(turnID string) {
+	s.emit(TurnStarted{ConversationID: s.conversationID, TurnID: turnID})
 }
 
 func (s *turnState) applyLocked(event Event) {

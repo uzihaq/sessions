@@ -20,6 +20,8 @@ type RunnerInfo struct {
 	SocketPath      string   `json:"sockPath"`
 	CurrentSeq      uint32   `json:"currentSeq,omitempty"`
 	ProtocolVersion int      `json:"protocolVersion,omitempty"`
+	ConversationID  string   `json:"conversationId,omitempty"`
+	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
 }
 
 type LaunchRequest struct {
@@ -41,10 +43,11 @@ type ExitEvent struct {
 }
 
 type ReplayWindow struct {
-	Events  []OutputEvent
-	Gap     bool
-	Oldest  uint32
-	Current uint32
+	Events     []OutputEvent
+	Structured []json.RawMessage
+	Gap        bool
+	Oldest     uint32
+	Current    uint32
 }
 
 type EventKind uint8
@@ -53,6 +56,7 @@ const (
 	EventOutput EventKind = iota + 1
 	EventExit
 	EventClaude
+	EventCodex
 	EventRunnerLost
 )
 
@@ -61,6 +65,7 @@ type Event struct {
 	Output      OutputEvent
 	Exit        ExitEvent
 	ClaudeEvent json.RawMessage
+	CodexEvent  json.RawMessage
 	ClaudeIndex int64
 	// ClaudeActivityAt is derived by state.recordClaudeLocked and carried to
 	// the session manager so provider activity is ledgered without reparsing.

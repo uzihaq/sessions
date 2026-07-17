@@ -73,6 +73,7 @@ func TestConversationTurnStreamsStructuredEventsAndAutoApproves(t *testing.T) {
 		t.Fatalf("agent-message deltas = %q", deltas.String())
 	}
 	wantTypes := []string{
+		"codexapp.TurnStarted",
 		"codexapp.ItemStarted",
 		"codexapp.AgentMessageDelta",
 		"codexapp.AgentMessageDelta",
@@ -82,6 +83,103 @@ func TestConversationTurnStreamsStructuredEventsAndAutoApproves(t *testing.T) {
 	}
 	if strings.Join(eventTypes, ",") != strings.Join(wantTypes, ",") {
 		t.Fatalf("event types = %v, want %v", eventTypes, wantTypes)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResumeConversationRestoresTurnDefaults(t *testing.T) {
+	serverInput, clientInput := io.Pipe()
+	clientOutput, serverOutput := io.Pipe()
+	serverDone := make(chan error, 1)
+	go func() {
+		defer serverOutput.Close()
+		decoder := json.NewDecoder(serverInput)
+		encode := json.NewEncoder(serverOutput)
+		request, err := readTestRequest(decoder, "initialize")
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		if err := encode.Encode(map[string]any{"id": request.ID, "result": map[string]any{}}); err != nil {
+			serverDone <- err
+			return
+		}
+		if _, err := readTestRequest(decoder, "initialized"); err != nil {
+			serverDone <- err
+			return
+		}
+		request, err = readTestRequest(decoder, "thread/resume")
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		var resume threadResumeParams
+		if err := json.Unmarshal(request.Params, &resume); err != nil {
+			serverDone <- err
+			return
+		}
+		if resume.ThreadID != "thread-1" || resume.Model != "test-model" || resume.ApprovalPolicy != ApprovalNever {
+			serverDone <- fmt.Errorf("resume params = %+v", resume)
+			return
+		}
+		if err := encode.Encode(map[string]any{"id": request.ID, "result": map[string]any{
+			"thread": map[string]any{"id": "thread-1"},
+		}}); err != nil {
+			serverDone <- err
+			return
+		}
+		request, err = readTestRequest(decoder, "turn/start")
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		var turn TurnStartParams
+		if err := json.Unmarshal(request.Params, &turn); err != nil {
+			serverDone <- err
+			return
+		}
+		if turn.ThreadID != "thread-1" || turn.Model != "test-model" || turn.Effort != "high" {
+			serverDone <- fmt.Errorf("resumed turn params = %+v", turn)
+			return
+		}
+		if err := encode.Encode(map[string]any{"id": request.ID, "result": map[string]any{
+			"turn": map[string]any{"id": "turn-1", "items": []any{}, "status": "inProgress"},
+		}}); err != nil {
+			serverDone <- err
+			return
+		}
+		serverDone <- encode.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{
+			"threadId": "thread-1", "turn": map[string]any{"id": "turn-1", "items": []any{}, "status": "completed"},
+		}})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	client, err := newClient(ctx, clientInput, clientOutput, func() {
+		_ = clientInput.Close()
+		_ = clientOutput.Close()
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	conversation, err := client.ResumeConversation(ctx, "thread-1", ConversationOptions{
+		CWD: "/tmp", Model: "test-model", Effort: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conversation.ID != "thread-1" {
+		t.Fatalf("resumed conversation = %#v", conversation)
+	}
+	stream, err := client.SendUserTurn(ctx, conversation.ID, "continue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := stream.Result(ctx); err != nil || result.Status != "completed" {
+		t.Fatalf("resumed turn result = %#v, %v", result, err)
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)

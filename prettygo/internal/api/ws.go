@@ -324,6 +324,11 @@ func streamAttachment(ctx context.Context, peer *wsPeer, attachment state.Attach
 				continue
 			}
 			message = map[string]any{"type": "claudeEvent", "event": json.RawMessage(event.ClaudeEvent)}
+		case proto.EventCodex:
+			if !options.includeClaudeLive || event.ClaudeIndex < attachment.ClaudeEventsCount {
+				continue
+			}
+			message = map[string]any{"type": "claudeEvent", "event": json.RawMessage(event.CodexEvent)}
 		case proto.EventExit, proto.EventRunnerLost:
 			message = exitMessage(event.Exit, options.sessionID)
 			if err := peer.send(ctx, message); err == nil && options.onExit != nil {

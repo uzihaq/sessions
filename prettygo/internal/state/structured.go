@@ -2,11 +2,17 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 )
+
+func (s *Session) recordCodexLocked(event *proto.Event) int64 {
+	event.ClaudeEvent = append(json.RawMessage(nil), event.CodexEvent...)
+	return s.recordClaudeLocked(event)
+}
 
 func (s *Session) recordClaudeLocked(event *proto.Event) int64 {
 	event.ClaudeIndex = s.claudeBase + int64(len(s.claude))
@@ -100,4 +106,52 @@ func realUserMessage(event map[string]any) bool {
 		}
 	}
 	return true
+}
+
+func structuredSnapshot(events []json.RawMessage) string {
+	var output strings.Builder
+	for _, raw := range events {
+		var event map[string]any
+		if json.Unmarshal(raw, &event) != nil {
+			continue
+		}
+		message, ok := event["message"].(map[string]any)
+		if !ok {
+			continue
+		}
+		role, _ := message["role"].(string)
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		text := structuredContentText(message["content"])
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		if output.Len() > 0 {
+			output.WriteString("\n\n")
+		}
+		fmt.Fprintf(&output, "[%s]\n%s", role, text)
+	}
+	return output.String()
+}
+
+func structuredContentText(content any) string {
+	if text, ok := content.(string); ok {
+		return text
+	}
+	blocks, ok := content.([]any)
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, value := range blocks {
+		block, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, ok := block["text"].(string); ok && text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "")
 }

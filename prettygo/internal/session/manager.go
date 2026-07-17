@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/codexapp"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
@@ -214,8 +215,19 @@ func (m *Manager) recordRunnerReady(ctx context.Context, info proto.RunnerInfo) 
 	m.observe(ctx, "runner ready", func(writer ledger.ObservationWriter) error {
 		return writer.RecordRunnerReady(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
 	})
-	if metadata, err := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, info.ID+".json")); err == nil && metadata.Kind == state.KindLane {
-		return
+	if metadata, err := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, info.ID+".json")); err == nil {
+		if metadata.Kind == state.KindLane {
+			return
+		}
+		if metadata.Kind == state.KindCodexAppServer && info.ConversationID != "" {
+			resumeArgv := ledger.ResumeRecipeForProvider("codex", info.Cmd, info.ConversationID)
+			m.observe(ctx, "provider bound", func(writer ledger.ObservationWriter) error {
+				return writer.RecordProviderBound(ctx, ledger.ProviderBound{
+					Meta: ledger.Meta{LaneID: info.ID}, ProviderUUID: info.ConversationID, ResumeArgv: resumeArgv,
+				})
+			})
+			return
+		}
 	}
 	providerUUID, resumeArgv := ledger.SafeResumeRecipe("", info.Cmd, info.Args)
 	if providerUUID == "" {
@@ -482,6 +494,17 @@ func (m *Manager) manage(session *state.Session) *runtimeSession {
 		outputObserved:         make(chan struct{}, 1),
 		structuredEventArrived: make(chan struct{}, 1),
 	}
+	if info.Kind == state.KindCodexAppServer {
+		for _, raw := range attachment.ClaudeEvents {
+			if working, ok := codexapp.HistoryLifecycle(raw); ok {
+				value := working
+				runtime.codexLifecycleWorking = &value
+			}
+		}
+		if runtime.codexLifecycleWorking != nil {
+			session.SetWorking(*runtime.codexLifecycleWorking)
+		}
+	}
 	for _, event := range attachment.Replay.Events {
 		runtime.recentBytes += len(event.Data)
 	}
@@ -544,6 +567,25 @@ func (r *runtimeSession) observe() {
 						Meta: ledger.Meta{LaneID: id, AtMS: event.ClaudeActivityAt}, Source: ledger.ActivityProviderEvent,
 					})
 				})
+			}
+			select {
+			case r.structuredEventArrived <- struct{}{}:
+			default:
+			}
+		case proto.EventCodex:
+			if event.ClaudeActivityAt != 0 {
+				r.manager.observe(context.Background(), "provider activity", func(writer ledger.ObservationWriter) error {
+					return writer.RecordActivity(context.Background(), ledger.Activity{
+						Meta: ledger.Meta{LaneID: id, AtMS: event.ClaudeActivityAt}, Source: ledger.ActivityProviderEvent,
+					})
+				})
+			}
+			if working, ok := codexapp.HistoryLifecycle(event.CodexEvent); ok {
+				r.mu.Lock()
+				value := working
+				r.codexLifecycleWorking = &value
+				r.mu.Unlock()
+				r.setWorking(working)
 			}
 			select {
 			case r.structuredEventArrived <- struct{}{}:
@@ -637,6 +679,9 @@ func (r *runtimeSession) setWorking(next bool) {
 }
 
 func (r *runtimeSession) startWatcher(info state.SessionInfo) {
+	if info.Kind == state.KindCodexAppServer {
+		return
+	}
 	var watcher *watch.FileWatcher
 	switch info.Tool {
 	case state.ToolClaude:
@@ -889,7 +934,7 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 	var cleanupErrors []error
 	for _, id := range ids {
 		if _, dead := deadArtifacts[id]; dead {
-			for _, suffix := range []string{".sock", ".json"} {
+			for _, suffix := range []string{".sock", ".json", ".codexapp.jsonl"} {
 				if removeErr := os.Remove(filepath.Join(m.config.RunnerStateDir, id+suffix)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 					cleanupErrors = append(cleanupErrors, removeErr)
 				}

@@ -5,11 +5,12 @@ import "encoding/json"
 type SessionTool string
 
 const (
-	ToolClaude   SessionTool = "claude-code"
-	ToolCodex    SessionTool = "codex"
-	ToolTerminal SessionTool = "terminal"
-	ToolLane     SessionTool = "lane"
-	KindLane                 = "lane"
+	ToolClaude         SessionTool = "claude-code"
+	ToolCodex          SessionTool = "codex"
+	ToolTerminal       SessionTool = "terminal"
+	ToolLane           SessionTool = "lane"
+	KindLane                       = "lane"
+	KindCodexAppServer             = "codex-app-server"
 )
 
 type SessionInfo struct {
@@ -38,6 +39,8 @@ type SessionInfo struct {
 	Model             string      `json:"model,omitempty"`
 	Effort            string      `json:"effort,omitempty"`
 	Fast              bool        `json:"fast,omitempty"`
+	ConversationID    string      `json:"conversationId,omitempty"`
+	RemoteEndpoint    string      `json:"remoteEndpoint,omitempty"`
 }
 
 type CreateSessionRequest struct {

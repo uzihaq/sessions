@@ -62,6 +62,7 @@ type Runner struct {
 	mu          sync.Mutex
 	info        proto.RunnerInfo
 	outputs     []proto.OutputEvent
+	structured  []json.RawMessage
 	inputs      []string
 	cols        int
 	rows        int
@@ -102,7 +103,7 @@ func (r *Runner) Replay(_ context.Context, after uint32) proto.ReplayWindow {
 		oldest = r.outputs[0].Seq
 	}
 	return proto.ReplayWindow{
-		Events: events, Gap: len(r.outputs) > 0 && after+1 < oldest,
+		Events: events, Structured: cloneRaw(r.structured), Gap: len(r.outputs) > 0 && after+1 < oldest,
 		Oldest: oldest, Current: r.currentSeqLocked(),
 	}
 }
@@ -170,10 +171,18 @@ func (r *Runner) AddClaudeEvent(value any) {
 	r.Emit(proto.Event{Kind: proto.EventClaude, ClaudeEvent: encoded})
 }
 
+func (r *Runner) AddCodexEvent(value any) {
+	encoded, _ := json.Marshal(value)
+	r.Emit(proto.Event{Kind: proto.EventCodex, CodexEvent: encoded})
+}
+
 func (r *Runner) Emit(event proto.Event) {
 	r.mu.Lock()
 	if event.Kind == proto.EventOutput {
 		r.outputs = append(r.outputs, event.Output)
+	}
+	if event.Kind == proto.EventCodex {
+		r.structured = append(r.structured, append(json.RawMessage(nil), event.CodexEvent...))
 	}
 	terminal := event.Kind == proto.EventExit || event.Kind == proto.EventRunnerLost
 	if terminal {
@@ -190,6 +199,14 @@ func (r *Runner) Emit(event proto.Event) {
 	}
 	r.signalChangeLocked()
 	r.mu.Unlock()
+}
+
+func cloneRaw(values []json.RawMessage) []json.RawMessage {
+	result := make([]json.RawMessage, len(values))
+	for index := range values {
+		result[index] = append(json.RawMessage(nil), values[index]...)
+	}
+	return result
 }
 
 // Changes reports coalesced state transitions so tests can synchronize with
