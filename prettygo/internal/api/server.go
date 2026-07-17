@@ -60,6 +60,11 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 		notifications = sessionruntime.NewPushService(root)
 	}
 	server := &Server{config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath}}
+	// Create the token while the daemon is starting, including when the open
+	// escape hatch is present. This keeps a fresh install secure without an
+	// inbound request and makes `pretty token` immediately useful. A failure
+	// remains fail-closed: non-loopback authorization retries and returns 500.
+	_, _ = server.tokens.token()
 	if home, ok := backupHome(config.UserStateRoot); ok {
 		server.backups = backup.NewService(backup.Options{
 			ConfigPath: backup.ConfigPath(home), RunnerStateDir: config.RunnerStateDir,

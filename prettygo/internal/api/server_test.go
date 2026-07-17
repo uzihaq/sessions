@@ -134,13 +134,15 @@ func TestAuthAndOriginMatrix(t *testing.T) {
 		})
 	}
 
-	if err := os.WriteFile(daemon.config.OpenPath, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	opened := serve(t, daemon.handler, http.MethodGet, "/api/sessions", nil, external, nil)
-	if opened.Code != http.StatusOK {
-		t.Fatalf("open escape hatch status = %d, body=%s", opened.Code, opened.Body.String())
-	}
+	t.Run("open escape hatch", func(t *testing.T) {
+		if err := os.WriteFile(daemon.config.OpenPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		opened := serve(t, daemon.handler, http.MethodGet, "/api/sessions", nil, external, nil)
+		if opened.Code != http.StatusOK {
+			t.Fatalf("open escape hatch status = %d, body=%s", opened.Code, opened.Body.String())
+		}
+	})
 }
 
 func TestTokenCreationAndJSONBodyLimit(t *testing.T) {
@@ -148,11 +150,31 @@ func TestTokenCreationAndJSONBodyLimit(t *testing.T) {
 	if err := os.Remove(daemon.config.TokenPath); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(daemon.config.OpenPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	daemon.handler = New(daemon.config, daemon.registry)
+	encoded, err := os.ReadFile(daemon.config.TokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validToken(string(encoded)) {
+		t.Fatalf("eagerly generated token is not 64 lowercase hex characters: %q", encoded)
+	}
+	assertMode(t, daemon.config.TokenPath, 0o600)
+	if err := os.Chmod(daemon.config.TokenPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	daemon.handler = New(daemon.config, daemon.registry)
+	assertMode(t, daemon.config.TokenPath, 0o600)
+	if err := os.Remove(daemon.config.OpenPath); err != nil {
+		t.Fatal(err)
+	}
 	unauthorized := serve(t, daemon.handler, http.MethodGet, "/api/sessions", nil, "198.51.100.25:5555", nil)
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, body=%s", unauthorized.Code, unauthorized.Body.String())
 	}
-	encoded, err := os.ReadFile(daemon.config.TokenPath)
+	encoded, err = os.ReadFile(daemon.config.TokenPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +401,11 @@ func TestWebSocketSingleMuxAndHandshakePolicy(t *testing.T) {
 	if err == nil || response == nil || response.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("XFF WS auth: err=%v response=%v", err, response)
 	}
+	xffAuthorized, response, err := websocket.Dial(ctx, wsBase+"/ws?mux=1&token="+testToken, &websocket.DialOptions{HTTPHeader: xffHeader})
+	if err != nil || response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("XFF WS token auth: err=%v response=%v", err, response)
+	}
+	xffAuthorized.CloseNow()
 }
 
 func serve(t *testing.T, handler http.Handler, method, target string, body io.Reader, remote string, headers http.Header) *httptest.ResponseRecorder {

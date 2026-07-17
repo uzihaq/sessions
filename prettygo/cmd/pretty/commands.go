@@ -440,17 +440,6 @@ func (a *app) cmdWait(args []string) error {
 	}
 }
 
-func (a *app) cmdToken() error {
-	token := a.api.readToken()
-	if token == "" {
-		fmt.Fprintf(a.stderr, "pretty: no token found at %s\n", a.api.tokenPath)
-		io.WriteString(a.stderr, "        start the daemon first (or run: pretty install), then retry.\n")
-		return status(1)
-	}
-	_, err := fmt.Fprintln(a.stdout, token)
-	return err
-}
-
 func positiveInt(raw, label string) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 {
