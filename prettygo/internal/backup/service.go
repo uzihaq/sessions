@@ -17,7 +17,13 @@ type Service struct {
 
 	pushMu     sync.Mutex
 	periodicMu sync.Mutex
-	stop       chan struct{}
+	periodic   *periodicWorker
+	closed     bool
+}
+
+type periodicWorker struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func NewService(options Options, sessions func() []state.SessionInfo) *Service {
@@ -51,50 +57,65 @@ func (s *Service) Status() (Status, error) {
 func (s *Service) ReloadPeriodic() error {
 	config, err := LoadConfig(s.pusher.options.ConfigPath)
 	if errors.Is(err, os.ErrNotExist) {
-		s.stopPeriodic()
+		s.replacePeriodic(0, false)
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	s.stopPeriodic()
 	if !config.Enabled {
+		s.replacePeriodic(0, false)
 		return nil
 	}
 	interval, err := config.interval()
 	if err != nil {
 		return err
 	}
-	stop := make(chan struct{})
+	s.replacePeriodic(interval, true)
+	return nil
+}
+
+func (s *Service) replacePeriodic(interval time.Duration, enabled bool) {
 	s.periodicMu.Lock()
-	s.stop = stop
-	s.periodicMu.Unlock()
+	defer s.periodicMu.Unlock()
+	s.stopPeriodicLocked()
+	if !enabled || s.closed {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	worker := &periodicWorker{cancel: cancel, done: make(chan struct{})}
+	s.periodic = worker
 	go func() {
+		defer close(worker.done)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if _, err := s.Push(context.Background()); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				if _, err := s.Push(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					log.Printf("periodic session backup: %v", err)
 				}
-			case <-stop:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
-	return nil
 }
 
 func (s *Service) Close() {
-	s.stopPeriodic()
-}
-
-func (s *Service) stopPeriodic() {
 	s.periodicMu.Lock()
 	defer s.periodicMu.Unlock()
-	if s.stop != nil {
-		close(s.stop)
-		s.stop = nil
+	s.closed = true
+	s.stopPeriodicLocked()
+}
+
+func (s *Service) stopPeriodicLocked() {
+	if s.periodic != nil {
+		s.periodic.cancel()
+		<-s.periodic.done
+		s.periodic = nil
 	}
 }

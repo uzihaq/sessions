@@ -19,6 +19,12 @@ import (
 
 const fixtureToken = "smt_fixture-token-never-real"
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
 func TestEnableStoresTokenPathWithPrivateMode(t *testing.T) {
 	home := t.TempDir()
 	tokenPath := SomewhereConfigPath(home)
@@ -287,5 +293,58 @@ func TestPeriodicServiceRunsOnlyWhenEnabled(t *testing.T) {
 	case <-requests:
 	case <-time.After(time.Second):
 		t.Fatal("enabled backup did not run its periodic upload")
+	}
+}
+
+func TestPeriodicServiceCloseCancelsAndWaitsForInFlightPush(t *testing.T) {
+	root := t.TempDir()
+	tokenPath := filepath.Join(root, "somewhere.json")
+	if err := os.WriteFile(tokenPath, []byte(`{"token":"`+fixtureToken+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "backup.json")
+	if err := SaveConfig(configPath, Config{
+		Enabled: true, Project: "close-fixture", TokenPath: tokenPath, Interval: "1ms",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		close(requestStarted)
+		select {
+		case <-request.Context().Done():
+			close(requestCanceled)
+			return nil, request.Context().Err()
+		case <-releaseRequest:
+			return &http.Response{
+				StatusCode: http.StatusCreated,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     make(http.Header),
+			}, nil
+		}
+	})}
+	t.Cleanup(func() { close(releaseRequest) })
+	service := NewService(Options{
+		ConfigPath: configPath, RunnerStateDir: filepath.Join(root, "runners"),
+		Machine: "close-mac", APIBase: "https://backup.invalid", HTTPClient: client,
+	}, nil)
+	t.Cleanup(service.Close)
+	if err := service.ReloadPeriodic(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		service.Close()
+		t.Fatal("periodic upload did not reach the server")
+	}
+
+	service.Close()
+	select {
+	case <-requestCanceled:
+	default:
+		t.Fatal("Close returned before the in-flight periodic upload was canceled")
 	}
 }
