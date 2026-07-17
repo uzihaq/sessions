@@ -123,6 +123,10 @@ func (a *app) dispatch() error {
 		return a.cmdRecover(append([]string(nil), a.args...))
 	case "adopt":
 		return a.cmdAdopt(append([]string(nil), a.args...))
+	case "verdict":
+		return a.cmdVerdict(append([]string(nil), a.args...))
+	case "status":
+		return a.cmdStatus(append([]string(nil), a.args...))
 	case "model":
 		return a.cmdModel(append([]string(nil), a.args...))
 	case "kill":
@@ -295,6 +299,11 @@ Subcommands:
                            the last assistant message. Claude/Codex only.
   keys <id> <key>          send esc|up|down|left|right|^c|^d|enter|tab
   resize <id> <cols> <rows> resize the session PTY through the daemon
+  verdict <id> [--json]    print the latest explicit producer verdict
+  verdict emit <id> --json '{...}'
+                           append a schemaVersion 1 producer verdict;
+                           omit the JSON argument to read it from stdin
+  status <id> [--json]     compact session, git, activity, and verdict card
   new --tool <claude|codex|shell> [--cwd P] [--name L]
                            [--model M] [--effort L] [--fast]
                            [--on-idle C] [--wait-ready] [--no-skip-perms] [extra args]
