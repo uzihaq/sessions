@@ -22,6 +22,7 @@ type RunnerInfo struct {
 	ProtocolVersion int      `json:"protocolVersion,omitempty"`
 	ConversationID  string   `json:"conversationId,omitempty"`
 	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
+	ClaudeSessionID string   `json:"claudeSessionId,omitempty"`
 }
 
 type LaunchRequest struct {

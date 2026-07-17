@@ -56,6 +56,7 @@ type hello struct {
 	ProtocolVersion int      `json:"protocolVersion"`
 	ConversationID  string   `json:"conversationId,omitempty"`
 	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
+	ClaudeSessionID string   `json:"claudeSessionId,omitempty"`
 }
 
 type exitInfo struct {
@@ -161,6 +162,9 @@ func run() int {
 	logger := log.New(io.MultiWriter(os.Stderr, logFile), "runner: ", log.LstdFlags|log.Lmicroseconds)
 	if cfg.kind == state.KindCodexAppServer {
 		return runCodexAppServer(cfg, paths, logger)
+	}
+	if cfg.kind == state.KindClaudeStructured {
+		return runClaudeStructured(cfg, paths, logger)
 	}
 
 	spawnArgs, jsonlMissing := respawnArgs(cfg, paths.Events)
@@ -283,7 +287,7 @@ func configFromEnv() (config, string, error) {
 	}
 	name := strings.TrimSpace(os.Getenv("RUNNER_NAME"))
 	kind := strings.TrimSpace(os.Getenv("RUNNER_KIND"))
-	if kind != "" && kind != state.KindLane && kind != state.KindCodexAppServer {
+	if kind != "" && kind != state.KindLane && kind != state.KindCodexAppServer && kind != state.KindClaudeStructured {
 		return config{}, "", fmt.Errorf("unsupported RUNNER_KIND=%q", kind)
 	}
 	specPath := strings.TrimSpace(os.Getenv("RUNNER_SPEC_PATH"))

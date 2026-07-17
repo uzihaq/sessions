@@ -116,7 +116,13 @@ func (a *app) cmdAttach(args []string) error {
 		return err
 	}
 	for _, current := range sessions {
-		if current.ID != id || current.Kind != "codex-app-server" {
+		if current.ID != id {
+			continue
+		}
+		if current.Kind == "claude-structured" {
+			return fail(1, "structured Claude sessions have no live TUI attach; use `pretty snap %s` or `pretty transcript %s`", id, id)
+		}
+		if current.Kind != "codex-app-server" {
 			continue
 		}
 		if current.ConversationID == "" || current.RemoteEndpoint == "" {

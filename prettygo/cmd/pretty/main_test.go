@@ -558,6 +558,48 @@ func TestCodexNewSelectsStructuredKindWithRevertibleGate(t *testing.T) {
 	}
 }
 
+func TestClaudeNewKeepsPTYDefaultAndSelectsStructuredOptIn(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		kind string
+	}{
+		{name: "pty-default"},
+		{name: "structured-opt-in", args: []string{"--structured"}, kind: "claude-structured"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var request createSessionRequest
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, httpRequest *http.Request) {
+				if httpRequest.URL.Path != "/api/sessions" || httpRequest.Method != http.MethodPost {
+					http.NotFound(response, httpRequest)
+					return
+				}
+				if err := json.NewDecoder(httpRequest.Body).Decode(&request); err != nil {
+					t.Errorf("decode create request: %v", err)
+				}
+				response.Header().Set("Content-Type", "application/json")
+				response.WriteHeader(http.StatusCreated)
+				_, _ = response.Write([]byte(`{"id":"session-1"}`))
+			}))
+			defer server.Close()
+			t.Setenv("HOME", t.TempDir())
+			arguments := []string{"--host", server.URL, "new", "--tool", "claude"}
+			arguments = append(arguments, test.args...)
+			var stdout, stderr bytes.Buffer
+			if code := run(arguments, strings.NewReader(""), &stdout, &stderr); code != 0 {
+				t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+			}
+			if request.Kind != test.kind {
+				t.Fatalf("create kind = %q, want %q", request.Kind, test.kind)
+			}
+			if !hasArgValue(request.Args, "--session-id") {
+				t.Fatalf("Claude create args do not contain a preallocated session id: %q", request.Args)
+			}
+		})
+	}
+}
+
 func TestCodexNewSurfacesCatalogValidationErrorClearly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/api/sessions" || request.Method != http.MethodPost {

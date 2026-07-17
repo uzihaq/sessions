@@ -58,6 +58,8 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 		tool = SessionTool("lane:" + filepath.Base(info.Cmd))
 	} else if metadata.Kind == KindCodexAppServer {
 		tool = ToolCodex
+	} else if metadata.Kind == KindClaudeStructured {
+		tool = ToolClaude
 	}
 	model, effort, fast := spawnControls(tool, info.Args)
 	now := time.Now().UnixMilli()
@@ -71,6 +73,7 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: metadata.OnIdle,
 			Model: model, Effort: effort, Fast: fast,
 			ConversationID: info.ConversationID, RemoteEndpoint: info.RemoteEndpoint,
+			ClaudeSessionID: info.ClaudeSessionID,
 		},
 		nextSeq: 1,
 		subs:    make(map[uint64]chan proto.Event),
@@ -283,7 +286,7 @@ func (s *Session) Snapshot(_ context.Context, cols int) (string, uint32, error) 
 		}
 		return text, seq, nil
 	}
-	if s.info.Kind == KindCodexAppServer {
+	if s.info.Kind == KindCodexAppServer || s.info.Kind == KindClaudeStructured {
 		return structuredSnapshot(s.claude), seq, nil
 	}
 	if cols > 0 {

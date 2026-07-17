@@ -98,7 +98,7 @@ func (r *Registry) CreateWithLifecycle(
 		return SessionInfo{}, errors.New("runner launcher is unavailable")
 	}
 	kind := strings.TrimSpace(request.Kind)
-	if kind != "" && kind != KindLane && kind != KindCodexAppServer {
+	if kind != "" && kind != KindLane && kind != KindCodexAppServer && kind != KindClaudeStructured {
 		return SessionInfo{}, fmt.Errorf("unsupported session kind %q", kind)
 	}
 	cmd := request.Cmd
@@ -143,6 +143,10 @@ func (r *Registry) CreateWithLifecycle(
 		if tool != ToolCodex {
 			return SessionInfo{}, errors.New("codex app-server sessions require the codex command")
 		}
+	} else if kind == KindClaudeStructured {
+		if tool != ToolClaude {
+			return SessionInfo{}, errors.New("structured Claude sessions require the claude command")
+		}
 	} else {
 		args = appendClaudeSessionID(cmd, args, id)
 		args = withToolDefaultArgs(cmd, args)
@@ -172,6 +176,11 @@ func (r *Registry) CreateWithLifecycle(
 	launchRequest := proto.LaunchRequest{
 		Info: runnerInfo,
 		Env:  r.runnerEnvironment(runnerInfo, request.Env),
+	}
+	if kind == KindClaudeStructured {
+		// Structured Claude is intentionally subscription-authenticated. Never
+		// place a metered API key in its launchd environment.
+		delete(launchRequest.Env, "ANTHROPIC_API_KEY")
 	}
 	prepared := PreparedSession{
 		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Kind: kind,
@@ -532,6 +541,7 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
 		SockPath:       info.SocketPath,
 		ConversationID: info.ConversationID, RemoteEndpoint: info.RemoteEndpoint,
+		ClaudeSessionID: info.ClaudeSessionID,
 	}
 	path := filepath.Join(dir, info.ID+".json")
 	if err := WriteMetadata(path, metadata); err != nil {
@@ -569,6 +579,7 @@ func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 			Cols: metadata.Cols, Rows: metadata.Rows, CreatedAt: metadata.CreatedAt,
 			PID: metadata.PID, SocketPath: metadata.SockPath,
 			ConversationID: metadata.ConversationID, RemoteEndpoint: metadata.RemoteEndpoint,
+			ClaudeSessionID: metadata.ClaudeSessionID,
 		},
 		Name: metadata.Name, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 	}, nil

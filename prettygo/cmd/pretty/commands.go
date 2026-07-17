@@ -182,6 +182,7 @@ func (a *app) cmdNew(args []string) error {
 	}
 	var body createSessionRequest
 	body.Force = removeFirst(&args, "--force")
+	forceStructuredClaude := removeFirst(&args, "--structured")
 	forceAppServer := removeFirst(&args, "--codex-appserver")
 	forcePTYCodex := removeFirst(&args, "--pty-codex")
 	if forceAppServer && forcePTYCodex {
@@ -229,6 +230,9 @@ func (a *app) cmdNew(args []string) error {
 		}
 		body.Args = append(body.Args, args...)
 		if strings.EqualFold(tool, "codex") {
+			if forceStructuredClaude {
+				return fail(1, "--structured is only valid with --tool claude")
+			}
 			if forceAppServer && noSkipPermissions {
 				return fail(1, "--codex-appserver requires skip-permissions mode; remove --no-skip-perms or use --pty-codex")
 			}
@@ -238,7 +242,14 @@ func (a *app) cmdNew(args []string) error {
 		} else if forceAppServer || forcePTYCodex {
 			return fail(1, "--codex-appserver and --pty-codex are only valid with --tool codex")
 		}
-		if strings.EqualFold(tool, "claude") && !hasAnyArg(body.Args, "--session-id", "--resume") {
+		if strings.EqualFold(tool, "claude") {
+			if forceStructuredClaude {
+				body.Kind = "claude-structured"
+			}
+		} else if forceStructuredClaude {
+			return fail(1, "--structured is only valid with --tool claude")
+		}
+		if strings.EqualFold(tool, "claude") && !hasAnyArg(body.Args, "--session-id", "--resume", "-r") {
 			id, err := randomUUID()
 			if err != nil {
 				return err
@@ -248,6 +259,9 @@ func (a *app) cmdNew(args []string) error {
 	} else {
 		if forceAppServer || forcePTYCodex {
 			return fail(1, "--codex-appserver and --pty-codex require --tool codex")
+		}
+		if forceStructuredClaude {
+			return fail(1, "--structured requires --tool claude")
 		}
 		if command, present := pluck(&args, "--cmd"); present {
 			body.Cmd = command

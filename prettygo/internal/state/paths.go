@@ -19,6 +19,7 @@ type Paths struct {
 	Log        string
 	Manifest   string
 	Structured string
+	ClaudeP    string
 }
 
 func For(dir, id string) Paths {
@@ -32,6 +33,7 @@ func For(dir, id string) Paths {
 		Log:        base + ".log",
 		Manifest:   base + ".manifest.json",
 		Structured: base + ".codexapp.jsonl",
+		ClaudeP:    base + ".claudep.jsonl",
 	}
 }
 
@@ -52,20 +54,21 @@ func EnsureDir(dir string) error {
 // Metadata mirrors prettyd/src/runner.ts SessionMeta. Field order is kept the
 // same so the human-readable JSON also matches the normative implementation.
 type Metadata struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name,omitempty"`
-	Kind           string   `json:"kind,omitempty"`
-	SpecPath       string   `json:"specPath,omitempty"`
-	Cmd            string   `json:"cmd"`
-	Args           []string `json:"args"`
-	Cwd            string   `json:"cwd"`
-	Cols           int      `json:"cols"`
-	Rows           int      `json:"rows"`
-	CreatedAt      int64    `json:"createdAt"`
-	PID            int      `json:"pid"`
-	SockPath       string   `json:"sockPath"`
-	ConversationID string   `json:"conversationId,omitempty"`
-	RemoteEndpoint string   `json:"remoteEndpoint,omitempty"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name,omitempty"`
+	Kind            string   `json:"kind,omitempty"`
+	SpecPath        string   `json:"specPath,omitempty"`
+	Cmd             string   `json:"cmd"`
+	Args            []string `json:"args"`
+	Cwd             string   `json:"cwd"`
+	Cols            int      `json:"cols"`
+	Rows            int      `json:"rows"`
+	CreatedAt       int64    `json:"createdAt"`
+	PID             int      `json:"pid"`
+	SockPath        string   `json:"sockPath"`
+	ConversationID  string   `json:"conversationId,omitempty"`
+	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
+	ClaudeSessionID string   `json:"claudeSessionId,omitempty"`
 }
 
 // CompletionManifest is the durable terminal fact emitted by a headless lane.

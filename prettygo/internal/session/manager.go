@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/uzihaq/pretty-pty/prettygo/internal/claudep"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/codexapp"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
@@ -143,15 +144,15 @@ type runtimeSession struct {
 	session    *state.Session
 	attachment state.Attachment
 
-	mu                     sync.Mutex
-	recentBytes            int
-	codexLifecycleWorking  *bool
-	pushWorkingObserved    bool
-	workingStartedAt       time.Time
-	watcher                *watch.FileWatcher
-	stopOnce               sync.Once
-	outputObserved         chan struct{}
-	structuredEventArrived chan struct{}
+	mu                         sync.Mutex
+	recentBytes                int
+	structuredLifecycleWorking *bool
+	pushWorkingObserved        bool
+	workingStartedAt           time.Time
+	watcher                    *watch.FileWatcher
+	stopOnce                   sync.Once
+	outputObserved             chan struct{}
+	structuredEventArrived     chan struct{}
 }
 
 func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...ManagerOptions) *Manager {
@@ -286,6 +287,15 @@ func (m *Manager) recordRunnerReady(ctx context.Context, info proto.RunnerInfo) 
 			m.observe(ctx, "provider bound", func(writer ledger.ObservationWriter) error {
 				return writer.RecordProviderBound(ctx, ledger.ProviderBound{
 					Meta: ledger.Meta{LaneID: info.ID}, ProviderUUID: info.ConversationID, ResumeArgv: resumeArgv,
+				})
+			})
+			return
+		}
+		if metadata.Kind == state.KindClaudeStructured && info.ClaudeSessionID != "" {
+			resumeArgv := ledger.ResumeRecipeForProvider("claude-code", info.Cmd, info.ClaudeSessionID)
+			m.observe(ctx, "provider bound", func(writer ledger.ObservationWriter) error {
+				return writer.RecordProviderBound(ctx, ledger.ProviderBound{
+					Meta: ledger.Meta{LaneID: info.ID}, ProviderUUID: info.ClaudeSessionID, ResumeArgv: resumeArgv,
 				})
 			})
 			return
@@ -684,15 +694,15 @@ func (m *Manager) manage(session *state.Session) *runtimeSession {
 		outputObserved:         make(chan struct{}, 1),
 		structuredEventArrived: make(chan struct{}, 1),
 	}
-	if info.Kind == state.KindCodexAppServer {
+	if info.Kind == state.KindCodexAppServer || info.Kind == state.KindClaudeStructured {
 		for _, raw := range attachment.ClaudeEvents {
-			if working, ok := codexapp.HistoryLifecycle(raw); ok {
+			if working, ok := structuredHistoryLifecycle(info.Kind, raw); ok {
 				value := working
-				runtime.codexLifecycleWorking = &value
+				runtime.structuredLifecycleWorking = &value
 			}
 		}
-		if runtime.codexLifecycleWorking != nil {
-			session.SetWorking(*runtime.codexLifecycleWorking)
+		if runtime.structuredLifecycleWorking != nil {
+			session.SetWorking(*runtime.structuredLifecycleWorking)
 		}
 	}
 	for _, event := range attachment.Replay.Events {
@@ -708,6 +718,17 @@ func (m *Manager) manage(session *state.Session) *runtimeSession {
 	}
 	go runtime.observe()
 	return runtime
+}
+
+func structuredHistoryLifecycle(kind string, raw json.RawMessage) (bool, bool) {
+	switch kind {
+	case state.KindCodexAppServer:
+		return codexapp.HistoryLifecycle(raw)
+	case state.KindClaudeStructured:
+		return claudep.HistoryLifecycle(raw)
+	default:
+		return false, false
+	}
 }
 
 func (m *Manager) dropRuntime(id string, expected *runtimeSession) {
@@ -770,10 +791,10 @@ func (r *runtimeSession) observe() {
 					})
 				})
 			}
-			if working, ok := codexapp.HistoryLifecycle(event.CodexEvent); ok {
+			if working, ok := structuredHistoryLifecycle(r.session.Info().Kind, event.CodexEvent); ok {
 				r.mu.Lock()
 				value := working
-				r.codexLifecycleWorking = &value
+				r.structuredLifecycleWorking = &value
 				r.mu.Unlock()
 				r.setWorking(working)
 			}
@@ -816,20 +837,22 @@ func (r *runtimeSession) tick() {
 	r.mu.Lock()
 	r.recentBytes /= 2
 	recent := r.recentBytes
-	codex := r.codexLifecycleWorking
+	structured := r.structuredLifecycleWorking
 	r.mu.Unlock()
 	byteWorking := recent >= workingBytesThreshold
 	next := byteWorking
 	switch info.Tool {
 	case state.ToolClaude:
-		if recent <= 0 {
+		if info.Kind == state.KindClaudeStructured && structured != nil {
+			next = *structured
+		} else if recent <= 0 {
 			next = false
 		} else if snapshot, _, err := r.session.Snapshot(context.Background(), 0); err == nil {
 			next = ClaudeWorkingFromSnapshot(snapshot)
 		}
 	case state.ToolCodex:
-		if codex != nil {
-			next = *codex
+		if structured != nil {
+			next = *structured
 		}
 	}
 	r.setWorking(next)
@@ -869,7 +892,7 @@ func (r *runtimeSession) setWorking(next bool) {
 }
 
 func (r *runtimeSession) startWatcher(info state.SessionInfo) {
-	if info.Kind == state.KindCodexAppServer {
+	if info.Kind == state.KindCodexAppServer || info.Kind == state.KindClaudeStructured {
 		return
 	}
 	var watcher *watch.FileWatcher
@@ -909,7 +932,7 @@ func (r *runtimeSession) startWatcher(info state.SessionInfo) {
 				}
 				r.mu.Lock()
 				value := working
-				r.codexLifecycleWorking = &value
+				r.structuredLifecycleWorking = &value
 				r.mu.Unlock()
 				r.setWorking(working)
 			case _, ok := <-watcher.Errors:
@@ -1124,7 +1147,7 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 	var cleanupErrors []error
 	for _, id := range ids {
 		if _, dead := deadArtifacts[id]; dead {
-			for _, suffix := range []string{".sock", ".json", ".codexapp.jsonl"} {
+			for _, suffix := range []string{".sock", ".json", ".codexapp.jsonl", ".claudep.jsonl"} {
 				if removeErr := os.Remove(filepath.Join(m.config.RunnerStateDir, id+suffix)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 					cleanupErrors = append(cleanupErrors, removeErr)
 				}

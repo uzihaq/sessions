@@ -5,12 +5,13 @@ import "encoding/json"
 type SessionTool string
 
 const (
-	ToolClaude         SessionTool = "claude-code"
-	ToolCodex          SessionTool = "codex"
-	ToolTerminal       SessionTool = "terminal"
-	ToolLane           SessionTool = "lane"
-	KindLane                       = "lane"
-	KindCodexAppServer             = "codex-app-server"
+	ToolClaude           SessionTool = "claude-code"
+	ToolCodex            SessionTool = "codex"
+	ToolTerminal         SessionTool = "terminal"
+	ToolLane             SessionTool = "lane"
+	KindLane                         = "lane"
+	KindCodexAppServer               = "codex-app-server"
+	KindClaudeStructured             = "claude-structured"
 )
 
 type SessionInfo struct {
@@ -41,6 +42,7 @@ type SessionInfo struct {
 	Fast              bool        `json:"fast,omitempty"`
 	ConversationID    string      `json:"conversationId,omitempty"`
 	RemoteEndpoint    string      `json:"remoteEndpoint,omitempty"`
+	ClaudeSessionID   string      `json:"claudeSessionId,omitempty"`
 	CreatorKind       string      `json:"creator_kind,omitempty"`
 	CreatorID         string      `json:"creator_id,omitempty"`
 	ParentSessionID   string      `json:"parent_session_id,omitempty"`

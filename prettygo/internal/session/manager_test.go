@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/claudep"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/codexapp"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
@@ -22,8 +23,10 @@ import (
 
 func TestCodexAppServerStructuredHistoryAndLifecycleAreAuthoritative(t *testing.T) {
 	root := t.TempDir()
+	config := testConfig(root)
+	config.UserStateRoot = blockIdlePushState(t, root)
 	launcher := prototest.NewLauncher()
-	manager := NewManager(testConfig(root), launcher, ManagerOptions{
+	manager := NewManager(config, launcher, ManagerOptions{
 		ActivityInterval: time.Hour,
 		Notify:           func(PushPayload) {},
 	})
@@ -127,6 +130,111 @@ func TestCodexAppServerConversationPersistsInMetadataAndLedger(t *testing.T) {
 	if len(lanes) != 1 || lanes[0].ProviderUUID != "019f7181-cb32-76e0-952d-2f5f7862e668" {
 		t.Fatalf("ledger state = %#v", lanes)
 	}
+}
+
+type claudeStructuredBoundLauncher struct{ *prototest.Launcher }
+
+func (l claudeStructuredBoundLauncher) Launch(ctx context.Context, request proto.LaunchRequest) (proto.Runner, error) {
+	request.Info.ClaudeSessionID = "019f7181-cb32-46e0-952d-2f5f7862e668"
+	return l.Launcher.Launch(ctx, request)
+}
+
+func TestClaudeStructuredHistoryLifecycleMetadataLedgerAndAuth(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	config.UserStateRoot = blockIdlePushState(t, root)
+	store, err := ledger.Open(context.Background(), ledger.Options{Path: filepath.Join(root, "ledger.sqlite3")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	t.Setenv("ANTHROPIC_API_KEY", "must-not-reach-structured-runner")
+	launcher := claudeStructuredBoundLauncher{Launcher: prototest.NewLauncher()}
+	manager := NewManager(config, launcher, ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+		Notify: func(PushPayload) {},
+	})
+	t.Cleanup(manager.Close)
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "claude", Cwd: root, Kind: state.KindClaudeStructured,
+		Args: []string{"--dangerously-skip-permissions", "--session-id", "019f7181-cb32-46e0-952d-2f5f7862e668"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Kind != state.KindClaudeStructured || created.Tool != state.ToolClaude || created.ClaudeSessionID == "" {
+		t.Fatalf("created structured Claude session = %#v", created)
+	}
+	metadata, err := state.ReadRunnerMetadata(filepath.Join(manager.config.RunnerStateDir, created.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Info.ClaudeSessionID != created.ClaudeSessionID {
+		t.Fatalf("metadata Claude session = %q, want %q", metadata.Info.ClaudeSessionID, created.ClaudeSessionID)
+	}
+	launch := launcher.Launches[len(launcher.Launches)-1]
+	if _, present := launch.Env["ANTHROPIC_API_KEY"]; present {
+		t.Fatalf("structured runner launch environment contains ANTHROPIC_API_KEY")
+	}
+
+	runner := launcher.Runner(created.ID)
+	user, _ := claudep.UserHistoryEvent(created.ClaudeSessionID, "hello", time.Unix(1, 0))
+	started, _ := claudep.TurnStartedEvent(created.ClaudeSessionID, time.Unix(2, 0))
+	runner.AddCodexEvent(json.RawMessage(user))
+	runner.AddCodexEvent(json.RawMessage(started))
+	awaitCondition(t, func() bool {
+		session, ok := manager.Get(created.ID)
+		return ok && session.Info().Working
+	})
+	manager.mu.Lock()
+	managed := manager.runtimes[created.ID]
+	manager.mu.Unlock()
+	managed.mu.Lock()
+	managed.pushWorkingObserved = false
+	managed.mu.Unlock()
+	assistant, err := claudep.NormalizeEvent(json.RawMessage(`{"type":"assistant","session_id":"019f7181-cb32-46e0-952d-2f5f7862e668","message":{"role":"assistant","content":[{"type":"text","text":"CLAUDEP_UNIT_OK"}]}}`), time.Unix(3, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := claudep.NormalizeEvent(json.RawMessage(`{"type":"result","subtype":"success","session_id":"019f7181-cb32-46e0-952d-2f5f7862e668","result":"CLAUDEP_UNIT_OK","usage":{"input_tokens":1,"output_tokens":1}}`), time.Unix(4, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.AddCodexEvent(assistant.Raw)
+	runner.AddCodexEvent(result.Raw)
+	awaitCondition(t, func() bool {
+		session, ok := manager.Get(created.ID)
+		return ok && !session.Info().Working && session.ClaudeEventCount() == 4
+	})
+	session, _ := manager.Get(created.ID)
+	snapshot, _, err := session.Snapshot(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snapshot, "[user]\nhello") || !strings.Contains(snapshot, "[assistant]\nCLAUDEP_UNIT_OK") {
+		t.Fatalf("structured Claude snapshot = %q", snapshot)
+	}
+	events, err := store.Events(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes := ledger.Fold(events)
+	if len(lanes) != 1 || lanes[0].ProviderUUID != created.ClaudeSessionID {
+		t.Fatalf("Claude provider ledger state = %#v", lanes)
+	}
+}
+
+// Lifecycle tests do not exercise web push. A regular file makes both the
+// idle-sentinel and VAPID directories unavailable, preventing their detached
+// goroutines from racing TempDir cleanup after the state assertions finish.
+func blockIdlePushState(t *testing.T, root string) string {
+	t.Helper()
+	path := filepath.Join(root, "push-disabled")
+	if err := os.WriteFile(path, []byte("disabled"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 type compositionLauncher struct {
