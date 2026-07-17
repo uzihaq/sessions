@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,21 +48,25 @@ type AttachOptions struct {
 	InitialReplayCap    int
 }
 
-func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner, name, onIdle string) (*Session, error) {
+func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner, metadata SessionMetadata) (*Session, error) {
 	terminal, err := mirror.NewSize(info.Cols, info.Rows)
 	if err != nil {
 		return nil, fmt.Errorf("create session mirror: %w", err)
 	}
 	tool := classifyTool(info.Cmd)
+	if metadata.Kind == KindLane {
+		tool = SessionTool("lane:" + filepath.Base(info.Cmd))
+	}
 	model, effort, fast := spawnControls(tool, info.Args)
 	now := time.Now().UnixMilli()
 	session := &Session{
 		runner: runner,
 		mirror: terminal,
 		info: SessionInfo{
-			ID: info.ID, Name: name, Cmd: info.Cmd, Args: append([]string{}, info.Args...),
+			ID: info.ID, Name: metadata.Name, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+			Cmd: info.Cmd, Args: append([]string{}, info.Args...),
 			Cwd: info.Cwd, Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt,
-			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: onIdle,
+			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: metadata.OnIdle,
 			Model: model, Effort: effort, Fast: fast,
 		},
 		nextSeq: 1,
@@ -252,6 +258,18 @@ func (s *Session) Snapshot(_ context.Context, cols int) (string, uint32, error) 
 	seq := uint32(0)
 	if s.nextSeq > 0 {
 		seq = s.nextSeq - 1
+	}
+	if s.info.Kind == KindLane {
+		const maximum = 64 * 1024
+		var output strings.Builder
+		for _, event := range s.outputs {
+			output.WriteString(event.Data)
+		}
+		text := output.String()
+		if len(text) > maximum {
+			text = text[len(text)-maximum:]
+		}
+		return text, seq, nil
 	}
 	if cols > 0 {
 		return s.mirror.ReflowTo(cols), seq, nil

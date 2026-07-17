@@ -39,9 +39,18 @@ type Registry struct {
 // PreparedSession is the complete, sanitized launch identity exposed to the
 // higher-level composition root before any launch side effect occurs.
 type PreparedSession struct {
-	Info proto.RunnerInfo
-	Name string
-	Tool SessionTool
+	Info     proto.RunnerInfo
+	Name     string
+	Kind     string
+	SpecPath string
+	Tool     SessionTool
+}
+
+type SessionMetadata struct {
+	Name     string
+	OnIdle   string
+	Kind     string
+	SpecPath string
 }
 
 // CreateLifecycle lets the session manager place durable boundaries around
@@ -88,7 +97,14 @@ func (r *Registry) CreateWithLifecycle(
 	if r.launcher == nil {
 		return SessionInfo{}, errors.New("runner launcher is unavailable")
 	}
+	kind := strings.TrimSpace(request.Kind)
+	if kind != "" && kind != KindLane {
+		return SessionInfo{}, fmt.Errorf("unsupported session kind %q", kind)
+	}
 	cmd := request.Cmd
+	if kind == KindLane && strings.TrimSpace(cmd) == "" {
+		return SessionInfo{}, errors.New("lane command is required")
+	}
 	if cmd == "" {
 		cmd = r.config.DefaultShell
 	}
@@ -119,8 +135,24 @@ func (r *Registry) CreateWithLifecycle(
 	if err != nil {
 		return SessionInfo{}, fmt.Errorf("generate session id: %w", err)
 	}
-	args := appendClaudeSessionID(cmd, request.Args, id)
-	args = withToolDefaultArgs(cmd, args)
+	args := append([]string{}, request.Args...)
+	tool := classifyTool(cmd)
+	if kind == KindLane {
+		tool = ToolLane
+	} else {
+		args = appendClaudeSessionID(cmd, args, id)
+		args = withToolDefaultArgs(cmd, args)
+	}
+	specPath := strings.TrimSpace(request.SpecPath)
+	if specPath != "" {
+		if !filepath.IsAbs(specPath) {
+			specPath = filepath.Join(cwd, specPath)
+		}
+		specPath, err = filepath.Abs(specPath)
+		if err != nil {
+			return SessionInfo{}, fmt.Errorf("resolve spec path: %w", err)
+		}
+	}
 
 	createdAt := time.Now().UnixMilli()
 	runnerInfo := proto.RunnerInfo{
@@ -138,12 +170,17 @@ func (r *Registry) CreateWithLifecycle(
 		Env:  r.runnerEnvironment(runnerInfo, request.Env),
 	}
 	prepared := PreparedSession{
-		Info: runnerInfo,
-		Name: strings.TrimSpace(request.Name),
-		Tool: classifyTool(cmd),
+		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Kind: kind,
+		SpecPath: specPath, Tool: tool,
 	}
 	if prepared.Name != "" {
 		launchRequest.Env["RUNNER_NAME"] = prepared.Name
+	}
+	if prepared.Kind != "" {
+		launchRequest.Env["RUNNER_KIND"] = prepared.Kind
+	}
+	if prepared.SpecPath != "" {
+		launchRequest.Env["RUNNER_SPEC_PATH"] = prepared.SpecPath
 	}
 	programArguments := r.launcher.ProgramArguments(launchRequest)
 	if len(programArguments) == 0 || !isExecutableFile(programArguments[0]) {
@@ -157,7 +194,8 @@ func (r *Registry) CreateWithLifecycle(
 			return SessionInfo{}, err
 		}
 	}
-	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo, prepared.Name); err != nil {
+	metadata := SessionMetadata{Name: prepared.Name, OnIdle: strings.TrimSpace(request.OnIdle), Kind: prepared.Kind, SpecPath: prepared.SpecPath}
+	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo, metadata); err != nil {
 		return SessionInfo{}, err
 	}
 	_, err = writePlist(r.config.LaunchAgentsDir, plistArgs{
@@ -190,17 +228,17 @@ func (r *Registry) CreateWithLifecycle(
 	if lifecycle.RunnerReady != nil {
 		lifecycle.RunnerReady(ctx, actual)
 	}
-	if err := writeMetadata(r.config.RunnerStateDir, actual, prepared.Name); err != nil {
+	if err := writeMetadata(r.config.RunnerStateDir, actual, metadata); err != nil {
 		return SessionInfo{}, err
 	}
-	session, err := r.register(ctx, runner, strings.TrimSpace(request.Name), strings.TrimSpace(request.OnIdle))
+	session, err := r.register(ctx, runner, metadata)
 	if err != nil {
 		return SessionInfo{}, err
 	}
 	return session.Info(), nil
 }
 
-func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onIdle string) (*Session, error) {
+func (r *Registry) register(ctx context.Context, runner proto.Runner, metadata SessionMetadata) (*Session, error) {
 	info := runner.Info()
 	if info.ID == "" {
 		return nil, errors.New("runner returned an empty session id")
@@ -208,7 +246,7 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 	if info.ProtocolVersion != proto.ProtocolVersion {
 		log.Printf("[protocol] runner %s reports v%d, daemon expects v%d; attaching anyway", info.ID, info.ProtocolVersion, proto.ProtocolVersion)
 	}
-	session, err := newSession(ctx, info, runner, name, onIdle)
+	session, err := newSession(ctx, info, runner, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +301,13 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, name, onId
 // Register attaches an already-probed runner to the in-memory registry. The
 // session runtime uses it after applying the conservative discovery policy.
 func (r *Registry) Register(ctx context.Context, runner proto.Runner, name, onIdle string) (*Session, error) {
-	return r.register(ctx, runner, name, onIdle)
+	return r.register(ctx, runner, SessionMetadata{Name: name, OnIdle: onIdle})
+}
+
+func (r *Registry) RegisterMetadata(ctx context.Context, runner proto.Runner, metadata RunnerMetadata, onIdle string) (*Session, error) {
+	return r.register(ctx, runner, SessionMetadata{
+		Name: metadata.Name, OnIdle: onIdle, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+	})
 }
 
 // MarkDiscovering exposes startup progress to the API while the higher-level
@@ -325,7 +369,7 @@ func (r *Registry) Discover(ctx context.Context) error {
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: runner id is %q", id, actual))
 			continue
 		}
-		if _, err := r.register(ctx, runner, metadata.Name, ""); err != nil {
+		if _, err := r.RegisterMetadata(ctx, runner, metadata, ""); err != nil {
 			attachErrors = append(attachErrors, fmt.Errorf("discover %s: %w", id, err))
 		}
 	}
@@ -473,9 +517,10 @@ func launchdPath(value string) string {
 	return strings.Join(append(prefix, parts...), ":")
 }
 
-func writeMetadata(dir string, info proto.RunnerInfo, name string) error {
+func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMetadata) error {
 	metadata := Metadata{
-		ID: info.ID, Name: name, Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
+		ID: info.ID, Name: sessionMetadata.Name, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
+		Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
 		SockPath: info.SocketPath,
 	}
@@ -487,8 +532,10 @@ func writeMetadata(dir string, info proto.RunnerInfo, name string) error {
 }
 
 type RunnerMetadata struct {
-	Info proto.RunnerInfo
-	Name string
+	Info     proto.RunnerInfo
+	Name     string
+	Kind     string
+	SpecPath string
 }
 
 func readRunnerMetadata(path string) (RunnerMetadata, error) {
@@ -506,7 +553,7 @@ func readRunnerMetadata(path string) (RunnerMetadata, error) {
 			Cols: metadata.Cols, Rows: metadata.Rows, CreatedAt: metadata.CreatedAt,
 			PID: metadata.PID, SocketPath: metadata.SockPath,
 		},
-		Name: metadata.Name,
+		Name: metadata.Name, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 	}, nil
 }
 

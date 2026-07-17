@@ -104,13 +104,17 @@ func (a *app) close() {
 func (a *app) dispatch() error {
 	switch a.sub {
 	case "ls":
-		return a.cmdLS(append([]string(nil), a.args...))
+		return a.cmdLSDispatch(append([]string(nil), a.args...))
+	case "lanes":
+		return a.cmdLanes(append([]string(nil), a.args...))
+	case "run":
+		return a.cmdRun(append([]string(nil), a.args...))
 	case "snap":
 		return a.cmdSnap(append([]string(nil), a.args...))
 	case "send", "input":
 		return a.cmdSend(append([]string(nil), a.args...))
 	case "last":
-		return a.cmdLast(append([]string(nil), a.args...))
+		return a.cmdLastDispatch(append([]string(nil), a.args...))
 	case "transcript":
 		return a.cmdTranscript(append([]string(nil), a.args...))
 	case "ask":
@@ -130,7 +134,7 @@ func (a *app) dispatch() error {
 	case "tail":
 		return a.cmdTail(append([]string(nil), a.args...))
 	case "wait":
-		return a.cmdWait(append([]string(nil), a.args...))
+		return a.cmdWaitDispatch(append([]string(nil), a.args...))
 	case "attach":
 		return a.cmdAttach(append([]string(nil), a.args...))
 	case "resize":

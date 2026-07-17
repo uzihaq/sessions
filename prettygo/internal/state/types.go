@@ -8,11 +8,15 @@ const (
 	ToolClaude   SessionTool = "claude-code"
 	ToolCodex    SessionTool = "codex"
 	ToolTerminal SessionTool = "terminal"
+	ToolLane     SessionTool = "lane"
+	KindLane                 = "lane"
 )
 
 type SessionInfo struct {
 	ID                string      `json:"id"`
 	Name              string      `json:"name,omitempty"`
+	Kind              string      `json:"kind,omitempty"`
+	SpecPath          string      `json:"specPath,omitempty"`
 	Cmd               string      `json:"cmd"`
 	Args              []string    `json:"args"`
 	Cwd               string      `json:"cwd"`
@@ -44,6 +48,8 @@ type CreateSessionRequest struct {
 	Rows      int               `json:"rows,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	Name      string            `json:"name,omitempty"`
+	Kind      string            `json:"kind,omitempty"`
+	SpecPath  string            `json:"specPath,omitempty"`
 	OnIdle    string            `json:"onIdle,omitempty"`
 	WaitReady bool              `json:"waitReady,omitempty"`
 }

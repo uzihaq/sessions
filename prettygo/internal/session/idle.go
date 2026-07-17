@@ -35,6 +35,9 @@ func sessionDisplayLabel(info state.SessionInfo) string {
 			return value
 		}
 	}
+	if info.Kind == state.KindLane && info.Cmd != "" {
+		return filepath.Base(info.Cmd)
+	}
 	if base := filepath.Base(info.Cwd); base != "." && base != string(filepath.Separator) && base != "" {
 		return base
 	}
