@@ -41,6 +41,13 @@ type SessionInfo struct {
 	Fast              bool        `json:"fast,omitempty"`
 	ConversationID    string      `json:"conversationId,omitempty"`
 	RemoteEndpoint    string      `json:"remoteEndpoint,omitempty"`
+	CreatorKind       string      `json:"creator_kind,omitempty"`
+	CreatorID         string      `json:"creator_id,omitempty"`
+	ParentSessionID   string      `json:"parent_session_id,omitempty"`
+	CreatorAncestry   []string    `json:"creator_ancestry,omitempty"`
+	RootCreatorKind   string      `json:"root_creator_kind,omitempty"`
+	RootCreatorID     string      `json:"root_creator_id,omitempty"`
+	ProvenanceStatus  string      `json:"provenance_status,omitempty"`
 }
 
 type CreateSessionRequest struct {
@@ -56,6 +63,10 @@ type CreateSessionRequest struct {
 	OnIdle    string            `json:"onIdle,omitempty"`
 	WaitReady bool              `json:"waitReady,omitempty"`
 	Force     bool              `json:"force,omitempty"`
+	// CreatorSessionID and CreatorOwnerID are populated from trusted HTTP
+	// headers at the daemon boundary. They are deliberately not JSON fields.
+	CreatorSessionID string `json:"-"`
+	CreatorOwnerID   string `json:"-"`
 }
 
 type ClaudeEventsWindow struct {

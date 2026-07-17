@@ -35,6 +35,13 @@ type session struct {
 	ExitedAt          *int64          `json:"exitedAt"`
 	ConversationID    string          `json:"conversationId,omitempty"`
 	RemoteEndpoint    string          `json:"remoteEndpoint,omitempty"`
+	CreatorKind       string          `json:"creator_kind,omitempty"`
+	CreatorID         string          `json:"creator_id,omitempty"`
+	ParentSessionID   string          `json:"parent_session_id,omitempty"`
+	CreatorAncestry   []string        `json:"creator_ancestry,omitempty"`
+	RootCreatorKind   string          `json:"root_creator_kind,omitempty"`
+	RootCreatorID     string          `json:"root_creator_id,omitempty"`
+	ProvenanceStatus  string          `json:"provenance_status,omitempty"`
 	Extra             json.RawMessage `json:"-"`
 }
 

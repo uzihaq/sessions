@@ -37,6 +37,7 @@ func TestStoreIsPrivateWALFullAndAppendOnly(t *testing.T) {
 	boundary := store.Boundaries()
 	if err := boundary.RecordCreated(context.Background(), Created{
 		Meta: Meta{LaneID: "lane-private"}, Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane-private",
+		CreatorKind: CreatorExternal, CreatorID: "store-test",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +80,32 @@ func TestObservationCapabilityCannotWriteTombstones(t *testing.T) {
 		if _, exists := methods.MethodByName(forbidden); exists {
 			t.Fatalf("observation capability unexpectedly exposes %s", forbidden)
 		}
+	}
+}
+
+func TestCreatedRequiresTypedCreatorProvenance(t *testing.T) {
+	store := openTestStore(t, Options{})
+	tests := []struct {
+		name string
+		kind CreatorKind
+		id   string
+		want string
+	}{
+		{name: "missing", want: "creator id is required"},
+		{name: "forged session", kind: CreatorSession, id: "forged", want: "invalid creator session UUID"},
+		{name: "bad user", kind: CreatorUser, id: "501", want: "invalid user creator id"},
+		{name: "bad kind", kind: "owner", id: "opaque", want: "invalid creator kind"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := store.Boundaries().RecordCreated(context.Background(), Created{
+				Meta: Meta{LaneID: "invalid-" + test.name}, Tool: "terminal", Cwd: "/tmp",
+				LaneUUID: "invalid-" + test.name, CreatorKind: test.kind, CreatorID: test.id,
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("RecordCreated() err=%v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -133,6 +160,7 @@ func TestActivityIsCoalescedAndOnlyTypedSourcesAdvanceRecency(t *testing.T) {
 	ctx := context.Background()
 	if err := store.Boundaries().RecordCreated(ctx, Created{
 		Meta: Meta{LaneID: "lane-activity", AtMS: 1000}, Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane-activity",
+		CreatorKind: CreatorExternal, CreatorID: "store-test",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +199,7 @@ func TestCrashSimulationKill9WriterKeepsDatabaseValid(t *testing.T) {
 	}
 	if err := store.Boundaries().RecordCreated(context.Background(), Created{
 		Meta: Meta{LaneID: "committed-before-crash"}, Tool: "terminal", Cwd: root, LaneUUID: "committed-before-crash",
+		CreatorKind: CreatorExternal, CreatorID: "store-test",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -246,6 +275,7 @@ func TestConcurrentObservationsAndUserKillLoseNoWrites(t *testing.T) {
 	if err := store.Boundaries().RecordCreated(ctx, Created{
 		Meta: Meta{EventID: "created", LaneID: laneID},
 		Tool: "terminal", Cwd: "/tmp", LaneUUID: laneID,
+		CreatorKind: CreatorExternal, CreatorID: "store-test",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -320,11 +350,11 @@ func TestConcurrentObservationsAndUserKillLoseNoWrites(t *testing.T) {
 func TestEventIDUniquenessIsTransactional(t *testing.T) {
 	store := openTestStore(t, Options{})
 	ctx := context.Background()
-	first := Created{Meta: Meta{EventID: "fixed-id", LaneID: "lane-a"}, Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane-a"}
+	first := Created{Meta: Meta{EventID: "fixed-id", LaneID: "lane-a"}, Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane-a", CreatorKind: CreatorExternal, CreatorID: "store-test"}
 	if err := store.Boundaries().RecordCreated(ctx, first); err != nil {
 		t.Fatal(err)
 	}
-	second := Created{Meta: Meta{EventID: "fixed-id", LaneID: "lane-b"}, Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane-b"}
+	second := Created{Meta: Meta{EventID: "fixed-id", LaneID: "lane-b"}, Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane-b", CreatorKind: CreatorExternal, CreatorID: "store-test"}
 	if err := store.Boundaries().RecordCreated(ctx, second); err == nil {
 		t.Fatal("duplicate event id unexpectedly committed")
 	}

@@ -45,6 +45,7 @@ func TestResolveAndReceiveClaudeConversationIdempotently(t *testing.T) {
 	if err := store.Boundaries().RecordCreated(ctx, ledger.Created{
 		Meta: ledger.Meta{LaneID: laneID}, Tool: "claude-code", Cwd: cwd,
 		ResumeArgv: resume, LaneUUID: laneID, ProviderUUID: provider,
+		CreatorKind: ledger.CreatorExternal, CreatorID: "migrate-test",
 	}); err != nil {
 		t.Fatal(err)
 	}

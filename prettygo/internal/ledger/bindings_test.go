@@ -15,6 +15,7 @@ func TestLiveAndMovedBindingQueriesFoldLifecycleAndRebindFacts(t *testing.T) {
 		if err := store.Boundaries().RecordCreated(ctx, Created{
 			Meta: Meta{LaneID: laneID, AtMS: atMS}, Name: name, Tool: "claude-code", Cwd: "/tmp",
 			ResumeArgv: resume, LaneUUID: laneID, ProviderUUID: provider,
+			CreatorKind: CreatorExternal, CreatorID: "bindings-test",
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -47,6 +48,7 @@ func TestLiveAndMovedBindingQueriesFoldLifecycleAndRebindFacts(t *testing.T) {
 	if err := store.Boundaries().RecordCreated(ctx, Created{
 		Meta: Meta{LaneID: "new-lane", AtMS: 300}, Name: "new name", Tool: "claude-code", Cwd: "/tmp",
 		ResumeArgv: resume, LaneUUID: "new-lane", ProviderUUID: provider,
+		CreatorKind: CreatorExternal, CreatorID: "bindings-test",
 	}); err != nil {
 		t.Fatal(err)
 	}

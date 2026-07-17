@@ -489,6 +489,9 @@ func (r *Registry) runnerEnvironment(info proto.RunnerInfo, caller map[string]st
 		environment[key] = value
 	}
 	environment["TERM"] = "xterm-256color"
+	// This identity belongs to the newly-created session. Set it after caller
+	// environment merging so a caller cannot forge a different descendant.
+	environment["PRETTY_SESSION_ID"] = info.ID
 	environment["RUNNER_ID"] = info.ID
 	environment["RUNNER_STATE_DIR"] = r.config.RunnerStateDir
 	environment["RUNNER_CMD"] = info.Cmd

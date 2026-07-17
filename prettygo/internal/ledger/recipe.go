@@ -6,7 +6,11 @@ import (
 	"strings"
 )
 
-var providerIDPattern = regexp.MustCompile(`(?i)^[0-9a-f-]{8,}$`)
+var (
+	providerIDPattern  = regexp.MustCompile(`(?i)^[0-9a-f-]{8,}$`)
+	sessionIDPattern   = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	userCreatorPattern = regexp.MustCompile(`^uid:[0-9]+$`)
+)
 
 // SafeResumeRecipe follows the normative TypeScript argument forms while
 // intentionally discarding every unrelated argument. The result can contain

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -267,6 +268,7 @@ func Adopt(
 			Meta: ledger.Meta{LaneID: created.ID, AtMS: time.Now().UnixMilli(), Actor: ledger.ActorAdopt},
 			Name: name, Tool: adoption.Tool, Cwd: adoption.Cwd,
 			ResumeArgv: resumeArgv, LaneUUID: created.ID, ProviderUUID: adoption.ProviderUUID,
+			CreatorKind: ledger.CreatorUser, CreatorID: "uid:" + strconv.Itoa(os.Getuid()),
 		})
 		if err != nil {
 			return AdoptResult{LaneID: created.ID, Adoption: adoption}, fmt.Errorf("adopted lane %s but created annotation failed: %w", created.ID, err)

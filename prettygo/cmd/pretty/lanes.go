@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +34,8 @@ type laneView struct {
 }
 
 type lanesResponse struct {
-	Lanes []laneView `json:"lanes"`
+	Lanes         []laneView `json:"lanes"`
+	UserCreatorID string     `json:"user_creator_id"`
 }
 
 func (a *app) cmdLSDispatch(args []string) error {
@@ -48,17 +50,16 @@ func (a *app) cmdLSDispatch(args []string) error {
 }
 
 func (a *app) cmdLanes(args []string) error {
-	filtered := args[:0]
-	for _, argument := range args {
-		if argument != "-a" && argument != "--include-exited" {
-			filtered = append(filtered, argument)
-		}
-	}
-	if len(filtered) != 0 {
-		return fail(1, "usage: pretty lanes")
+	options, err := parseLaneListOptions(args)
+	if err != nil {
+		return err
 	}
 	var response lanesResponse
 	if err := a.getJSON("/api/lanes", &response); err != nil {
+		return err
+	}
+	response.Lanes, err = filterLaneViews(response.Lanes, options, response.UserCreatorID)
+	if err != nil {
 		return err
 	}
 	if a.wantJSON {
@@ -68,7 +69,7 @@ func (a *app) cmdLanes(args []string) error {
 		_, err := io.WriteString(a.stdout, "(no lanes)\n")
 		return err
 	}
-	rows := [][]string{{"ID", "NAME", "TOOL", "CWD", "STATE", "EXIT", "DURATION"}}
+	rows := [][]string{{"ID", "NAME", "TOOL", "CWD", "STATE", "EXIT", "DURATION", "PROVENANCE"}}
 	for _, lane := range response.Lanes {
 		name := "-"
 		if strings.TrimSpace(lane.Name) != "" {
@@ -87,7 +88,7 @@ func (a *app) cmdLanes(args []string) error {
 		}
 		rows = append(rows, []string{
 			prefixString(lane.ID, 8), name, toolOfSession(lane.session),
-			strings.Replace(lane.Cwd, a.home, "~", 1), state, exit, duration,
+			strings.Replace(lane.Cwd, a.home, "~", 1), state, exit, duration, laneProvenanceLabel(lane),
 		})
 	}
 	widths := make([]int, len(rows[0]))
@@ -109,6 +110,178 @@ func (a *app) cmdLanes(args []string) error {
 		io.WriteString(a.stdout, "\n")
 	}
 	return nil
+}
+
+type laneListOptions struct {
+	all           bool
+	mine          bool
+	direct        bool
+	detach        bool
+	subtree       string
+	owner         string
+	explicitOwner bool
+}
+
+func parseLaneListOptions(args []string) (laneListOptions, error) {
+	options := laneListOptions{}
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "-a", "--include-exited":
+			// Lanes have always included retained exited entries; preserve this
+			// compatibility spelling as a no-op.
+		case "--all":
+			options.all = true
+		case "--mine":
+			options.mine = true
+		case "--direct":
+			options.direct = true
+		case "--detach":
+			options.detach = true
+		case "--owner", "--subtree":
+			if index+1 >= len(args) || strings.TrimSpace(args[index+1]) == "" || strings.HasPrefix(args[index+1], "--") {
+				return options, fail(1, "%s needs a non-empty id", args[index])
+			}
+			value := strings.TrimSpace(args[index+1])
+			if args[index] == "--owner" {
+				options.owner = value
+				options.explicitOwner = true
+				options.mine = true
+			} else {
+				options.subtree = value
+			}
+			index++
+		default:
+			return options, fail(1, "usage: pretty lanes [--all | --mine [--owner ID] | --subtree ID] [--direct] [--detach]")
+		}
+	}
+	if options.all && (options.mine || options.subtree != "" || options.direct || options.detach) {
+		return options, fail(1, "--all cannot be combined with provenance selectors")
+	}
+	if options.mine && options.subtree != "" {
+		return options, fail(1, "--mine and --subtree cannot be combined")
+	}
+	if options.direct && !options.mine && options.subtree == "" {
+		return options, fail(1, "--direct requires --mine or --subtree")
+	}
+	if options.detach && !options.explicitOwner {
+		return options, fail(1, "--detach requires an explicit --owner")
+	}
+	if options.explicitOwner && strings.TrimSpace(os.Getenv("PRETTY_SESSION_ID")) != "" && !options.detach {
+		return options, fail(1, "--owner conflicts with inherited PRETTY_SESSION_ID; pass --detach to select an external root")
+	}
+	return options, nil
+}
+
+func filterLaneViews(lanes []laneView, options laneListOptions, daemonUserID string) ([]laneView, error) {
+	if options.all || (!options.mine && options.subtree == "") {
+		return lanes, nil
+	}
+	kind, id := "session", options.subtree
+	if options.mine {
+		ownerEnvironment := os.Getenv("PRETTY_OWNER_ID")
+		if ownerEnvironment != "" && strings.TrimSpace(ownerEnvironment) != ownerEnvironment {
+			return nil, fail(1, "PRETTY_OWNER_ID must not contain surrounding whitespace")
+		}
+		sessionEnvironment := os.Getenv("PRETTY_SESSION_ID")
+		if sessionEnvironment != "" && strings.TrimSpace(sessionEnvironment) != sessionEnvironment {
+			return nil, fail(1, "PRETTY_SESSION_ID must not contain surrounding whitespace")
+		}
+		switch {
+		case options.owner != "":
+			kind, id = "external", options.owner
+		case ownerEnvironment != "":
+			kind, id = "external", ownerEnvironment
+		case sessionEnvironment != "":
+			if !looksLikeLaneID(sessionEnvironment) {
+				return nil, fail(1, "PRETTY_SESSION_ID is not a session UUID")
+			}
+			kind, id = "session", sessionEnvironment
+		default:
+			id = daemonUserID
+			if id == "" {
+				// Compatibility with older daemons which predate the principal hint.
+				id = "uid:" + strconv.Itoa(os.Getuid())
+			}
+			kind = "user"
+		}
+	}
+	if kind == "session" && options.subtree != "" {
+		resolved, err := resolveSubtreeID(lanes, id)
+		if err != nil {
+			return nil, err
+		}
+		id = resolved
+	}
+	if options.direct && kind != "session" {
+		return nil, fail(1, "--direct applies only to session ancestry")
+	}
+	filtered := make([]laneView, 0, len(lanes))
+	for _, lane := range lanes {
+		match := false
+		if kind == "session" {
+			if options.direct {
+				match = lane.CreatorKind == "session" && lane.CreatorID == id
+			} else {
+				for _, ancestor := range lane.CreatorAncestry {
+					if ancestor == id {
+						match = true
+						break
+					}
+				}
+				if len(lane.CreatorAncestry) == 0 {
+					match = lane.CreatorKind == "session" && lane.CreatorID == id
+				}
+			}
+		} else {
+			rootKind, rootID := lane.RootCreatorKind, lane.RootCreatorID
+			if rootKind == "" && lane.CreatorKind != "session" {
+				rootKind, rootID = lane.CreatorKind, lane.CreatorID
+			}
+			match = rootKind == kind && rootID == id
+		}
+		if match {
+			filtered = append(filtered, lane)
+		}
+	}
+	return filtered, nil
+}
+
+func resolveSubtreeID(lanes []laneView, idOrPrefix string) (string, error) {
+	candidates := make(map[string]struct{})
+	for _, lane := range lanes {
+		candidates[lane.ID] = struct{}{}
+		for _, ancestor := range lane.CreatorAncestry {
+			candidates[ancestor] = struct{}{}
+		}
+	}
+	if _, exact := candidates[idOrPrefix]; exact {
+		return idOrPrefix, nil
+	}
+	matches := make([]string, 0, 2)
+	for candidate := range candidates {
+		if strings.HasPrefix(candidate, idOrPrefix) {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", fail(1, "ambiguous subtree prefix %q", idOrPrefix)
+	}
+	if looksLikeLaneID(idOrPrefix) {
+		// A valid session can legitimately have no lane descendants, in which
+		// case it will not otherwise appear in the lane-only response.
+		return idOrPrefix, nil
+	}
+	return "", fail(1, "no session ancestry matching %q", idOrPrefix)
+}
+
+func laneProvenanceLabel(lane laneView) string {
+	if lane.ProvenanceStatus != "" {
+		return lane.ProvenanceStatus
+	}
+	return "-"
 }
 
 func formatLaneDuration(milliseconds int64) string {

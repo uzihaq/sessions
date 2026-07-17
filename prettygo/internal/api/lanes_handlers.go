@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -31,11 +32,17 @@ func (s *Server) handleLanesRoute(response http.ResponseWriter, request *http.Re
 				}
 				lanes = append(lanes, view)
 			}
-			s.sendJSON(response, http.StatusOK, map[string]any{"lanes": lanes}, corsOrigin)
+			s.sendJSON(response, http.StatusOK, map[string]any{
+				"lanes": lanes, "user_creator_id": "uid:" + strconv.Itoa(os.Getuid()),
+			}, corsOrigin)
 			return true
 		case http.MethodPost:
 			var body state.CreateSessionRequest
 			if err := readJSON(request, &body); err != nil {
+				s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+				return true
+			}
+			if err := captureCreatorHeaders(request, &body); err != nil {
 				s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
 				return true
 			}

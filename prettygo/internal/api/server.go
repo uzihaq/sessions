@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
@@ -22,7 +23,11 @@ import (
 	"github.com/uzihaq/pretty-pty/prettygo/internal/webassets"
 )
 
-const maxJSONBody = 2 * 1024 * 1024
+const (
+	maxJSONBody          = 2 * 1024 * 1024
+	creatorSessionHeader = "X-Pretty-Creator-Session"
+	creatorOwnerHeader   = "X-Pretty-Owner-ID"
+)
 
 type Server struct {
 	config               state.Config
@@ -213,6 +218,10 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
 			return
 		}
+		if err := captureCreatorHeaders(request, &body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
 		info, err := s.registry.Create(request.Context(), body)
 		if err != nil {
 			status := http.StatusBadRequest
@@ -355,12 +364,40 @@ func (s *Server) sendJSON(response http.ResponseWriter, status int, body any, co
 	}
 	response.Header().Set("Vary", "Origin")
 	response.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
-	response.Header().Set("Access-Control-Allow-Headers", "content-type, authorization")
+	response.Header().Set("Access-Control-Allow-Headers", "content-type, authorization, x-pretty-creator-session, x-pretty-owner-id")
 	response.WriteHeader(status)
 	if status == http.StatusNoContent {
 		return
 	}
 	_ = json.NewEncoder(response).Encode(body)
+}
+
+func captureCreatorHeaders(request *http.Request, body *state.CreateSessionRequest) error {
+	sessionID, hasSession, err := creatorHeaderValue(request.Header, creatorSessionHeader)
+	if err != nil {
+		return err
+	}
+	ownerID, hasOwner, err := creatorHeaderValue(request.Header, creatorOwnerHeader)
+	if err != nil {
+		return err
+	}
+	if hasSession && hasOwner {
+		return errors.New("creator session and external owner headers cannot be combined")
+	}
+	body.CreatorSessionID = sessionID
+	body.CreatorOwnerID = ownerID
+	return nil
+}
+
+func creatorHeaderValue(header http.Header, name string) (string, bool, error) {
+	values, present := header[http.CanonicalHeaderKey(name)]
+	if !present {
+		return "", false, nil
+	}
+	if len(values) != 1 || values[0] == "" {
+		return "", true, fmt.Errorf("%s must contain exactly one non-empty value", name)
+	}
+	return values[0], true, nil
 }
 
 func readJSON(request *http.Request, target any) error {

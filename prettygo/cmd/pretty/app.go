@@ -216,6 +216,26 @@ func pluck(args *[]string, target string) (string, bool) {
 	return "", false
 }
 
+func (a *app) configureCreateOwner(args *[]string) error {
+	owner, explicit := pluck(args, "--owner")
+	detach := removeFirst(args, "--detach")
+	if !explicit {
+		if detach {
+			return fail(1, "--detach requires --owner")
+		}
+		return nil
+	}
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return fail(1, "--owner needs a non-empty id")
+	}
+	if a.api.creatorSession != "" && !detach {
+		return fail(1, "--owner conflicts with inherited PRETTY_SESSION_ID; pass --detach to create an external root")
+	}
+	a.api.ownerID = owner
+	return nil
+}
+
 func writeJSON(w io.Writer, value any, indent bool) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
@@ -281,6 +301,12 @@ Session ids may be full ids or unique prefixes from ` + "`pretty ls`" + `.
 
 Subcommands:
   ls [-a | --include-exited]  list sessions (default: hides exited)
+  lanes [--all | --mine [--owner ID] | --subtree ID] [--direct] [--detach]
+                           list headless lanes. Plain lanes/--all is global;
+                           --mine follows PRETTY_OWNER_ID, PRETTY_SESSION_ID,
+                           then the daemon user. Session ancestry is transitive;
+                           --direct limits it to immediate children. Explicit
+                           --owner inside a session requires --detach.
   snap <id> [--raw]        print current buffer (default: clean text)
   tail <id> [-f] [-n N]    print last N (default 50) lines; -f to follow
   wait <id> [--idle Ns] [--timeout Ns]

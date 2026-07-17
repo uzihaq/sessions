@@ -27,6 +27,9 @@ func (a *app) cmdRun(args []string) error {
 		return fail(1, "usage: pretty run [--name N] [--cwd D] [--spec FILE] -- <cmd args...>")
 	}
 	options := append([]string(nil), args[:separator]...)
+	if err := a.configureCreateOwner(&options); err != nil {
+		return err
+	}
 	command := append([]string(nil), args[separator+1:]...)
 	name, hasName := pluck(&options, "--name")
 	if hasName && strings.TrimSpace(name) == "" {

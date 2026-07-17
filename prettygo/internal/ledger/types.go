@@ -69,6 +69,16 @@ type Meta struct {
 	Actor   Actor
 }
 
+// CreatorKind identifies the principal which directly created a session.
+// It is provenance for graph traversal, not an authorization decision.
+type CreatorKind string
+
+const (
+	CreatorSession  CreatorKind = "session"
+	CreatorUser     CreatorKind = "user"
+	CreatorExternal CreatorKind = "external"
+)
+
 // Created is the only payload accepted by the creation write-ahead boundary.
 // ResumeArgv is a reconstructed provider resume command, not the original
 // process argv. LaneUUID intentionally mirrors LaneID inside the payload so a
@@ -81,6 +91,8 @@ type Created struct {
 	ResumeArgv   []string
 	LaneUUID     string
 	ProviderUUID string
+	CreatorKind  CreatorKind
+	CreatorID    string
 }
 
 type UserKill struct {

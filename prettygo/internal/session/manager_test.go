@@ -528,6 +528,7 @@ func TestStartupRestartThenDiscoveryReconcilesAbsentLedgerLane(t *testing.T) {
 	const laneID = "00000000-0000-4000-8000-000000000123"
 	if err := store.Boundaries().RecordCreated(context.Background(), ledger.Created{
 		Meta: ledger.Meta{LaneID: laneID}, LaneUUID: laneID, Tool: string(state.ToolTerminal), Cwd: root,
+		CreatorKind: ledger.CreatorExternal, CreatorID: "manager-test",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -653,7 +654,10 @@ func TestLaunchdFreeCreateWritesMetadataAndPlist(t *testing.T) {
 
 	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
 		Cmd: "claude", Cwd: root, Name: "  lane acceptance  ",
-		Env: map[string]string{"SAFE": "a&b<c>", "RUNNER_ID": "caller-value", "NODE_OPTIONS": "bad"},
+		Env: map[string]string{
+			"SAFE": "a&b<c>", "RUNNER_ID": "caller-value",
+			"PRETTY_SESSION_ID": "caller-session", "NODE_OPTIONS": "bad",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -688,14 +692,16 @@ func TestLaunchdFreeCreateWritesMetadataAndPlist(t *testing.T) {
 	for _, want := range []string{
 		"tech.pretty-pty.runner." + created.ID,
 		"<key>KeepAlive</key>", "<key>SuccessfulExit</key>",
-		"<string>Interactive</string>", "<key>RUNNER_ID</key>",
+		"<string>Interactive</string>", "<key>RUNNER_ID</key>", "<key>PRETTY_SESSION_ID</key>",
+		"<string>" + created.ID + "</string>",
 		"<string>a&amp;b&lt;c&gt;</string>",
 	} {
 		if !strings.Contains(string(plist), want) {
 			t.Errorf("plist missing %q:\n%s", want, plist)
 		}
 	}
-	if strings.Contains(string(plist), "NODE_OPTIONS") || strings.Contains(string(plist), "caller-value") {
+	if strings.Contains(string(plist), "NODE_OPTIONS") || strings.Contains(string(plist), "caller-value") ||
+		strings.Contains(string(plist), "caller-session") {
 		t.Fatalf("unsafe environment leaked into plist:\n%s", plist)
 	}
 	assertMode(t, metadataPath, 0o600)

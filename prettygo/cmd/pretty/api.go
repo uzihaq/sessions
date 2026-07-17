@@ -15,10 +15,12 @@ import (
 )
 
 type apiClient struct {
-	host      string
-	port      string
-	tokenPath string
-	client    *http.Client
+	host           string
+	port           string
+	tokenPath      string
+	client         *http.Client
+	creatorSession string
+	ownerID        string
 }
 
 type apiResponse struct {
@@ -40,7 +42,9 @@ func newAPIClient(host, port, tokenPath string) (*apiClient, error) {
 	}
 	return &apiClient{
 		host: host, port: port, tokenPath: tokenPath,
-		client: &http.Client{Transport: transport},
+		client:         &http.Client{Transport: transport},
+		creatorSession: os.Getenv("PRETTY_SESSION_ID"),
+		ownerID:        os.Getenv("PRETTY_OWNER_ID"),
 	}, nil
 }
 
@@ -137,6 +141,15 @@ func (c *apiClient) request(ctx context.Context, method, path string, body any, 
 	}
 	if token := c.readToken(); token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if method == http.MethodPost && (path == "/api/sessions" || path == "/api/lanes") {
+		// An external principal takes precedence when inherited from the
+		// environment. Otherwise forward this CLI process's session ancestry.
+		if c.ownerID != "" {
+			request.Header.Set("X-Pretty-Owner-ID", c.ownerID)
+		} else if c.creatorSession != "" {
+			request.Header.Set("X-Pretty-Creator-Session", c.creatorSession)
+		}
 	}
 	response, err := c.client.Do(request)
 	if err != nil {

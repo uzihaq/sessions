@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -203,12 +204,12 @@ func (m *Manager) Config() state.Config      { return m.config }
 func (m *Manager) Uptime() time.Duration     { return time.Since(m.started) }
 func (m *Manager) IsDiscovering() bool       { return m.registry.IsDiscovering() }
 func (m *Manager) List(includeExited bool) []state.SessionInfo {
-	return m.registry.List(includeExited)
+	return m.withProvenance(context.Background(), m.registry.List(includeExited))
 }
 func (m *Manager) Get(id string) (*state.Session, bool) { return m.registry.Get(id) }
 func (m *Manager) DeepDiagnostics() []map[string]any    { return m.registry.DeepDiagnostics() }
 
-func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSession) error {
+func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSession, creatorKind ledger.CreatorKind, creatorID string) error {
 	if m.boundaries == nil {
 		return nil
 	}
@@ -221,10 +222,43 @@ func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSess
 		Meta: ledger.Meta{LaneID: info.ID, AtMS: info.CreatedAt},
 		Name: prepared.Name, Tool: string(prepared.Tool), Cwd: info.Cwd,
 		ResumeArgv: resumeArgv, LaneUUID: info.ID, ProviderUUID: providerUUID,
+		CreatorKind: creatorKind, CreatorID: creatorID,
 	}); err != nil {
 		return fmt.Errorf("record lane creation before launch: %w", err)
 	}
 	return nil
+}
+
+func (m *Manager) resolveCreator(ctx context.Context, request state.CreateSessionRequest) (ledger.CreatorKind, string, error) {
+	if request.CreatorSessionID != "" && request.CreatorOwnerID != "" {
+		return "", "", errors.New("creator session and external owner cannot both be set")
+	}
+	if request.CreatorOwnerID != "" {
+		if err := ledger.ValidateCreator(ledger.CreatorExternal, request.CreatorOwnerID); err != nil {
+			return "", "", err
+		}
+		return ledger.CreatorExternal, request.CreatorOwnerID, nil
+	}
+	if request.CreatorSessionID == "" {
+		id := "uid:" + strconv.Itoa(os.Getuid())
+		return ledger.CreatorUser, id, nil
+	}
+	if err := ledger.ValidateCreator(ledger.CreatorSession, request.CreatorSessionID); err != nil {
+		return "", "", err
+	}
+	if m.ledgerReader == nil {
+		return "", "", errors.New("cannot validate creator session: ledger reader is unavailable")
+	}
+	events, err := m.ledgerReader.Events(ctx, request.CreatorSessionID)
+	if err != nil {
+		return "", "", fmt.Errorf("validate creator session: %w", err)
+	}
+	for _, candidate := range ledger.Fold(events) {
+		if candidate.LaneID == request.CreatorSessionID && candidate.Created {
+			return ledger.CreatorSession, request.CreatorSessionID, nil
+		}
+	}
+	return "", "", fmt.Errorf("creator session %s has no created event", request.CreatorSessionID)
 }
 
 func (m *Manager) recordLaunchStarted(ctx context.Context, prepared state.PreparedSession) {
@@ -379,6 +413,75 @@ func (m *Manager) ledgerStates(ctx context.Context) ([]ledger.LaneState, error) 
 	return ledger.Fold(events), nil
 }
 
+func (m *Manager) withProvenance(ctx context.Context, infos []state.SessionInfo) []state.SessionInfo {
+	if m.ledgerReader == nil || len(infos) == 0 {
+		return infos
+	}
+	states, err := m.ledgerStates(ctx)
+	if err != nil {
+		log.Printf("[ledger] read provenance graph: %v", err)
+		return infos
+	}
+	byID := make(map[string]ledger.LaneState, len(states))
+	for _, candidate := range states {
+		byID[candidate.LaneID] = candidate
+	}
+	for index := range infos {
+		current, exists := byID[infos[index].ID]
+		if !exists || !current.Created {
+			continue
+		}
+		infos[index].CreatorKind = string(current.CreatorKind)
+		infos[index].CreatorID = current.CreatorID
+		if current.CreatorKind == ledger.CreatorSession {
+			infos[index].ParentSessionID = current.CreatorID
+		}
+
+		visited := map[string]struct{}{current.LaneID: {}}
+		parentDead := false
+		for current.CreatorKind == ledger.CreatorSession {
+			parentID := current.CreatorID
+			infos[index].CreatorAncestry = append(infos[index].CreatorAncestry, parentID)
+			if _, cycle := visited[parentID]; cycle {
+				infos[index].ProvenanceStatus = "cycle"
+				break
+			}
+			visited[parentID] = struct{}{}
+			parent, found := byID[parentID]
+			if !found || !parent.Created {
+				infos[index].RootCreatorKind = string(ledger.CreatorSession)
+				infos[index].RootCreatorID = parentID
+				infos[index].ProvenanceStatus = "parent-missing"
+				break
+			}
+			if provenanceParentDead(parent) {
+				parentDead = true
+			}
+			current = parent
+		}
+		if infos[index].RootCreatorKind == "" && current.CreatorKind != "" {
+			infos[index].RootCreatorKind = string(current.CreatorKind)
+			infos[index].RootCreatorID = current.CreatorID
+		}
+		if parentDead {
+			infos[index].ProvenanceStatus = "parent-dead"
+		} else if infos[index].ProvenanceStatus == "" {
+			if len(infos[index].CreatorAncestry) > 0 {
+				infos[index].ProvenanceStatus = "parent-live"
+			} else if current.CreatorKind != "" {
+				infos[index].ProvenanceStatus = "rooted"
+			} else {
+				infos[index].ProvenanceStatus = "legacy"
+			}
+		}
+	}
+	return infos
+}
+
+func provenanceParentDead(parent ledger.LaneState) bool {
+	return parent.UserKillRequested || parent.RunnerExited || parent.RunnerLost || parent.Reaped
+}
+
 func (m *Manager) recordDaemonRestart(ctx context.Context) {
 	lanes, err := m.ledgerStates(ctx)
 	if err != nil {
@@ -420,6 +523,11 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 	m.bindMu.Lock()
 	defer m.bindMu.Unlock()
 
+	creatorKind, creatorID, err := m.resolveCreator(ctx, request)
+	if err != nil {
+		return state.SessionInfo{}, fmt.Errorf("resolve lane creator: %w", err)
+	}
+
 	providerUUID, _ := ledger.ExistingProviderResume(request.Cmd, request.Args)
 	var takeover *ledger.LiveBinding
 	if providerUUID != "" && m.ledgerReader != nil {
@@ -447,7 +555,7 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 	}
 
 	beforeLaunch := func(ctx context.Context, prepared state.PreparedSession) error {
-		if err := m.recordCreated(ctx, prepared); err != nil {
+		if err := m.recordCreated(ctx, prepared, creatorKind, creatorID); err != nil {
 			return err
 		}
 		if takeover == nil {
@@ -479,7 +587,7 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 	if request.WaitReady {
 		m.waitReady(ctx, runtime)
 	}
-	return session.Info(), nil
+	return m.withProvenance(ctx, []state.SessionInfo{session.Info()})[0], nil
 }
 
 func (m *Manager) Kill(ctx context.Context, id string, force bool) bool {

@@ -228,6 +228,9 @@ func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error 
 	if err := validateResumeIdentity(value.Tool, value.ProviderUUID, value.ResumeArgv); err != nil {
 		return fmt.Errorf("record created: %w", err)
 	}
+	if err := ValidateCreator(value.CreatorKind, value.CreatorID); err != nil {
+		return fmt.Errorf("record created: %w", err)
+	}
 	if value.Actor == "" {
 		value.Actor = ActorDaemon
 	}
@@ -235,6 +238,7 @@ func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error 
 		Name: value.Name, Tool: value.Tool, Cwd: value.Cwd,
 		ResumeArgv: append([]string{}, value.ResumeArgv...),
 		LaneUUID:   value.LaneUUID, ProviderUUID: value.ProviderUUID,
+		CreatorKind: value.CreatorKind, CreatorID: value.CreatorID,
 	}
 	return w.store.append(ctx, EventCreated, value.Meta, payload, false)
 }
@@ -464,12 +468,14 @@ func (s *Store) QuickCheck(ctx context.Context) error {
 type emptyPayload struct{}
 
 type createdPayload struct {
-	Name         string   `json:"name,omitempty"`
-	Tool         string   `json:"tool"`
-	Cwd          string   `json:"cwd"`
-	ResumeArgv   []string `json:"argv"`
-	LaneUUID     string   `json:"lane_uuid"`
-	ProviderUUID string   `json:"provider_uuid,omitempty"`
+	Name         string      `json:"name,omitempty"`
+	Tool         string      `json:"tool"`
+	Cwd          string      `json:"cwd"`
+	ResumeArgv   []string    `json:"argv"`
+	LaneUUID     string      `json:"lane_uuid"`
+	ProviderUUID string      `json:"provider_uuid,omitempty"`
+	CreatorKind  CreatorKind `json:"creator_kind"`
+	CreatorID    string      `json:"creator_id"`
 }
 
 type providerPayload struct {
@@ -528,6 +534,31 @@ func validActor(actor Actor) bool {
 	default:
 		return false
 	}
+}
+
+// ValidateCreator checks the shape of a provenance principal. Existence of a
+// session creator is a higher-level ledger graph check performed by session.
+func ValidateCreator(kind CreatorKind, id string) error {
+	if strings.TrimSpace(id) != id || id == "" {
+		return errors.New("creator id is required and must not contain surrounding whitespace")
+	}
+	switch kind {
+	case CreatorSession:
+		if !sessionIDPattern.MatchString(id) {
+			return fmt.Errorf("invalid creator session UUID %q", id)
+		}
+	case CreatorUser:
+		if !userCreatorPattern.MatchString(id) {
+			return fmt.Errorf("invalid user creator id %q", id)
+		}
+	case CreatorExternal:
+		if len(id) > 256 || strings.ContainsAny(id, "\r\n\x00") {
+			return errors.New("external creator id must be at most 256 bytes without control separators")
+		}
+	default:
+		return fmt.Errorf("invalid creator kind %q", kind)
+	}
+	return nil
 }
 
 func validateResumeIdentity(tool, providerUUID string, argv []string) error {

@@ -15,9 +15,85 @@ import (
 	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
+
+func TestCreateHeadersBecomeValidatedLedgerProvenance(t *testing.T) {
+	root := t.TempDir()
+	config := state.Config{
+		DefaultShell: "/bin/sh", DefaultCwd: root, DefaultCols: 120, DefaultRows: 40,
+		StateRoot: filepath.Join(root, "state"), UserStateRoot: filepath.Join(root, "user-state"),
+		RunnerStateDir: filepath.Join(root, "state", "runners"), LaunchAgentsDir: filepath.Join(root, "agents"),
+	}
+	store, err := ledger.Open(context.Background(), ledger.Options{Path: filepath.Join(root, "ledger", "lanes.sqlite3")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	manager := sessionruntime.NewManager(config, prototest.NewLauncher(), sessionruntime.ManagerOptions{
+		DisableWatchers: true, ActivityInterval: time.Hour,
+		Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+	})
+	t.Cleanup(manager.Close)
+	server := New(config, manager, manager.Push())
+	body, _ := json.Marshal(state.CreateSessionRequest{Cmd: "/bin/sh", Cwd: root})
+
+	parentResponse := serve(t, server, http.MethodPost, "/api/sessions", bytes.NewReader(body), "127.0.0.1:1", nil)
+	if parentResponse.Code != http.StatusCreated {
+		t.Fatalf("parent status=%d body=%s", parentResponse.Code, parentResponse.Body.String())
+	}
+	var parent state.SessionInfo
+	decodeBody(t, parentResponse, &parent)
+
+	childResponse := serve(t, server, http.MethodPost, "/api/lanes", bytes.NewReader(body), "127.0.0.1:1", http.Header{
+		creatorSessionHeader: {parent.ID},
+	})
+	if childResponse.Code != http.StatusCreated {
+		t.Fatalf("child status=%d body=%s", childResponse.Code, childResponse.Body.String())
+	}
+	var child state.SessionInfo
+	decodeBody(t, childResponse, &child)
+	states := ledger.Fold(mustEvents(t, store, child.ID))
+	if len(states) != 1 || states[0].CreatorKind != ledger.CreatorSession || states[0].CreatorID != parent.ID {
+		t.Fatalf("child ledger provenance = %#v", states)
+	}
+
+	staleResponse := serve(t, server, http.MethodPost, "/api/lanes", bytes.NewReader(body), "127.0.0.1:1", http.Header{
+		creatorSessionHeader: {"00000000-0000-4000-8000-000000000099"},
+	})
+	if staleResponse.Code != http.StatusBadRequest || !strings.Contains(staleResponse.Body.String(), "has no created event") {
+		t.Fatalf("stale parent status=%d body=%s", staleResponse.Code, staleResponse.Body.String())
+	}
+	forged := serve(t, server, http.MethodPost, "/api/lanes", bytes.NewReader(body), "127.0.0.1:1", http.Header{
+		creatorSessionHeader: {"forged-parent"},
+	})
+	if forged.Code != http.StatusBadRequest || !strings.Contains(forged.Body.String(), "invalid creator session UUID") {
+		t.Fatalf("forged parent status=%d body=%s", forged.Code, forged.Body.String())
+	}
+	missing := serve(t, server, http.MethodPost, "/api/lanes", bytes.NewReader(body), "127.0.0.1:1", http.Header{
+		creatorSessionHeader: {""},
+	})
+	if missing.Code != http.StatusBadRequest || !strings.Contains(missing.Body.String(), "non-empty") {
+		t.Fatalf("missing parent status=%d body=%s", missing.Code, missing.Body.String())
+	}
+	combined := serve(t, server, http.MethodPost, "/api/lanes", bytes.NewReader(body), "127.0.0.1:1", http.Header{
+		creatorSessionHeader: {parent.ID}, creatorOwnerHeader: {"external"},
+	})
+	if combined.Code != http.StatusBadRequest || !strings.Contains(combined.Body.String(), "cannot be combined") {
+		t.Fatalf("combined headers status=%d body=%s", combined.Code, combined.Body.String())
+	}
+}
+
+func mustEvents(t *testing.T, store *ledger.Store, id string) []ledger.Event {
+	t.Helper()
+	events, err := store.Events(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return events
+}
 
 func TestHeadlessLaneLifecycleManifestAndLedger(t *testing.T) {
 	base, err := os.MkdirTemp("/tmp", "pretty-lane-e2e-")

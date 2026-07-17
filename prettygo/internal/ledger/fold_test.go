@@ -35,6 +35,29 @@ func toolCommand(tool string) string {
 	return "/bin/sh"
 }
 
+func TestCreatedProvenanceFoldsOnceAndRemainsImmutable(t *testing.T) {
+	parent := "00000000-0000-4000-8000-000000000001"
+	events := []Event{
+		ledgerEvent(1, "child", EventCreated, 100, createdPayload{
+			Tool: "terminal", Cwd: "/tmp", LaneUUID: "child",
+			CreatorKind: CreatorSession, CreatorID: parent,
+		}),
+		ledgerEvent(2, "child", EventCreated, 200, createdPayload{
+			Tool: "terminal", Cwd: "/tmp", LaneUUID: "child",
+			CreatorKind: CreatorExternal, CreatorID: "attempted-transfer",
+		}),
+	}
+	got := Fold(events)
+	if len(got) != 1 || got[0].CreatorKind != CreatorSession || got[0].CreatorID != parent {
+		t.Fatalf("folded creator = %#v", got)
+	}
+
+	legacy := Fold([]Event{createdLedgerEvent(1, "legacy", "terminal", "")})
+	if len(legacy) != 1 || !legacy[0].Created || legacy[0].CreatorKind != "" || legacy[0].CreatorID != "" {
+		t.Fatalf("legacy created event did not remain readable: %#v", legacy)
+	}
+}
+
 func TestTombstoneWinsForever(t *testing.T) {
 	provider := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	events := []Event{

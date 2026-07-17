@@ -177,6 +177,9 @@ func pluckControl(args *[]string, name string) (*string, error) {
 }
 
 func (a *app) cmdNew(args []string) error {
+	if err := a.configureCreateOwner(&args); err != nil {
+		return err
+	}
 	var body createSessionRequest
 	body.Force = removeFirst(&args, "--force")
 	forceAppServer := removeFirst(&args, "--codex-appserver")
