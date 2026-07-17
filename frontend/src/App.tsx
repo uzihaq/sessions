@@ -13,6 +13,7 @@ import { useServers, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { ParserIcon } from './components/ParserIcon';
+import { ConnectScreen } from './components/ConnectScreen';
 import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOrder';
 import { useTabLabel } from './lib/tabLabels';
 import { notify } from './lib/tauriBridge';
@@ -74,6 +75,11 @@ function isMessageObject(value: unknown): value is Record<string, unknown> {
 }
 
 export function App(): JSX.Element {
+  const activeServerId = useServers((state) => state.activeId);
+  return activeServerId ? <ConnectedApp /> : <ConnectScreen />;
+}
+
+function ConnectedApp(): JSX.Element {
   const rawSessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
   const setActive = useSessions((s) => s.setActive);

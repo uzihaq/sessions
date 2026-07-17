@@ -18,6 +18,51 @@ function scrubFragment(): void {
   );
 }
 
+interface RememberServerOptions {
+  name?: string;
+  token?: string | null;
+  select?: boolean;
+}
+
+// Shared first-run/add-server path. Hosted browser connections require TLS,
+// with loopback HTTP as the deliberate exception for a daemon on the device
+// running the browser. The endpoint is upserted so rescanning a QR link never
+// creates duplicates.
+export function rememberServerEndpoint(
+  endpointValue: string,
+  options: RememberServerOptions = {}
+): ServerConfig {
+  const endpoint = parseServerEndpoint(endpointValue);
+  if (endpoint.scheme === 'http' && !isLoopbackHost(endpoint.host)) {
+    throw new Error('Use HTTPS for remote servers. HTTP is allowed only on localhost.');
+  }
+
+  const store = useServers.getState();
+  const existing = store.servers.find((server) => matchesEndpoint(server, endpoint));
+  const tokenUpdate = options.token === undefined
+    ? {}
+    : { token: options.token?.trim() || undefined };
+  const name = options.name?.trim();
+
+  if (existing) {
+    store.updateServer(existing.id, {
+      ...endpoint,
+      ...tokenUpdate,
+      ...(name ? { name } : {})
+    });
+    if (options.select !== false) store.setActive(existing.id);
+    return useServers.getState().servers.find((server) => server.id === existing.id) ?? existing;
+  }
+
+  const created = store.addServer({
+    name: name || endpoint.host,
+    ...endpoint,
+    ...tokenUpdate
+  });
+  if (options.select !== false) store.setActive(created.id);
+  return created;
+}
+
 // Hosted connection links have the form:
 //   #endpoint=https%3A%2F%2Fmac.example.com&token=secret
 //
@@ -33,33 +78,9 @@ export function bootstrapHostedConnection(): void {
   const tokenValue = params.get('token');
   scrubFragment();
 
-  let endpoint: ReturnType<typeof parseServerEndpoint>;
   try {
-    endpoint = parseServerEndpoint(endpointValue);
+    rememberServerEndpoint(endpointValue, { token: tokenValue });
   } catch {
     return;
   }
-
-  // Hosted bootstrap links may only cross the network over TLS. Loopback
-  // HTTP remains available for local development and installed local apps.
-  if (endpoint.scheme === 'http' && !isLoopbackHost(endpoint.host)) return;
-
-  const store = useServers.getState();
-  const existing = store.servers.find((server) => matchesEndpoint(server, endpoint));
-  const tokenUpdate = tokenValue === null
-    ? {}
-    : { token: tokenValue.trim() || undefined };
-
-  if (existing) {
-    store.updateServer(existing.id, { ...endpoint, ...tokenUpdate });
-    store.setActive(existing.id);
-    return;
-  }
-
-  const created = store.addServer({
-    name: endpoint.host,
-    ...endpoint,
-    ...tokenUpdate
-  });
-  store.setActive(created.id);
 }

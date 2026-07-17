@@ -2,7 +2,7 @@
   "name": "Pretty PTY",
   "short_name": "Pretty PTY",
   "description": "PTY-first runtime for Claude/Codex sessions, accessible from anywhere over Tailscale.",
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#0a0a0a",
@@ -10,13 +10,13 @@
   "categories": ["developer", "productivity", "utilities"],
   "icons": [
     {
-      "src": "/icon.svg",
+      "src": "./icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/icon-maskable.svg",
+      "src": "./icon-maskable.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "maskable"

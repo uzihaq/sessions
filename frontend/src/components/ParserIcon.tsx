@@ -13,8 +13,8 @@ interface Props {
 }
 
 const IMG_BY_EMOJI: Record<string, { src: string; alt: string }> = {
-  '🟠': { src: '/claude.png',      alt: 'Claude' },
-  '🟢': { src: '/openai-icon.svg', alt: 'OpenAI' }
+  '🟠': { src: `${import.meta.env.BASE_URL}claude.png`,      alt: 'Claude' },
+  '🟢': { src: `${import.meta.env.BASE_URL}openai-icon.svg`, alt: 'OpenAI' }
 };
 
 export function ParserIcon({ icon, size = 16, className }: Props): JSX.Element {

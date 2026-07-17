@@ -18,34 +18,34 @@ export class AuthError extends Error {
 // call time. Switching servers in the dropdown changes what subsequent
 // fetches/WebSockets target without any other plumbing.
 //
-// Two modes:
-//   • Browser + the default "This machine" server entry — talk DIRECTLY
-//     to prettyd on the same host the page was loaded from
-//     (http://<page-hostname>:<prettyd-port>). The page and prettyd live
-//     on the same machine, so whatever address reached Vite (Tailscale
-//     IP, LAN IP) also reaches prettyd. We used to return '' here and
-//     let Vite's dev proxy forward — but the proxy is a single Node
-//     process that wedges under dozens of long-lived WebSockets: it
-//     held ~73 half-dead upstream legs while the daemon had moved on,
-//     and typing went into those zombie sockets ("can't type"). CORS on
-//     prettyd is wildcarded, so the direct cross-port call just works.
-//   • Tauri OR a non-local server entry (e.g. the Mac Mini from a
-//     MacBook Tauri install) — absolute URL from the configured host.
+// Every configured endpoint is authoritative. We use relative same-origin
+// URLs only when the selected server actually matches the page origin (the
+// embedded-daemon build). A hosted shell selecting http://localhost:8787
+// must keep that exact target; substituting window.location would send API
+// calls to pretty-pty.somewhere.site instead of the user's daemon.
 function useSameOriginDaemon(s: ServerConfig): boolean {
-  return !isTauri() && isLocalServer(s) && !import.meta.env.DEV;
+  if (isTauri()) return false;
+  const pageScheme = window.location.protocol === 'https:' ? 'https' : 'http';
+  const pagePort = window.location.port
+    ? Number(window.location.port)
+    : (pageScheme === 'https' ? 443 : 80);
+  const sameHost = s.host.toLowerCase() === window.location.hostname.toLowerCase()
+    || (isLocalServer(s) && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(window.location.hostname.toLowerCase()));
+  return sameHost && (s.scheme ?? 'http') === pageScheme && s.port === pagePort;
+}
+
+function hostForUrl(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 
 function httpBaseForServer(s: ServerConfig): string {
   if (useSameOriginDaemon(s)) {
     return window.location.origin;
   }
-  // Honour an explicit scheme (e.g. 'https' for remote servers behind TLS
-  // termination); fall back to 'http' so existing stored configs work.
+  // Honour the selected endpoint exactly. Falling back to HTTP keeps older
+  // stored configs (which predate the scheme field) compatible.
   const scheme = s.scheme ?? 'http';
-  if (!isTauri() && isLocalServer(s)) {
-    return `${scheme}://${window.location.hostname}:${s.port}`;
-  }
-  return `${scheme}://${s.host}:${s.port}`;
+  return `${scheme}://${hostForUrl(s.host)}:${s.port}`;
 }
 
 function httpBase(): string {
@@ -60,10 +60,7 @@ function wsBase(): string {
   }
   // Mirror the http→https / ws→wss mapping so TLS connections work end-to-end.
   const scheme = s.scheme === 'https' ? 'wss' : 'ws';
-  if (!isTauri() && isLocalServer(s)) {
-    return `${scheme}://${window.location.hostname}:${s.port}`;
-  }
-  return `${scheme}://${s.host}:${s.port}`;
+  return `${scheme}://${hostForUrl(s.host)}:${s.port}`;
 }
 
 // Returns `{ Authorization: 'Bearer <token>' }` when the supplied server has

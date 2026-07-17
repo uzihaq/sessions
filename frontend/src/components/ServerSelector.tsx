@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useServers } from '../lib/servers';
-import { formatServerEndpoint, parseServerEndpoint } from '../lib/serverEndpoint';
+import { formatServerEndpoint } from '../lib/serverEndpoint';
+import { rememberServerEndpoint } from '../lib/hostedBootstrap';
 import { useSessions } from '../store/sessions';
 
 // Compact dropdown that lives in the app header. Lists known prettyd
@@ -12,7 +13,6 @@ export function ServerSelector(): JSX.Element {
   const servers = useServers((s) => s.servers);
   const activeId = useServers((s) => s.activeId);
   const setActive = useServers((s) => s.setActive);
-  const addServer = useServers((s) => s.addServer);
   const removeServer = useServers((s) => s.removeServer);
   // Surface refresh errors here — if the chosen server is unreachable
   // the user sees an unreachable badge on the trigger instead of just
@@ -48,20 +48,15 @@ export function ServerSelector(): JSX.Element {
   }, [open]);
 
   const handleAdd = (): void => {
-    let parsed: ReturnType<typeof parseServerEndpoint>;
     try {
-      parsed = parseServerEndpoint(endpoint);
+      rememberServerEndpoint(endpoint, {
+        name,
+        token
+      });
     } catch (error) {
       setEndpointError(error instanceof Error ? error.message : 'Enter a valid endpoint.');
       return;
     }
-
-    const created = addServer({
-      name: name.trim() || parsed.host,
-      ...parsed,
-      token: token.trim() || undefined
-    });
-    setActive(created.id);
     setAdding(false);
     setOpen(false);
     setName('');

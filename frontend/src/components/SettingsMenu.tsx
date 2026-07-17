@@ -58,12 +58,13 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
 }
 
 async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
-  const existing = await navigator.serviceWorker.getRegistration('/');
+  const scope = new URL('.', document.baseURI);
+  const existing = await navigator.serviceWorker.getRegistration(scope.href);
   if (existing) return existing;
   if (import.meta.env.DEV) {
     throw new Error('Requires daemon-hosted HTTPS (enable tailscale serve)');
   }
-  return navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  return navigator.serviceWorker.register(new URL('sw.js', scope), { scope: scope.pathname });
 }
 
 // Settings popover anchored to a header button. Visible everywhere
@@ -163,7 +164,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
   const disablePush = async (): Promise<void> => {
     let endpoint: string | null = null;
     if ('serviceWorker' in navigator) {
-      const registration = await navigator.serviceWorker.getRegistration('/');
+      const registration = await navigator.serviceWorker.getRegistration(new URL('.', document.baseURI).href);
       const subscription = await registration?.pushManager.getSubscription();
       if (subscription) {
         endpoint = subscription.endpoint;
