@@ -22,13 +22,15 @@ import (
 )
 
 const (
-	workingBytesThreshold = 80
-	workingDecay          = 800 * time.Millisecond
-	discoveryAttempts     = 3
-	discoveryRetryDelay   = 800 * time.Millisecond
-	orphanStartingGrace   = 30 * time.Second
-	readySettle           = 800 * time.Millisecond
-	DefaultMassKillLimit  = 3
+	workingBytesThreshold    = 80
+	workingDecay             = 800 * time.Millisecond
+	discoveryAttempts        = 3
+	discoveryRetryDelay      = 800 * time.Millisecond
+	orphanStartingGrace      = 30 * time.Second
+	readySettle              = 800 * time.Millisecond
+	DefaultMassKillLimit     = 3
+	DefaultDiscoveryInterval = 30 * time.Second
+	discoveryIntervalEnv     = "PRETTYD_DISCOVERY_INTERVAL"
 )
 
 type MassKillGuard struct{ Limit int }
@@ -87,8 +89,9 @@ type Manager struct {
 	ledgerReader LedgerReader
 	notify       func(PushPayload)
 
-	deathMu    sync.Mutex
-	laneDeaths map[string]laneDeathBurst
+	deathMu     sync.Mutex
+	laneDeaths  map[string]laneDeathBurst
+	discoveryMu sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -736,18 +739,27 @@ func (m *Manager) scheduleReconnect(id string, delays []time.Duration) {
 		return
 	}
 	delay := delays[0]
+	next := delays
+	if len(delays) > 1 {
+		next = delays[1:]
+	}
 	time.AfterFunc(delay, func() {
 		select {
 		case <-m.ctx.Done():
 			return
 		default:
 		}
-		if _, exists := m.registry.Get(id); exists {
+		if existing, exists := m.registry.Get(id); exists {
+			if existing.Info().Exited {
+				m.scheduleReconnect(id, next)
+			}
 			return
 		}
 		path := filepath.Join(m.config.RunnerStateDir, id+".sock")
 		if _, err := os.Stat(path); err != nil {
-			m.scheduleReconnect(id, delays[1:])
+			if m.reconnectArtifactsExist(id) {
+				m.scheduleReconnect(id, next)
+			}
 			return
 		}
 		metadata, _ := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, id+".json"))
@@ -760,8 +772,54 @@ func (m *Manager) scheduleReconnect(id string, delays []time.Duration) {
 				return
 			}
 		}
-		m.scheduleReconnect(id, delays[1:])
+		if m.reconnectArtifactsExist(id) {
+			m.scheduleReconnect(id, next)
+		}
 	})
+}
+
+func (m *Manager) reconnectArtifactsExist(id string) bool {
+	for _, path := range []string{
+		filepath.Join(m.config.RunnerStateDir, id+".json"),
+		state.RunnerPlistPath(m.config.LaunchAgentsDir, id),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// RunDiscoveryLoop performs the startup scan and then repeats the exact same
+// guarded discovery path. PRETTYD_DISCOVERY_INTERVAL accepts Go duration
+// syntax (for example, "10s"); invalid and non-positive values keep the safe
+// production default.
+func (m *Manager) RunDiscoveryLoop() {
+	interval := DefaultDiscoveryInterval
+	if configured := strings.TrimSpace(os.Getenv(discoveryIntervalEnv)); configured != "" {
+		parsed, err := time.ParseDuration(configured)
+		if err != nil || parsed <= 0 {
+			log.Printf("runner discovery: invalid %s=%q; using %s", discoveryIntervalEnv, configured, interval)
+		} else {
+			interval = parsed
+		}
+	}
+	run := func() {
+		if err := m.Discover(m.ctx); err != nil && !errors.Is(err, context.Canceled) {
+			log.Printf("runner discovery: %v", err)
+		}
+	}
+	run()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
+	}
 }
 
 func (m *Manager) Discover(ctx context.Context) error {
@@ -769,11 +827,12 @@ func (m *Manager) Discover(ctx context.Context) error {
 }
 
 func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptions) error {
+	m.discoveryMu.Lock()
+	defer m.discoveryMu.Unlock()
 	m.registry.MarkDiscovering(true)
 	defer m.registry.MarkDiscovering(false)
 
-	candidates := m.orphanPlistCandidates()
-	deadArtifacts := make(map[string]struct{})
+	candidates, deadArtifacts := m.orphanPlistCandidates()
 	entries, err := os.ReadDir(m.config.RunnerStateDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read runner state directory: %w", err)
@@ -812,7 +871,7 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 			}
 			if metadataErr == nil && metadata.Info.PID > 0 && m.options.ProcessAlive(metadata.Info.PID) {
 				command := m.options.ProcessCommand(metadata.Info.PID)
-				if command == "" || strings.Contains(command, "runner.js") || strings.Contains(command, "runner.ts") || strings.Contains(command, id) {
+				if runnerCommandMatches(command, id, metadata.Info.Cmd) {
 					log.Printf("[discover] runner %s unreachable but pid %d alive — leaving it alone", id, metadata.Info.PID)
 					continue
 				}
@@ -844,11 +903,12 @@ func (m *Manager) DiscoverWithOptions(ctx context.Context, options DiscoverOptio
 	return errors.Join(cleanupErrors...)
 }
 
-func (m *Manager) orphanPlistCandidates() map[string]struct{} {
+func (m *Manager) orphanPlistCandidates() (map[string]struct{}, map[string]struct{}) {
 	candidates := make(map[string]struct{})
+	deadArtifacts := make(map[string]struct{})
 	entries, err := os.ReadDir(m.config.LaunchAgentsDir)
 	if err != nil {
-		return candidates
+		return candidates, deadArtifacts
 	}
 	const prefix = "tech.pretty-pty.runner."
 	for _, entry := range entries {
@@ -865,12 +925,41 @@ func (m *Manager) orphanPlistCandidates() map[string]struct{} {
 			continue
 		}
 		_, socketErr := os.Stat(filepath.Join(m.config.RunnerStateDir, id+".sock"))
-		_, metadataErr := os.Stat(filepath.Join(m.config.RunnerStateDir, id+".json"))
-		if errors.Is(socketErr, os.ErrNotExist) && errors.Is(metadataErr, os.ErrNotExist) {
-			candidates[id] = struct{}{}
+		metadataPath := filepath.Join(m.config.RunnerStateDir, id+".json")
+		_, metadataErr := os.Stat(metadataPath)
+		if !errors.Is(socketErr, os.ErrNotExist) {
+			continue
 		}
+		if errors.Is(metadataErr, os.ErrNotExist) {
+			candidates[id] = struct{}{}
+			continue
+		}
+		if metadataErr != nil {
+			continue
+		}
+		metadata, metadataErr := state.ReadRunnerMetadata(metadataPath)
+		if metadataErr != nil || metadata.Info.ID != id || metadata.Info.PID <= 0 {
+			continue
+		}
+		if m.options.ProcessAlive(metadata.Info.PID) {
+			command := m.options.ProcessCommand(metadata.Info.PID)
+			if runnerCommandMatches(command, id, metadata.Info.Cmd) {
+				continue
+			}
+			log.Printf("[discover] orphan runner %s pid %d is PID reuse (%s) — treating as dead", id, metadata.Info.PID, truncate(command, 60))
+		}
+		candidates[id] = struct{}{}
+		deadArtifacts[id] = struct{}{}
 	}
-	return candidates
+	return candidates, deadArtifacts
+}
+
+func runnerCommandMatches(command, id, expectedCommand string) bool {
+	if command == "" || strings.Contains(command, "runner.js") || strings.Contains(command, "runner.ts") || strings.Contains(command, id) {
+		return true
+	}
+	expectedBase := filepath.Base(strings.TrimSpace(expectedCommand))
+	return expectedBase != "" && expectedBase != "." && strings.Contains(command, expectedBase)
 }
 
 func (m *Manager) reap(id string) error {

@@ -55,11 +55,7 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	go func() {
-		if err := manager.Discover(context.Background()); err != nil {
-			log.Printf("runner discovery: %v", err)
-		}
-	}()
+	go manager.RunDiscoveryLoop()
 	go func() {
 		log.Printf("prettyd listening on http://%s", config.ListenAddress())
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
