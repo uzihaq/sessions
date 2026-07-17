@@ -30,6 +30,8 @@ const (
 	EventReaped            EventType = "reaped"
 	EventReopened          EventType = "reopened"
 	EventDaemonRestart     EventType = "daemon_restart"
+	EventMovedTo           EventType = "moved_to"
+	EventMovedFrom         EventType = "moved_from"
 )
 
 // Actor identifies the subsystem that observed or requested a lifecycle fact.
@@ -122,6 +124,21 @@ type Reopened struct {
 	NewLaneID string
 }
 
+// MovedTo and MovedFrom are provenance facts for resume-elsewhere. They do
+// not imply that either runner was killed.
+type MovedTo struct {
+	Meta
+	TargetEndpoint string
+	NewLaneID      string
+	CheckpointRef  string
+}
+
+type MovedFrom struct {
+	Meta
+	SourceEndpoint string
+	SourceLaneID   string
+}
+
 // BoundaryWriter exposes only the two actions that must durably commit before
 // their irreversible side effect. Creation errors forbid launch; kill errors
 // forbid sending the runner's kill frame.
@@ -146,6 +163,13 @@ type ObservationWriter interface {
 	RecordReaped(context.Context, Observation) error
 	RecordReopened(context.Context, Reopened) error
 	RecordDaemonRestart(context.Context, Observation) error
+}
+
+// MigrationWriter is separate from lifecycle observations because moves are
+// explicit user actions and do not alter managed-runner liveness.
+type MigrationWriter interface {
+	RecordMovedTo(context.Context, MovedTo) error
+	RecordMovedFrom(context.Context, MovedFrom) error
 }
 
 type Options struct {

@@ -171,6 +171,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": s.registry.List(includeExited)}, corsOrigin)
 		return
 	}
+	if s.handleMoveRoute(response, request, corsOrigin) {
+		return
+	}
 	if s.handleBackupRoute(response, request, corsOrigin) {
 		return
 	}
