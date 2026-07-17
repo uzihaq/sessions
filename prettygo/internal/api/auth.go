@@ -30,6 +30,9 @@ func (s *tokenStore) token() (string, error) {
 	if encoded, err := os.ReadFile(s.path); err == nil {
 		value := strings.TrimSpace(string(encoded))
 		if validToken(value) {
+			if err := os.Chmod(s.path, 0o600); err != nil {
+				return "", fmt.Errorf("chmod auth token: %w", err)
+			}
 			return value, nil
 		}
 	}
