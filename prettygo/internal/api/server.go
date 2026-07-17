@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/backup"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/integrations"
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
@@ -24,11 +25,12 @@ import (
 const maxJSONBody = 2 * 1024 * 1024
 
 type Server struct {
-	config   state.Config
-	registry sessionService
-	push     pushService
-	tokens   tokenStore
-	backups  *backup.Service
+	config               state.Config
+	registry             sessionService
+	push                 pushService
+	tokens               tokenStore
+	backups              *backup.Service
+	integrationEndpoints *integrations.Service
 }
 
 type sessionService interface {
@@ -59,7 +61,12 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 		}
 		notifications = sessionruntime.NewPushService(root)
 	}
-	server := &Server{config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath}}
+	server := &Server{
+		config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath},
+		integrationEndpoints: integrations.NewService(integrations.ServiceOptions{
+			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
+		}),
+	}
 	// Create the token while the daemon is starting, including when the open
 	// escape hatch is present. This keeps a fresh install secure without an
 	// inbound request and makes `pretty token` immediately useful. A failure
@@ -180,6 +187,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if s.handleBackupRoute(response, request, corsOrigin) {
+		return
+	}
+	if s.handleIntegrationsRoute(response, request, corsOrigin) {
 		return
 	}
 	if s.handleLanesRoute(response, request, corsOrigin) {
