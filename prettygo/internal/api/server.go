@@ -191,6 +191,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 
 	id, suffix, matched := sessionRoute(path)
 	if matched {
+		if s.handleWaitRoute(response, request, id, suffix, corsOrigin) {
+			return
+		}
 		s.handleSessionRoute(response, request, id, suffix, corsOrigin)
 		return
 	}
