@@ -16,6 +16,7 @@ import (
 
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/webassets"
 )
 
@@ -161,6 +162,14 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": s.registry.List(includeExited)}, corsOrigin)
 		return
 	}
+	if path == "/api/directories" && request.Method == http.MethodGet {
+		s.sendJSON(response, http.StatusOK, map[string]any{"directories": listDirectoryCandidates()}, corsOrigin)
+		return
+	}
+	if path == "/api/fs/list" && request.Method == http.MethodGet {
+		s.handleFSList(response, request, corsOrigin)
+		return
+	}
 	if path == "/api/sessions" && request.Method == http.MethodPost {
 		var body state.CreateSessionRequest
 		if err := readJSON(request, &body); err != nil {
@@ -173,6 +182,10 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 			return
 		}
 		s.sendJSON(response, http.StatusCreated, info, corsOrigin)
+		return
+	}
+	if path == "/api/claude-sessions" && request.Method == http.MethodGet {
+		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": watch.ScanResumableSessions()}, corsOrigin)
 		return
 	}
 
@@ -273,6 +286,14 @@ func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.
 			status = http.StatusNotFound
 		}
 		s.sendJSON(response, status, map[string]any{"ok": result}, corsOrigin)
+		return
+	}
+	if suffix == "/upload" && request.Method == http.MethodPost {
+		if !ok {
+			s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "unknown session", "id": id}, corsOrigin)
+			return
+		}
+		s.handleUpload(response, request, corsOrigin)
 		return
 	}
 	s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "not found", "path": request.URL.Path}, corsOrigin)

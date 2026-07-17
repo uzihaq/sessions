@@ -30,14 +30,24 @@ func EncodeClaudeCWD(cwd string) string {
 	return strings.ReplaceAll(cwd, "/", "-")
 }
 
-// ClaudeProjectDir returns Claude's default project directory for cwd. The
-// home directory is resolved only when this function is called.
-func ClaudeProjectDir(cwd string) (string, error) {
+// ClaudeProjectsDir returns Claude Code's per-user project-session root.
+// Resolve it at call time so tests and scratch daemons can use a fixture HOME.
+func ClaudeProjectsDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".claude", "projects", EncodeClaudeCWD(cwd)), nil
+	return filepath.Join(home, ".claude", "projects"), nil
+}
+
+// ClaudeProjectDir returns Claude's default project directory for cwd. The
+// home directory is resolved only when this function is called.
+func ClaudeProjectDir(cwd string) (string, error) {
+	projects, err := ClaudeProjectsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(projects, EncodeClaudeCWD(cwd)), nil
 }
 
 // ListClaudeJSONLFiles returns JSONL basenames in dir. Missing and unreadable

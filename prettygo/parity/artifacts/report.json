@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-07-16T23:04:13.246Z",
+  "generatedAt": "2026-07-16T23:16:59.235Z",
   "isolation": {
     "ts": {
-      "port": 60346,
+      "port": 61208,
       "home": "prettygo/parity/.r/ts/h",
       "state": "prettygo/parity/.r/ts/r"
     },
     "go": {
-      "port": 60347,
+      "port": 61209,
       "home": "prettygo/parity/.r/go/h",
       "state": "prettygo/parity/.r/go/r"
     },
@@ -414,60 +414,36 @@
           }
         },
         {
+          "type": "output",
+          "shape": {
+            "type": "object",
+            "fields": {
+              "data": "string",
+              "seq": "number",
+              "sessionId": "string",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "output",
+          "shape": {
+            "type": "object",
+            "fields": {
+              "data": "string",
+              "seq": "number",
+              "sessionId": "string",
+              "type": "string"
+            }
+          }
+        },
+        {
           "type": "inputAck",
           "shape": {
             "type": "object",
             "fields": {
               "ok": "boolean",
               "requestId": "string",
-              "sessionId": "string",
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "output",
-          "shape": {
-            "type": "object",
-            "fields": {
-              "data": "string",
-              "seq": "number",
-              "sessionId": "string",
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "output",
-          "shape": {
-            "type": "object",
-            "fields": {
-              "data": "string",
-              "seq": "number",
-              "sessionId": "string",
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "output",
-          "shape": {
-            "type": "object",
-            "fields": {
-              "data": "string",
-              "seq": "number",
-              "sessionId": "string",
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "output",
-          "shape": {
-            "type": "object",
-            "fields": {
-              "data": "string",
-              "seq": "number",
               "sessionId": "string",
               "type": "string"
             }
@@ -530,33 +506,19 @@
     "domSelector": ".xterm-rows",
     "apiCreates": [
       {
-        "url": "http://127.0.0.1:60347/api/sessions",
+        "url": "http://127.0.0.1:61209/api/sessions",
         "status": 201
       }
     ],
     "fsListings": [
       {
-        "url": "http://127.0.0.1:60347/api/fs/list",
-        "status": 404
+        "url": "http://127.0.0.1:61209/api/fs/list",
+        "status": 200
       }
     ],
-    "failedResponses": [
-      {
-        "method": "GET",
-        "url": "http://127.0.0.1:60347/api/fs/list",
-        "status": 404
-      },
-      {
-        "method": "GET",
-        "url": "http://127.0.0.1:60347/api/claude-sessions",
-        "status": 404
-      }
-    ],
+    "failedResponses": [],
     "screenshot": "prettygo/parity/artifacts/go-frontend-smoke.png",
-    "consoleErrors": [
-      "Failed to load resource: the server responded with a status of 404 (Not Found)",
-      "Failed to load resource: the server responded with a status of 404 (Not Found)"
-    ]
+    "consoleErrors": []
   },
   "verdict": {
     "httpIdentical": true,
