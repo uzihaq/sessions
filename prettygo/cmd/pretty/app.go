@@ -151,6 +151,8 @@ func (a *app) dispatch() error {
 		return a.cmdToken()
 	case "install":
 		return a.cmdInstall(append([]string(nil), a.args...))
+	case "uninstall":
+		return a.cmdUninstall(append([]string(nil), a.args...))
 	case "deploy":
 		return a.cmdDeploy(append([]string(nil), a.args...))
 	case "remote":
@@ -330,7 +332,8 @@ Subcommands:
   doctor                   per-session health: QoS (throttled?), spawn
                            path (dist/tsx), flags sessions needing recreate
   token                    print the daemon auth token (paste into web UI)
-  install                  register prettyd as a macOS LaunchAgent and start it
+  install                  register the dev prettyd macOS LaunchAgent and start it
+  uninstall                stop and remove the dev prettyd LaunchAgent
   deploy [--repo P] [--no-pull] [--dry-run]
                            canonical safe update: pull, always install both
                            dependency trees, build, smoke-import dist/server.js,

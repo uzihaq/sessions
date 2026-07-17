@@ -6,26 +6,57 @@ go_root="$(cd "$script_dir/.." && pwd)"
 repo_root="$(cd "$go_root/.." && pwd)"
 frontend_dir="$repo_root/frontend"
 frontend_dist="$frontend_dir/dist"
+frontend_bin="$frontend_dir/node_modules/.bin"
 asset_dir="$go_root/internal/webassets/dist"
 out_dir="${DIST_GO_DIR:-$go_root/dist-go}"
+embed_ui=true
 
-for command_name in npm go git; do
+if (($# > 1)); then
+  echo "usage: build-binaries.sh [--no-ui]" >&2
+  exit 2
+fi
+if (($# == 1)); then
+  if [[ "$1" != "--no-ui" ]]; then
+    echo "build-binaries: unknown option: $1" >&2
+    echo "usage: build-binaries.sh [--no-ui]" >&2
+    exit 2
+  fi
+  embed_ui=false
+fi
+
+required_commands=(go git)
+if [[ "$embed_ui" == true ]]; then
+  required_commands+=(npm)
+fi
+for command_name in "${required_commands[@]}"; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "build-binaries: required command not found: $command_name" >&2
     exit 1
   fi
 done
 
-echo "> building frontend"
-npm --prefix "$frontend_dir" run build
-if [[ ! -f "$frontend_dist/index.html" ]]; then
-  echo "build-binaries: frontend build did not produce $frontend_dist/index.html" >&2
-  exit 1
+if [[ "$embed_ui" == true ]]; then
+  for frontend_command in tsc vite; do
+    if [[ ! -x "$frontend_bin/$frontend_command" ]]; then
+      echo "build-binaries: missing $frontend_bin/$frontend_command; run npm --prefix frontend ci" >&2
+      exit 1
+    fi
+  done
+  echo "> building frontend via npm (frontend/node_modules/.bin)"
+  PATH="$frontend_bin:$PATH" npm --prefix "$frontend_dir" run build
+  if [[ ! -f "$frontend_dist/index.html" ]]; then
+    echo "build-binaries: frontend build did not produce $frontend_dist/index.html" >&2
+    exit 1
+  fi
+
+  mkdir -p "$asset_dir"
+  find "$asset_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  cp -R "$frontend_dist"/. "$asset_dir"/
+else
+  echo "> skipping frontend build and UI embedding (--no-ui)"
 fi
 
-mkdir -p "$asset_dir" "$out_dir"
-find "$asset_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-cp -R "$frontend_dist"/. "$asset_dir"/
+mkdir -p "$out_dir"
 
 version="$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf 'dev')"
 ldflags="-s -w -X main.version=$version"
@@ -57,16 +88,32 @@ for target in darwin/arm64 linux/arm64 linux/amd64; do
   goos="${target%/*}"
   goarch="${target#*/}"
   build_binary "$goos" "$goarch" pretty ""
-  build_binary "$goos" "$goarch" prettyd embedui
+  daemon_tags=""
+  if [[ "$embed_ui" == true ]]; then
+    daemon_tags="embedui"
+  fi
+  build_binary "$goos" "$goarch" prettyd "$daemon_tags"
   build_binary "$goos" "$goarch" runner ""
 done
 
 darwin_daemon="$out_dir/prettyd-darwin-arm64"
-plist="$out_dir/tech.pretty-pty.daemon-darwin-arm64.plist"
+darwin_runner="$out_dir/runner-darwin-arm64"
+daemon_label="${PRETTYD_DAEMON_LABEL:-tech.pretty-pty.dev.daemon}"
+daemon_host="${PRETTYD_HOST:-127.0.0.1}"
+daemon_port="${PRETTYD_PORT:-8787}"
+if [[ ! "$daemon_label" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+  echo "build-binaries: invalid PRETTYD_DAEMON_LABEL: $daemon_label" >&2
+  exit 2
+fi
+plist="$out_dir/${daemon_label}-darwin-arm64.plist"
 sed \
+  -e "s|@DAEMON_LABEL@|$daemon_label|g" \
   -e "s|@PRETTYD_BINARY@|$darwin_daemon|g" \
+  -e "s|@PRETTYD_RUNNER@|$darwin_runner|g" \
+  -e "s|@PRETTYD_HOST@|$daemon_host|g" \
+  -e "s|@PRETTYD_PORT@|$daemon_port|g" \
   -e "s|@WORKING_DIRECTORY@|$out_dir|g" \
-  -e "s|@LOG_PATH@|$out_dir/prettyd-darwin-arm64.log|g" \
+  -e "s|@LOG_PATH@|$out_dir/${daemon_label}-darwin-arm64.log|g" \
   "$script_dir/launchd.plist.tmpl" >"$plist"
 chmod 0644 "$plist"
 

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>tech.pretty-pty.daemon</string>
+  <string>@DAEMON_LABEL@</string>
   <key>ProgramArguments</key>
   <array>
     <string>@PRETTYD_BINARY@</string>
@@ -12,6 +12,12 @@
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PRETTYD_HOST</key>
+    <string>@PRETTYD_HOST@</string>
+    <key>PRETTYD_PORT</key>
+    <string>@PRETTYD_PORT@</string>
+    <key>PRETTYD_RUNNER</key>
+    <string>@PRETTYD_RUNNER@</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>@WORKING_DIRECTORY@</string>

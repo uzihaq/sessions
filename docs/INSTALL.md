@@ -24,9 +24,12 @@ open http://localhost:8787
 ```
 
 `pretty install` writes
-`~/Library/LaunchAgents/tech.pretty-pty.daemon.plist`, starts the per-user
+`~/Library/LaunchAgents/tech.pretty-pty.dev.daemon.plist`, starts the per-user
 daemon, waits for `http://127.0.0.1:8787/api/health`, and prints the auth token.
-It does not install or modify Claude Code, Codex, or Tailscale.
+The label defaults to the collision-safe development value above and can be
+configured with `PRETTYD_DAEMON_LABEL`. The generated plist always includes
+the selected host/port and the absolute adjacent `runner` path. It does not
+install or modify Claude Code, Codex, or Tailscale.
 
 ## Static archive
 
@@ -109,11 +112,10 @@ separate and continue to own their PTYs.
 ## Uninstall
 
 End or record any sessions you still need before removing their runtime. On
-macOS, stop the daemon and remove its launchd registration:
+macOS, stop the daemon and remove its launchd registration idempotently:
 
 ```sh
-launchctl bootout "gui/$(id -u)/tech.pretty-pty.daemon"
-rm -f "$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist"
+pretty uninstall
 ```
 
 Then use `brew uninstall pretty`, or remove `pretty`, `prettyd`, and `runner`
@@ -135,7 +137,8 @@ Common checks:
 - **`pretty: command not found`:** confirm the install directory is on `PATH`.
 - **Missing daemon or runner:** install all three binaries into the same
   directory and rerun `pretty install` on macOS.
-- **Daemon unhealthy:** inspect `~/Library/Logs/pretty-pty/daemon.log` on macOS.
+- **Daemon unhealthy:** inspect
+  `~/Library/Logs/pretty-pty/tech.pretty-pty.dev.daemon.log` on macOS.
 - **Web UI says unauthorized:** run `pretty token`, then paste the token into
   the UI's server settings.
 - **Port already in use:** choose a private scratch port with `PRETTYD_PORT` or

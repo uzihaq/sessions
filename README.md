@@ -29,9 +29,10 @@ pretty install
 open http://localhost:8787
 ```
 
-`pretty install` registers `prettyd` as a per-user launchd service, starts it,
-and checks its health. The browser will ask for the token printed by the command;
-print it again later with `pretty token`.
+`pretty install` registers `prettyd` as the per-user development LaunchAgent
+`tech.pretty-pty.dev.daemon`, starts it, and checks its health. Override the
+label explicitly with `PRETTYD_DAEMON_LABEL` when needed. The browser will ask
+for the token printed by the command; print it again later with `pretty token`.
 
 Static archives are published for macOS arm64 and Linux arm64/amd64. Download
 the archive for your platform from [GitHub Releases](https://github.com/uzihaq/pretty-PTY/releases),
@@ -121,8 +122,9 @@ pretty doctor
 pretty status <id>
 ```
 
-Daemon logs on macOS are in `~/Library/Logs/pretty-pty/daemon.log`. If the web
-UI cannot authenticate, run `pretty token`. See [installation troubleshooting](docs/INSTALL.md#troubleshooting)
+Daemon logs on macOS are in
+`~/Library/Logs/pretty-pty/tech.pretty-pty.dev.daemon.log`. If the web UI cannot
+authenticate, run `pretty token`. See [installation troubleshooting](docs/INSTALL.md#troubleshooting)
 and the [runbooks](docs/RUNBOOKS.md).
 
 ## Development
@@ -132,6 +134,7 @@ reference for protocols and state layout.
 
 ```sh
 make -C prettygo binaries
+make -C prettygo binaries-noui  # fast Go-only iteration
 cd prettygo && go test ./...
 ```
 

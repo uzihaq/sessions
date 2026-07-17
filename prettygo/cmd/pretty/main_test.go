@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -331,34 +333,124 @@ func compareJSONShape(path string, actual, expected any) string {
 	return ""
 }
 
-func TestDaemonPlistUsesScratchLabelWithoutLaunchctl(t *testing.T) {
-	label := "tech.pretty-pty.daemon.scratch-test"
-	directory := t.TempDir()
-	path := filepath.Join(directory, label+".plist")
-	xml := daemonPlist(daemonPlistOptions{
-		Label: label, Program: "/tmp/pretty-cli/prettyd", WorkingDir: "/tmp/pretty-cli",
-		LogFile: "/tmp/pretty-cli/daemon.log",
-		Env:     []plistEnvironment{{Key: "PATH", Value: "/usr/bin:/bin"}, {Key: "PRETTYD_PORT", Value: "18787"}},
-	})
-	if err := os.WriteFile(path, []byte(xml), 0o600); err != nil {
+func TestDaemonInstallConfigAndPlistWithoutLaunchctl(t *testing.T) {
+	home := t.TempDir()
+	binDir := filepath.Join(home, "bin")
+	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(xml, "<string>"+label+"</string>") != 1 {
-		t.Fatalf("scratch label missing or duplicated:\n%s", xml)
-	}
-	for _, want := range []string{"<string>/tmp/pretty-cli/prettyd</string>", "<key>KeepAlive</key>", "<key>PRETTYD_PORT</key>"} {
-		if !strings.Contains(xml, want) {
-			t.Fatalf("plist missing %q", want)
+	daemonPath := filepath.Join(binDir, "prettyd")
+	runnerPath := filepath.Join(binDir, "runner")
+	for _, path := range []string{daemonPath, runnerPath} {
+		if err := os.WriteFile(path, []byte("test binary"), 0o700); err != nil {
+			t.Fatal(err)
 		}
 	}
-	info, err := os.Stat(path)
+	t.Setenv("HOME", home)
+	t.Setenv("PRETTYD_BINARY", daemonPath)
+	t.Setenv("PRETTYD_RUNNER", runnerPath)
+	t.Setenv("PRETTYD_DAEMON_LABEL", "")
+
+	application, err := newApp([]string{"--host", "127.0.0.1", "--port", "18787"}, strings.NewReader(""), io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer application.close()
+	config, err := application.daemonInstallConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Label != defaultDaemonLabel {
+		t.Fatalf("default label = %q, want %q", config.Label, defaultDaemonLabel)
+	}
+	if config.DaemonPath != daemonPath || config.RunnerPath != runnerPath {
+		t.Fatalf("binary paths = (%q, %q), want (%q, %q)", config.DaemonPath, config.RunnerPath, daemonPath, runnerPath)
+	}
+	xml := daemonPlist(daemonPlistOptions{
+		Label: config.Label, ProgramArguments: []string{config.DaemonPath},
+		WorkingDir: filepath.Dir(config.DaemonPath), LogFile: config.LogFile, Env: config.Env,
+	})
+	for _, want := range []string{
+		"<string>" + defaultDaemonLabel + "</string>",
+		"<string>" + daemonPath + "</string>",
+		"<key>RunAtLoad</key>\n  <true/>",
+		"<key>KeepAlive</key>\n  <true/>",
+		"<key>PRETTYD_HOST</key>\n    <string>127.0.0.1</string>",
+		"<key>PRETTYD_PORT</key>\n    <string>18787</string>",
+		"<key>PRETTYD_RUNNER</key>\n    <string>" + runnerPath + "</string>",
+	} {
+		if !strings.Contains(xml, want) {
+			t.Fatalf("plist missing %q:\n%s", want, xml)
+		}
+	}
+	if strings.Contains(xml, "<string>tech.pretty-pty.daemon</string>") {
+		t.Fatalf("default plist contains the production label:\n%s", xml)
+	}
+	if err := os.MkdirAll(filepath.Dir(config.PlistPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDaemonPlist(config.PlistPath, xml); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(config.PlistPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("plist mode=%#o, want 0600", info.Mode().Perm())
 	}
-	t.Logf("scratch plist label=%s mode=%#o (launchctl not invoked)", label, info.Mode().Perm())
+	t.Logf("default dev plist label=%s mode=%#o (launchctl not invoked)", config.Label, info.Mode().Perm())
+}
+
+func TestDaemonLabelIsConfigurableAndValidated(t *testing.T) {
+	const scratch = "tech.pretty-pty.dev.daemon.scratch-test"
+	label, err := resolveDaemonLabel(scratch)
+	if err != nil || label != scratch {
+		t.Fatalf("resolveDaemonLabel(%q) = %q, %v", scratch, label, err)
+	}
+	for _, invalid := range []string{"", "/tmp/agent", "bad label", ".hidden"} {
+		if invalid == "" {
+			continue
+		}
+		if _, err := resolveDaemonLabel(invalid); err == nil {
+			t.Fatalf("resolveDaemonLabel(%q) unexpectedly succeeded", invalid)
+		}
+	}
+}
+
+func TestLocateInstallBinaryFindsBuildOutputSuffix(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "prettyd-"+runtime.GOOS+"-"+runtime.GOARCH)
+	if err := os.WriteFile(path, []byte("test binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if got := locateInstallBinary("prettyd", "", directory); got != path {
+		t.Fatalf("locateInstallBinary() = %q, want %q", got, path)
+	}
+}
+
+func TestInstallRejectsAnOccupiedDaemonPort(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
+	clock := time.Unix(0, 0)
+	application := &app{
+		host: "127.0.0.1", port: port,
+		now:   func() time.Time { return clock },
+		sleep: func(duration time.Duration) { clock = clock.Add(duration) },
+	}
+	if err := application.waitForDaemonPortAvailable(200 * time.Millisecond); err == nil || !strings.Contains(err.Error(), "already accepting connections") {
+		t.Fatalf("occupied port error = %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := application.waitForDaemonPortAvailable(200 * time.Millisecond); err != nil {
+		t.Fatalf("released port still reported occupied: %v", err)
+	}
 }
 
 func TestAgentControlTranslation(t *testing.T) {

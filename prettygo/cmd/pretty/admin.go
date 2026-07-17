@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -23,14 +24,18 @@ type plistEnvironment struct {
 }
 
 type daemonPlistOptions struct {
-	Label      string
-	Program    string
-	WorkingDir string
-	LogFile    string
-	Env        []plistEnvironment
+	Label            string
+	ProgramArguments []string
+	WorkingDir       string
+	LogFile          string
+	Env              []plistEnvironment
 }
 
 func daemonPlist(options daemonPlistOptions) string {
+	var programArguments strings.Builder
+	for _, argument := range options.ProgramArguments {
+		fmt.Fprintf(&programArguments, "    <string>%s</string>\n", escapeXML(argument))
+	}
 	var environment strings.Builder
 	for _, entry := range options.Env {
 		fmt.Fprintf(&environment, "    <key>%s</key>\n    <string>%s</string>\n", escapeXML(entry.Key), escapeXML(entry.Value))
@@ -43,7 +48,7 @@ func daemonPlist(options daemonPlistOptions) string {
   <string>%s</string>
   <key>ProgramArguments</key>
   <array>
-    <string>%s</string>
+%s
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -63,7 +68,7 @@ func daemonPlist(options daemonPlistOptions) string {
   <string>%s</string>
 </dict>
 </plist>
-`, escapeXML(options.Label), escapeXML(options.Program), environment.String(),
+`, escapeXML(options.Label), strings.TrimSuffix(programArguments.String(), "\n"), environment.String(),
 		escapeXML(options.WorkingDir), escapeXML(options.LogFile), escapeXML(options.LogFile))
 }
 
@@ -73,83 +78,199 @@ func escapeXML(value string) string {
 	return strings.ReplaceAll(value, ">", "&gt;")
 }
 
-func (a *app) cmdInstall(_ []string) error {
-	if runtime.GOOS != "darwin" {
-		return fail(2, "install requires macOS launchd")
+const defaultDaemonLabel = "tech.pretty-pty.dev.daemon"
+
+var (
+	validDaemonLabel     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
+	regexpServiceMissing = regexp.MustCompile(`(?i)(could not find specified service|no such process|service not found)`)
+)
+
+type daemonInstallConfig struct {
+	Label      string
+	DaemonPath string
+	RunnerPath string
+	PlistPath  string
+	LogFile    string
+	Env        []plistEnvironment
+}
+
+func resolveDaemonLabel(value string) (string, error) {
+	if value == "" {
+		value = defaultDaemonLabel
 	}
-	daemonPath := os.Getenv("PRETTYD_BINARY")
-	if daemonPath == "" {
-		if executable, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(executable), "prettyd")
+	if len(value) > 128 || !validDaemonLabel.MatchString(value) {
+		return "", fail(2, "invalid PRETTYD_DAEMON_LABEL %q: use letters, digits, dots, or hyphens", value)
+	}
+	return value, nil
+}
+
+func locateInstallBinary(name, explicit string, searchDirs ...string) string {
+	if explicit != "" {
+		resolved, err := filepath.Abs(explicit)
+		if err == nil && executableFile(resolved) {
+			return resolved
+		}
+		return ""
+	}
+	names := []string{name, fmt.Sprintf("%s-%s-%s", name, runtime.GOOS, runtime.GOARCH)}
+	seen := make(map[string]bool)
+	for _, directory := range searchDirs {
+		if directory == "" || seen[directory] {
+			continue
+		}
+		seen[directory] = true
+		for _, candidateName := range names {
+			candidate := filepath.Join(directory, candidateName)
 			if executableFile(candidate) {
-				daemonPath = candidate
+				resolved, err := filepath.Abs(candidate)
+				if err == nil {
+					return resolved
+				}
 			}
 		}
 	}
-	if daemonPath == "" {
-		daemonPath, _ = exec.LookPath("prettyd")
-	}
-	if daemonPath == "" || !executableFile(daemonPath) {
-		return fail(2, "install is incomplete: missing Go daemon binary 'prettyd' beside pretty or on PATH; reinstall pretty-pty")
-	}
-	daemonPath, _ = filepath.Abs(daemonPath)
-	launchctl := ""
-	for _, candidate := range []string{"/bin/launchctl", "/usr/bin/launchctl"} {
-		if executableFile(candidate) {
-			launchctl = candidate
-			break
+	if candidate, err := exec.LookPath(name); err == nil {
+		if resolved, absErr := filepath.Abs(candidate); absErr == nil && executableFile(resolved) {
+			return resolved
 		}
 	}
-	if launchctl == "" {
-		return fail(2, "install requires launchctl, but it was not found in /bin or /usr/bin")
+	return ""
+}
+
+func launchctlExecutable() string {
+	for _, candidate := range []string{"/bin/launchctl", "/usr/bin/launchctl"} {
+		if executableFile(candidate) {
+			return candidate
+		}
 	}
-	const daemonPATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+	return ""
+}
+
+func (a *app) daemonInstallConfig() (daemonInstallConfig, error) {
+	label, err := resolveDaemonLabel(os.Getenv("PRETTYD_DAEMON_LABEL"))
+	if err != nil {
+		return daemonInstallConfig{}, err
+	}
+	executable, _ := os.Executable()
+	cliDir := filepath.Dir(executable)
+	daemonPath := locateInstallBinary("prettyd", os.Getenv("PRETTYD_BINARY"), cliDir)
+	if daemonPath == "" {
+		return daemonInstallConfig{}, fail(2, "install is incomplete: missing Go daemon binary 'prettyd' beside pretty or on PATH; install all three Pretty binaries together")
+	}
+	runnerPath := locateInstallBinary("runner", os.Getenv("PRETTYD_RUNNER"), filepath.Dir(daemonPath), cliDir)
+	if runnerPath == "" {
+		return daemonInstallConfig{}, fail(2, "install is incomplete: missing Go runner binary 'runner' beside prettyd or pretty or on PATH; install all three Pretty binaries together")
+	}
 	logDir := filepath.Join(a.home, "Library", "Logs", "pretty-pty")
-	logFile := filepath.Join(logDir, "daemon.log")
 	agentsDir := filepath.Join(a.home, "Library", "LaunchAgents")
-	const label = "tech.pretty-pty.daemon"
-	plistPath := filepath.Join(agentsDir, label+".plist")
-	environment := []plistEnvironment{{Key: "PATH", Value: daemonPATH}}
-	for _, key := range []string{"PRETTYD_HOST", "PRETTYD_PORT", "PRETTYD_WEB_DIR", "PRETTYD_RUNNER"} {
+	const daemonPATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+	environment := []plistEnvironment{
+		{Key: "PATH", Value: daemonPATH},
+		{Key: "PRETTYD_HOST", Value: a.host},
+		{Key: "PRETTYD_PORT", Value: a.port},
+		{Key: "PRETTYD_RUNNER", Value: runnerPath},
+	}
+	for _, key := range []string{"PRETTYD_WEB_DIR", "PRETTYD_STATE_DIR", "PRETTY_LEDGER_PATH"} {
 		if value := os.Getenv(key); value != "" {
 			environment = append(environment, plistEnvironment{Key: key, Value: value})
 		}
 	}
-	if err := os.MkdirAll(agentsDir, 0o700); err != nil {
+	return daemonInstallConfig{
+		Label: label, DaemonPath: daemonPath, RunnerPath: runnerPath,
+		PlistPath: filepath.Join(agentsDir, label+".plist"),
+		LogFile:   filepath.Join(logDir, label+".log"),
+		Env:       environment,
+	}, nil
+}
+
+func writeDaemonPlist(path, xml string) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".pretty-daemon-plist-*")
+	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(logDir, 0o700); err != nil {
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := io.WriteString(temporary, xml); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func launchctlServiceMissing(output []byte, err error) bool {
+	return err != nil && regexpServiceMissing.Match(output)
+}
+
+func (a *app) waitForDaemonPortAvailable(timeout time.Duration) error {
+	address := net.JoinHostPort(a.host, a.port)
+	deadline := a.now().Add(timeout)
+	for {
+		connection, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err != nil {
+			return nil
+		}
+		_ = connection.Close()
+		if !a.now().Before(deadline) {
+			return fail(2, "cannot install development daemon: %s is already accepting connections from another process", address)
+		}
+		a.sleep(100 * time.Millisecond)
+	}
+}
+
+func (a *app) cmdInstall(args []string) error {
+	if len(args) != 0 {
+		return fail(1, "usage: pretty install")
+	}
+	if runtime.GOOS != "darwin" {
+		return fail(2, "install requires macOS launchd")
+	}
+	config, err := a.daemonInstallConfig()
+	if err != nil {
+		return err
+	}
+	launchctl := launchctlExecutable()
+	if launchctl == "" {
+		return fail(2, "install requires launchctl, but it was not found in /bin or /usr/bin")
+	}
+	if err := os.MkdirAll(filepath.Dir(config.PlistPath), 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(config.LogFile), 0o700); err != nil {
 		return err
 	}
 	xml := daemonPlist(daemonPlistOptions{
-		Label: label, Program: daemonPath, WorkingDir: filepath.Dir(daemonPath), LogFile: logFile, Env: environment,
+		Label: config.Label, ProgramArguments: []string{config.DaemonPath},
+		WorkingDir: filepath.Dir(config.DaemonPath), LogFile: config.LogFile, Env: config.Env,
 	})
-	if err := os.WriteFile(plistPath, []byte(xml), 0o600); err != nil {
+	if err := writeDaemonPlist(config.PlistPath, xml); err != nil {
 		return err
 	}
-	_ = os.Chmod(plistPath, 0o600)
-	fmt.Fprintf(a.stdout, "wrote plist: %s\n", plistPath)
+	fmt.Fprintf(a.stdout, "wrote plist: %s\n", config.PlistPath)
 	uid := os.Getuid()
 	domain := fmt.Sprintf("gui/%d", uid)
-	serviceTarget := domain + "/" + label
-	command := exec.Command(launchctl, "bootstrap", domain, plistPath)
+	serviceTarget := domain + "/" + config.Label
+	bootout := exec.Command(launchctl, "bootout", serviceTarget)
+	bootoutOutput, bootoutErr := bootout.CombinedOutput()
+	if bootoutErr != nil && !launchctlServiceMissing(bootoutOutput, bootoutErr) {
+		return fail(2, "launchctl bootout before reinstall failed (status=%s): %s", commandStatus(bootoutErr), outputOrError(bootoutOutput, bootoutErr))
+	}
+	if err := a.waitForDaemonPortAvailable(2 * time.Second); err != nil {
+		return err
+	}
+	command := exec.Command(launchctl, "bootstrap", domain, config.PlistPath)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		alreadyLoaded := false
-		if exitError, ok := err.(*exec.ExitError); ok && exitError.ExitCode() == 17 {
-			alreadyLoaded = true
-		}
-		if regexpAlreadyLoaded.Match(output) {
-			alreadyLoaded = true
-		}
-		if !alreadyLoaded {
-			return fail(2, "launchctl bootstrap failed (status=%s): %s", commandStatus(err), outputOrError(output, err))
-		}
-		kick := exec.Command(launchctl, "kickstart", "-k", serviceTarget)
-		kickOutput, kickErr := kick.CombinedOutput()
-		if kickErr != nil {
-			return fail(2, "launchctl kickstart failed (status=%s): %s", commandStatus(kickErr), outputOrError(kickOutput, kickErr))
-		}
+		return fail(2, "launchctl bootstrap failed (status=%s): %s", commandStatus(err), outputOrError(output, err))
 	}
 	deadline := a.now().Add(15 * time.Second)
 	lastHealthError := "no response"
@@ -166,25 +287,60 @@ func (a *app) cmdInstall(_ []string) error {
 		}
 		a.sleep(250 * time.Millisecond)
 	}
-	daemonHost := getenv("PRETTYD_HOST", "127.0.0.1")
-	daemonPort := getenv("PRETTYD_PORT", "8787")
 	if lastHealthError != "" {
-		return fail(2, "daemon did not become healthy at http://%s:%s/api/health within 15s (%s); see %s", daemonHost, daemonPort, lastHealthError, logFile)
+		return fail(2, "daemon did not become healthy at http://%s:%s/api/health within 15s (%s); see %s", a.host, a.port, lastHealthError, config.LogFile)
 	}
 	token := a.api.readToken()
-	io.WriteString(a.stdout, "\nprettyd daemon registered, started, and healthy.\n")
-	fmt.Fprintf(a.stdout, "  URL:   http://%s:%s\n", daemonHost, daemonPort)
+	io.WriteString(a.stdout, "\nprettyd development daemon registered, started, and healthy.\n")
+	fmt.Fprintf(a.stdout, "  Label: %s\n", config.Label)
+	fmt.Fprintf(a.stdout, "  URL:   http://%s:%s\n", a.host, a.port)
 	if token != "" {
 		fmt.Fprintf(a.stdout, "  Token: %s\n", token)
 		io.WriteString(a.stdout, "\nPaste the URL and token into the pretty-PTY web UI (server settings).\n")
 	} else {
 		io.WriteString(a.stdout, "\nToken not yet generated — give the daemon a moment, then run: pretty token\n")
 	}
-	fmt.Fprintf(a.stdout, "  Logs:  %s\n", logFile)
+	fmt.Fprintf(a.stdout, "  Logs:  %s\n", config.LogFile)
 	return nil
 }
 
-var regexpAlreadyLoaded = regexp.MustCompile(`(?i)already (loaded|bootstrapped)`)
+func (a *app) cmdUninstall(args []string) error {
+	if len(args) != 0 {
+		return fail(1, "usage: pretty uninstall")
+	}
+	if runtime.GOOS != "darwin" {
+		return fail(2, "uninstall requires macOS launchd")
+	}
+	label, err := resolveDaemonLabel(os.Getenv("PRETTYD_DAEMON_LABEL"))
+	if err != nil {
+		return err
+	}
+	launchctl := launchctlExecutable()
+	if launchctl == "" {
+		return fail(2, "uninstall requires launchctl, but it was not found in /bin or /usr/bin")
+	}
+	serviceTarget := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
+	command := exec.Command(launchctl, "bootout", serviceTarget)
+	output, bootoutErr := command.CombinedOutput()
+	if bootoutErr != nil && !launchctlServiceMissing(output, bootoutErr) {
+		return fail(2, "launchctl bootout failed (status=%s): %s", commandStatus(bootoutErr), outputOrError(output, bootoutErr))
+	}
+	plistPath := filepath.Join(a.home, "Library", "LaunchAgents", label+".plist")
+	removed := true
+	if err := os.Remove(plistPath); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		removed = false
+	}
+	if bootoutErr != nil && !removed {
+		fmt.Fprintf(a.stdout, "prettyd development daemon already uninstalled (label %s)\n", label)
+		return nil
+	}
+	fmt.Fprintf(a.stdout, "prettyd development daemon uninstalled (label %s)\n", label)
+	fmt.Fprintf(a.stdout, "state and logs were preserved; removed plist: %s\n", plistPath)
+	return nil
+}
 
 func commandStatus(err error) string {
 	if exitError, ok := err.(*exec.ExitError); ok {
