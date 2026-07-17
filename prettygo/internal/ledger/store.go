@@ -57,6 +57,7 @@ type Store struct {
 
 type boundaryWriter struct{ store *Store }
 type observationWriter struct{ store *Store }
+type migrationWriter struct{ store *Store }
 
 // DefaultPath resolves the ledger outside Pretty's runner state directory.
 func DefaultPath() (string, error) {
@@ -212,6 +213,8 @@ func (s *Store) Boundaries() BoundaryWriter { return boundaryWriter{store: s} }
 
 func (s *Store) Observations() ObservationWriter { return observationWriter{store: s} }
 
+func (s *Store) Migrations() MigrationWriter { return migrationWriter{store: s} }
+
 func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error {
 	if value.LaneID == "" {
 		value.LaneID = value.LaneUUID
@@ -304,6 +307,30 @@ func (w observationWriter) RecordReopened(ctx context.Context, value Reopened) e
 
 func (w observationWriter) RecordDaemonRestart(ctx context.Context, value Observation) error {
 	return w.store.observe(ctx, EventDaemonRestart, value.Meta, ActorDaemon, emptyPayload{})
+}
+
+func (w migrationWriter) RecordMovedTo(ctx context.Context, value MovedTo) error {
+	if value.Actor == "" {
+		value.Actor = ActorUser
+	}
+	if value.TargetEndpoint == "" || value.NewLaneID == "" {
+		return errors.New("record moved_to: target endpoint and new lane id are required")
+	}
+	payload := movedToPayload{
+		TargetEndpoint: value.TargetEndpoint, NewLaneID: value.NewLaneID, CheckpointRef: value.CheckpointRef,
+	}
+	return w.store.append(ctx, EventMovedTo, value.Meta, payload, false)
+}
+
+func (w migrationWriter) RecordMovedFrom(ctx context.Context, value MovedFrom) error {
+	if value.Actor == "" {
+		value.Actor = ActorDaemon
+	}
+	if value.SourceEndpoint == "" || value.SourceLaneID == "" {
+		return errors.New("record moved_from: source endpoint and source lane id are required")
+	}
+	payload := movedFromPayload{SourceEndpoint: value.SourceEndpoint, SourceLaneID: value.SourceLaneID}
+	return w.store.append(ctx, EventMovedFrom, value.Meta, payload, false)
 }
 
 func (s *Store) observe(ctx context.Context, kind EventType, meta Meta, actor Actor, payload any) error {
@@ -448,6 +475,17 @@ type runnerExitPayload struct {
 
 type reopenedPayload struct {
 	NewLaneID string `json:"newLaneId"`
+}
+
+type movedToPayload struct {
+	TargetEndpoint string `json:"target_endpoint"`
+	NewLaneID      string `json:"new_lane_id"`
+	CheckpointRef  string `json:"checkpoint_ref,omitempty"`
+}
+
+type movedFromPayload struct {
+	SourceEndpoint string `json:"source_endpoint"`
+	SourceLaneID   string `json:"source_lane_id"`
 }
 
 func randomUUID() (string, error) {
