@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 )
@@ -16,15 +16,14 @@ func TestCommitFiresOnRealCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		writeFile(t, filepath.Join(repo, "work.txt"), "second\n")
-		git(t, repo, "add", "work.txt")
-		git(t, repo, "commit", "-m", "real second commit")
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result, err := condition.Wait(ctx)
+	commit := condition.(*commitCondition)
+	ready := observeWatchRegistration(commit)
+	done := startWait(t, commit)
+	<-ready
+	writeFile(t, filepath.Join(repo, "work.txt"), "second\n")
+	git(t, repo, "add", "work.txt")
+	git(t, repo, "commit", "-m", "real second commit")
+	result, err := waitResult(done)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,11 +44,19 @@ func TestCommitRechecksAfterWatcherRegistration(t *testing.T) {
 	git(t, repo, "commit", "-q", "-m", "event before watcher")
 
 	// The mutation and its fsnotify event happened before Wait registered its
-	// watcher. A short deadline proves the immediate post-registration check
-	// sees the new HEAD instead of waiting for the five-second poll fallback.
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	result, err := condition.Wait(ctx)
+	// watcher. A controlled ticker that never fires proves the immediate
+	// post-registration check sees the new HEAD without the poll fallback.
+	commit := condition.(*commitCondition)
+	intervals := make(chan time.Duration, 1)
+	commit.ticker = func(interval time.Duration) conditionTicker {
+		intervals <- interval
+		return conditionTicker{ticks: make(chan time.Time), stop: func() {}}
+	}
+	done := startWait(t, commit)
+	if interval := <-intervals; interval != commitPollInterval {
+		t.Fatalf("poll interval = %s, want %s", interval, commitPollInterval)
+	}
+	result, err := waitResult(done)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,32 +76,37 @@ func TestCommitFiveSecondPollFallback(t *testing.T) {
 	// five-second ticker must remain sufficient for liveness.
 	commit.logPath = filepath.Join(t.TempDir(), "missing", "logs", "HEAD")
 
-	type outcome struct {
-		result Result
-		err    error
+	checked := make(chan struct{}, 1)
+	commit.checked = func() { checked <- struct{}{} }
+	ticks := make(chan time.Time)
+	intervals := make(chan time.Duration, 1)
+	commit.ticker = func(interval time.Duration) conditionTicker {
+		intervals <- interval
+		return conditionTicker{ticks: ticks, stop: func() {}}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
-	defer cancel()
-	started := time.Now()
-	done := make(chan outcome, 1)
-	go func() {
-		result, err := commit.Wait(ctx)
-		done <- outcome{result: result, err: err}
-	}()
-	time.Sleep(100 * time.Millisecond)
+	done := startWait(t, commit)
+	if interval := <-intervals; interval != commitPollInterval {
+		t.Fatalf("poll interval = %s, want %s", interval, commitPollInterval)
+	}
+	<-checked
 	writeFile(t, filepath.Join(repo, "work.txt"), "poll only\n")
 	git(t, repo, "add", "work.txt")
 	git(t, repo, "commit", "-q", "-m", "poll fallback")
+	select {
+	case observed := <-done:
+		t.Fatalf("watcher-free wait completed before its poll tick: %#v", observed)
+	default:
+	}
+	ticks <- time.Now()
 
 	observed := <-done
 	if observed.err != nil {
 		t.Fatal(observed.err)
 	}
-	elapsed := time.Since(started)
-	if observed.result.Subject != "poll fallback" || elapsed < commitPollInterval {
-		t.Fatalf("poll fallback result=%#v elapsed=%s", observed.result, elapsed)
+	if observed.result.Subject != "poll fallback" {
+		t.Fatalf("poll fallback result=%#v", observed.result)
 	}
-	t.Logf("poll-only commit observed after %s (fallback=%s)", elapsed.Round(time.Millisecond), commitPollInterval)
+	t.Logf("poll-only commit observed on controlled %s tick", commitPollInterval)
 }
 
 func TestCommitFlagsForceResetHistoryRewrite(t *testing.T) {
@@ -106,13 +118,12 @@ func TestCommitFlagsForceResetHistoryRewrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		git(t, repo, "reset", "--hard", "HEAD^")
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	result, err := condition.Wait(ctx)
+	commit := condition.(*commitCondition)
+	ready := observeWatchRegistration(commit)
+	done := startWait(t, commit)
+	<-ready
+	git(t, repo, "reset", "--hard", "HEAD^")
+	result, err := waitResult(done)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,21 +143,22 @@ func TestFileContainsAppendAndRecreate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer file.Close()
-			if _, err := file.WriteString("READY\n"); err != nil {
-				t.Error(err)
-			}
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		result, err := condition.Wait(ctx)
+		fileCondition := condition.(*fileContainsCondition)
+		ready := observeFileWatchRegistration(fileCondition)
+		done := startWait(t, fileCondition)
+		<-ready
+		file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.WriteString("READY\n"); err != nil {
+			_ = file.Close()
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		result, err := waitResult(done)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,18 +171,15 @@ func TestFileContainsAppendAndRecreate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			if err := os.Remove(path); err != nil {
-				t.Error(err)
-				return
-			}
-			time.Sleep(50 * time.Millisecond)
-			writeFile(t, path, "replacement DONE\n")
-		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		result, err := condition.Wait(ctx)
+		fileCondition := condition.(*fileContainsCondition)
+		ready := observeFileWatchRegistration(fileCondition)
+		done := startWait(t, fileCondition)
+		<-ready
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, "replacement DONE\n")
+		result, err := waitResult(done)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,29 +189,39 @@ func TestFileContainsAppendAndRecreate(t *testing.T) {
 
 func TestIdleStableResetsAndReportsEvidenceSource(t *testing.T) {
 	root := t.TempDir()
-	var working atomic.Bool
-	condition, err := NewIdleStable("idle-session", root, 120*time.Millisecond, func(context.Context) (IdleSample, error) {
-		return IdleSample{Working: working.Load(), Source: "structured"}, nil
+	samples := make(chan bool)
+	condition, err := NewIdleStable("idle-session", root, 120*time.Millisecond, func(ctx context.Context) (IdleSample, error) {
+		select {
+		case working := <-samples:
+			return IdleSample{Working: working, Source: "structured"}, nil
+		case <-ctx.Done():
+			return IdleSample{}, ctx.Err()
+		}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	working.Store(false)
-	go func() {
-		time.Sleep(60 * time.Millisecond)
-		working.Store(true)
-		time.Sleep(60 * time.Millisecond)
-		working.Store(false)
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	started := time.Now()
-	result, err := condition.Wait(ctx)
+	idle := condition.(*idleStableCondition)
+	clock := newManualClock()
+	idle.now = clock.Now
+	idle.ticker = clock.Ticker
+	done := startWait(t, idle)
+	if interval := <-clock.intervals; interval != 30*time.Millisecond {
+		t.Fatalf("idle poll interval = %s, want 30ms", interval)
+	}
+	samples <- false
+	clock.Advance(60 * time.Millisecond)
+	samples <- true
+	clock.Advance(60 * time.Millisecond)
+	samples <- false
+	clock.Advance(120 * time.Millisecond)
+	samples <- false
+	result, err := waitResult(done)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Source != "structured" || time.Since(started) < 220*time.Millisecond {
-		t.Fatalf("idle stability did not reset: %#v after %s", result, time.Since(started))
+	if result.Source != "structured" || result.Elapsed != 240*time.Millisecond {
+		t.Fatalf("idle stability did not reset: %#v", result)
 	}
 }
 
@@ -216,13 +235,13 @@ func TestWaitAnyReturnsFirstSatisfiedCondition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		writeFile(t, filepath.Join(root, "second.log"), "WIN\n")
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	result, err := WaitAny(ctx, []Condition{first, second})
+	firstReady := observeFileWatchRegistration(first.(*fileContainsCondition))
+	secondReady := observeFileWatchRegistration(second.(*fileContainsCondition))
+	done := startWaitAny(t, []Condition{first, second})
+	<-firstReady
+	<-secondReady
+	writeFile(t, filepath.Join(root, "second.log"), "WIN\n")
+	result, err := waitResult(done)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +249,92 @@ func TestWaitAnyReturnsFirstSatisfiedCondition(t *testing.T) {
 		t.Fatalf("winner = %q, want second", result.Session)
 	}
 	t.Logf("--any winner: session=%s condition=%s", result.Session, result.Kind)
+}
+
+type waitOutcome struct {
+	result Result
+	err    error
+}
+
+func startWait(t *testing.T, condition Condition) <-chan waitOutcome {
+	t.Helper()
+	done := make(chan waitOutcome, 1)
+	go func() {
+		result, err := condition.Wait(t.Context())
+		done <- waitOutcome{result: result, err: err}
+	}()
+	return done
+}
+
+func startWaitAny(t *testing.T, conditions []Condition) <-chan waitOutcome {
+	t.Helper()
+	done := make(chan waitOutcome, 1)
+	go func() {
+		result, err := WaitAny(t.Context(), conditions)
+		done <- waitOutcome{result: result, err: err}
+	}()
+	return done
+}
+
+func waitResult(done <-chan waitOutcome) (Result, error) {
+	observed := <-done
+	return observed.result, observed.err
+}
+
+func observeWatchRegistration(condition *commitCondition) <-chan struct{} {
+	ready := make(chan struct{})
+	watch := condition.watch
+	condition.watch = func(path string) (<-chan struct{}, func()) {
+		wake, closeWake := watch(path)
+		close(ready)
+		return wake, closeWake
+	}
+	return ready
+}
+
+func observeFileWatchRegistration(condition *fileContainsCondition) <-chan struct{} {
+	ready := make(chan struct{})
+	watch := condition.watch
+	condition.watch = func(path string) (<-chan struct{}, func()) {
+		wake, closeWake := watch(path)
+		close(ready)
+		return wake, closeWake
+	}
+	return ready
+}
+
+type manualClock struct {
+	mu        sync.Mutex
+	now       time.Time
+	ticks     chan time.Time
+	intervals chan time.Duration
+}
+
+func newManualClock() *manualClock {
+	return &manualClock{
+		now:       time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC),
+		ticks:     make(chan time.Time),
+		intervals: make(chan time.Duration, 1),
+	}
+}
+
+func (clock *manualClock) Now() time.Time {
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	return clock.now
+}
+
+func (clock *manualClock) Ticker(interval time.Duration) conditionTicker {
+	clock.intervals <- interval
+	return conditionTicker{ticks: clock.ticks, stop: func() {}}
+}
+
+func (clock *manualClock) Advance(elapsed time.Duration) {
+	clock.mu.Lock()
+	clock.now = clock.now.Add(elapsed)
+	now := clock.now
+	clock.mu.Unlock()
+	clock.ticks <- now
 }
 
 func newGitRepo(t *testing.T) string {

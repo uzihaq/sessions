@@ -45,12 +45,8 @@ func TestSimilarLaneDeathsCoalesceAtThirdNotification(t *testing.T) {
 
 	titles := make(map[string]int)
 	for range 3 {
-		select {
-		case payload := <-notifications:
-			titles[payload.Title]++
-		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for coalesced notifications")
-		}
+		payload := <-notifications
+		titles[payload.Title]++
 	}
 	if titles["3 lanes died"] != 1 || titles["🔴 failure died (exit 7)"] != 2 {
 		t.Fatalf("notification titles = %#v", titles)

@@ -6,11 +6,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
@@ -123,7 +125,7 @@ func TestMassKillGuardThenTombstoneThenRunnerKillComposition(t *testing.T) {
 	}
 	launcher.mu.Unlock()
 	for _, id := range ids {
-		waitFor(t, 2*time.Second, func() bool {
+		awaitCondition(t, func() bool {
 			events, readErr := store.Events(context.Background(), id)
 			if readErr != nil {
 				return false
@@ -203,22 +205,26 @@ func TestProviderActivityTimestampFlowsFromRecordClaudeLocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manager.mu.Lock()
+	managed := manager.runtimes[created.ID]
+	manager.mu.Unlock()
+	if managed == nil {
+		t.Fatal("created session has no managed runtime")
+	}
 	launcher.Runner(created.ID).AddClaudeEvent(map[string]any{
 		"type": "assistant", "timestamp": timestamp,
 	})
-
-	waitFor(t, 2*time.Second, func() bool {
-		events, readErr := store.Events(context.Background(), created.ID)
-		if readErr != nil {
-			return false
+	<-managed.structuredEventArrived
+	events, err := store.Events(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Type == ledger.EventActivity && event.AtMS == wantAt.UnixMilli() && strings.Contains(string(event.Payload), "provider_event") {
+			return
 		}
-		for _, event := range events {
-			if event.Type == ledger.EventActivity {
-				return event.AtMS == wantAt.UnixMilli() && strings.Contains(string(event.Payload), "provider_event")
-			}
-		}
-		return false
-	})
+	}
+	t.Fatalf("provider activity with timestamp %d was not recorded: %#v", wantAt.UnixMilli(), events)
 }
 
 func TestMassKillGuardRefusesDiscoverySweepBeforeBootout(t *testing.T) {
@@ -330,7 +336,16 @@ func TestWorkingEdgeWritesSentinelAndHookEnvironment(t *testing.T) {
 	})
 	t.Cleanup(manager.Close)
 	hookOutput := filepath.Join(root, "hook.txt")
-	script := `printf '%s|%s|%s|%s' "$PRETTY_SESSION_ID" "$PRETTY_SESSION_NAME" "$PRETTY_OUTCOME" "$PRETTY_DURATION_MS" > "` + hookOutput + `"`
+	hookTemporary := hookOutput + ".tmp"
+	script := `printf '%s|%s|%s|%s' "$PRETTY_SESSION_ID" "$PRETTY_SESSION_NAME" "$PRETTY_OUTCOME" "$PRETTY_DURATION_MS" > "` + hookTemporary + `" && mv "` + hookTemporary + `" "` + hookOutput + `"`
+	hookWatcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = hookWatcher.Close() })
+	if err := hookWatcher.Add(root); err != nil {
+		t.Fatal(err)
+	}
 	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
 		Cmd: "/bin/sh", Cwd: root, Name: "idle edge", OnIdle: script,
 	})
@@ -354,11 +369,13 @@ func TestWorkingEdgeWritesSentinelAndHookEnvironment(t *testing.T) {
 	// true state is observable even under the race detector's instrumentation.
 	output := "Completed cleanly, all checks passed.\n" + strings.Repeat("x", 900)
 	runner.AddOutput(output)
-	waitFor(t, 2*time.Second, func() bool {
-		runtime.mu.Lock()
-		defer runtime.mu.Unlock()
-		return runtime.recentBytes >= len(output)
-	})
+	<-runtime.outputObserved
+	runtime.mu.Lock()
+	observedBytes := runtime.recentBytes
+	runtime.mu.Unlock()
+	if observedBytes < len(output) {
+		t.Fatalf("output observer recorded %d bytes, want at least %d", observedBytes, len(output))
+	}
 	runtime.tick()
 	if info, ok := manager.Get(created.ID); !ok || !info.Info().Working {
 		t.Fatalf("synchronized working sample was not observable: ok=%v info=%#v", ok, info)
@@ -374,14 +391,10 @@ func TestWorkingEdgeWritesSentinelAndHookEnvironment(t *testing.T) {
 		t.Fatalf("working state did not decay after controlled samples: ok=%v info=%#v", ok, info)
 	}
 	sentinelPath := filepath.Join(config.UserStateRoot, "idle", created.ID)
-	waitFor(t, 2*time.Second, func() bool {
-		_, err := os.Stat(sentinelPath)
-		return err == nil
-	})
-	waitFor(t, 2*time.Second, func() bool {
-		_, err := os.Stat(hookOutput)
-		return err == nil
-	})
+	if _, err := os.Stat(sentinelPath); err != nil {
+		t.Fatalf("idle sentinel was not written: %v", err)
+	}
+	awaitFile(t, hookWatcher, hookOutput)
 	hook, err := os.ReadFile(hookOutput)
 	if err != nil {
 		t.Fatal(err)
@@ -450,13 +463,37 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
-func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
+func awaitCondition(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
 	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition did not become true")
+		select {
+		case <-t.Context().Done():
+			t.Fatal("test ended before condition became true")
+		default:
+			runtime.Gosched()
 		}
-		time.Sleep(time.Millisecond)
+	}
+}
+
+func awaitFile(t *testing.T, watcher *fsnotify.Watcher, path string) {
+	t.Helper()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect %s: %v", path, err)
+		}
+		select {
+		case _, ok := <-watcher.Events:
+			if !ok {
+				t.Fatalf("watcher closed before %s was published", path)
+			}
+		case err, ok := <-watcher.Errors:
+			if ok {
+				t.Fatalf("watch %s: %v", path, err)
+			}
+		case <-t.Context().Done():
+			t.Fatalf("test ended before %s was published", path)
+		}
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestPrettyWaitCLIEndToEnd(t *testing.T) {
@@ -92,10 +91,7 @@ func TestPrettyWaitCLIEndToEnd(t *testing.T) {
 		root := t.TempDir()
 		writeRunnerMetadata(t, stateDir, "first-session", root)
 		writeRunnerMetadata(t, stateDir, "second-session", root)
-		go func() {
-			time.Sleep(100 * time.Millisecond)
-			writeFile(t, filepath.Join(root, "second.log"), "SECOND WON\n")
-		}()
+		writeFile(t, filepath.Join(root, "second.log"), "SECOND WON\n")
 		code, stdout, stderr := runPrettyCLI(t, binary, environment,
 			"--port", "1", "--json", "wait", "first-session", "second-session", "--any",
 			"--until-file-contains", "first.log", "FIRST WON",
@@ -217,6 +213,8 @@ exit "$status"
 	environment = setTestEnv(environment, "PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	environment = setTestEnv(environment, "PRETTY_WAIT_REAL_GIT", realGit)
 	environment = setTestEnv(environment, "PRETTY_WAIT_BASELINE_READY", marker)
+	wake, closeWake := watchParent(marker)
+	defer closeWake()
 
 	command := exec.Command(binary, args...)
 	command.Env = environment
@@ -226,34 +224,34 @@ exit "$status"
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
 	waited := false
 	t.Cleanup(func() {
 		if !waited {
 			_ = command.Process.Kill()
-			_ = command.Wait()
+			<-done
 		}
 	})
-	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if _, err := os.Stat(marker); err == nil {
 			break
 		} else if !errors.Is(err, os.ErrNotExist) {
 			_ = command.Process.Kill()
-			_ = command.Wait()
+			<-done
 			waited = true
 			t.Fatalf("inspect baseline marker: %v", err)
 		}
-		if time.Now().After(deadline) {
-			_ = command.Process.Kill()
-			_ = command.Wait()
+		select {
+		case <-wake:
+		case err := <-done:
 			waited = true
-			t.Fatalf("CLI did not capture its Git baseline; stdout=%s stderr=%s", stdout.String(), stderr.String())
+			t.Fatalf("CLI exited before capturing its Git baseline: err=%v stdout=%s stderr=%s", err, stdout.String(), stderr.String())
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
 
 	mutate()
-	err = command.Wait()
+	err = <-done
 	waited = true
 	if err == nil {
 		return 0, stdout.Bytes(), stderr.Bytes()

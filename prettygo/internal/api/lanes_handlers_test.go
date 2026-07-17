@@ -86,10 +86,14 @@ func TestHeadlessLaneLifecycleManifestAndLedger(t *testing.T) {
 		t.Fatalf("lane create response = %#v", created)
 	}
 
-	waitFor(t, func() bool {
-		session, ok := manager.Get(created.ID)
-		return ok && session.Info().Exited
-	})
+	notification := <-notifications
+	if notification.Title != "🔴 scratch failure died (exit 3)" || notification.Body != "ERR_MARKER" {
+		t.Fatalf("lane notification = %#v", notification)
+	}
+	session, ok := manager.Get(created.ID)
+	if !ok || !session.Info().Exited {
+		t.Fatalf("lane did not retain exited state: ok=%v", ok)
+	}
 	manifest, err := state.ReadCompletionManifest(state.For(config.RunnerStateDir, created.ID).Manifest)
 	if err != nil {
 		t.Fatal(err)
@@ -130,13 +134,5 @@ func TestHeadlessLaneLifecycleManifestAndLedger(t *testing.T) {
 		if !found {
 			t.Fatalf("ledger events %#v missing %s", events, want)
 		}
-	}
-	select {
-	case notification := <-notifications:
-		if notification.Title != "🔴 scratch failure died (exit 3)" || notification.Body != "ERR_MARKER" {
-			t.Fatalf("lane notification = %#v", notification)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for lane death notification")
 	}
 }

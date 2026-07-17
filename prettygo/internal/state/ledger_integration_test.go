@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
@@ -148,14 +148,14 @@ func TestLedgerWriteAheadBoundariesAreCommittedBeforeLaunchAndKill(t *testing.T)
 
 func waitForLedger(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
+	for !condition() {
+		select {
+		case <-t.Context().Done():
+			t.Fatal("test ended before ledger lifecycle event arrived")
+		default:
+			runtime.Gosched()
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("timed out waiting for ledger lifecycle event")
 }
 
 type failingBoundary struct {

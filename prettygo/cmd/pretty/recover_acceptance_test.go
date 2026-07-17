@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	daemonapi "github.com/uzihaq/pretty-pty/prettygo/internal/api"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
@@ -210,11 +210,12 @@ func cliHasLedgerEvent(t *testing.T, store *ledger.Store, laneID string, kind le
 
 func cliWaitFor(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
 	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for scratch recovery state")
+		select {
+		case <-t.Context().Done():
+			t.Fatal("test ended before scratch recovery state arrived")
+		default:
+			runtime.Gosched()
 		}
-		time.Sleep(time.Millisecond)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
@@ -228,14 +229,24 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	}
 
 	runner := daemon.launcher.Runner(info.ID)
+	session, ok := daemon.registry.Get(info.ID)
+	if !ok {
+		t.Fatal("created session was not registered")
+	}
+	attachment := session.Attach(state.AttachOptions{})
+	defer attachment.Cancel()
 	runner.AddOutput("hello from fake runner\n")
 	runner.AddClaudeEvent(map[string]any{"type": "user", "n": 1})
 	runner.AddClaudeEvent(map[string]any{"type": "assistant", "n": 2})
 	runner.AddClaudeEvent(map[string]any{"type": "assistant", "n": 3})
-	waitFor(t, func() bool {
-		session, _ := daemon.registry.Get(info.ID)
-		return session.Replay(0).Current == 1 && session.ClaudeEventCount() == 3
-	})
+	for _, want := range []proto.EventKind{proto.EventOutput, proto.EventClaude, proto.EventClaude, proto.EventClaude} {
+		if event := <-attachment.Events; event.Kind != want {
+			t.Fatalf("session event kind = %v, want %v", event.Kind, want)
+		}
+	}
+	if session.Replay(0).Current != 1 || session.ClaudeEventCount() != 3 {
+		t.Fatalf("session did not retain output and Claude events")
+	}
 
 	snapshot := serve(t, daemon.handler, http.MethodGet, "/api/sessions/"+info.ID+"/snapshot?cols=80", nil, "127.0.0.1:1", nil)
 	wantSnapshot := "hello from fake runner" + strings.Repeat(" ", 80-len("hello from fake runner"))
@@ -267,7 +278,12 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	if killed.Code != http.StatusOK {
 		t.Fatalf("kill status=%d body=%s", killed.Code, killed.Body.String())
 	}
-	waitFor(t, func() bool { return len(daemon.registry.List(false)) == 0 })
+	if event := <-attachment.Events; event.Kind != proto.EventExit {
+		t.Fatalf("terminal event kind = %v, want exit", event.Kind)
+	}
+	if active := daemon.registry.List(false); len(active) != 0 {
+		t.Fatalf("active sessions after exit = %#v", active)
+	}
 	if sessions := daemon.registry.List(true); len(sessions) != 1 || !sessions[0].Exited || sessions[0].ExitCode == nil || *sessions[0].ExitCode != 0 {
 		t.Fatalf("include-exited sessions = %#v", sessions)
 	}
@@ -305,7 +321,7 @@ func TestWebSocketSingleMuxAndHandshakePolicy(t *testing.T) {
 	}
 	writeWS(t, ctx, connection, map[string]any{"type": "input", "data": "whoami\n"})
 	writeWS(t, ctx, connection, map[string]any{"type": "resize", "cols": 1, "rows": 999})
-	waitFor(t, func() bool {
+	awaitRunnerChange(t, runner, func() bool {
 		cols, rows := runner.Size()
 		return cols == 40 && rows == 200 && len(runner.Inputs()) > 0
 	})
@@ -397,14 +413,14 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
-func waitFor(t *testing.T, condition func() bool) {
+func awaitRunnerChange(t *testing.T, runner *prototest.Runner, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
 	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition did not become true")
+		select {
+		case <-runner.Changes():
+		case <-t.Context().Done():
+			t.Fatal("test ended before fake runner state changed")
 		}
-		time.Sleep(time.Millisecond)
 	}
 }
 

@@ -121,6 +121,7 @@ type runtimeSession struct {
 	workingStartedAt       time.Time
 	watcher                *watch.FileWatcher
 	stopOnce               sync.Once
+	outputObserved         chan struct{}
 	structuredEventArrived chan struct{}
 }
 
@@ -475,6 +476,7 @@ func (m *Manager) manage(session *state.Session) *runtimeSession {
 	attachment := session.Attach(state.AttachOptions{IncludeClaudeReplay: true, InitialReplayCap: 5000})
 	runtime := &runtimeSession{
 		manager: m, session: session, attachment: attachment,
+		outputObserved:         make(chan struct{}, 1),
 		structuredEventArrived: make(chan struct{}, 1),
 	}
 	for _, event := range attachment.Replay.Events {
@@ -528,6 +530,10 @@ func (r *runtimeSession) observe() {
 			r.mu.Lock()
 			r.recentBytes += len(event.Output.Data)
 			r.mu.Unlock()
+			select {
+			case r.outputObserved <- struct{}{}:
+			default:
+			}
 		case proto.EventClaude:
 			if event.ClaudeActivityAt != 0 {
 				r.manager.observe(context.Background(), "provider activity", func(writer ledger.ObservationWriter) error {

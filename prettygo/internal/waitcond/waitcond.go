@@ -131,6 +131,22 @@ type commitCondition struct {
 	cwd      string
 	baseline string
 	logPath  string
+	watch    watchFactory
+	ticker   tickerFactory
+	checked  func()
+}
+
+type conditionTicker struct {
+	ticks <-chan time.Time
+	stop  func()
+}
+
+type watchFactory func(string) (<-chan struct{}, func())
+type tickerFactory func(time.Duration) conditionTicker
+
+func startTicker(interval time.Duration) conditionTicker {
+	ticker := time.NewTicker(interval)
+	return conditionTicker{ticks: ticker.C, stop: ticker.Stop}
 }
 
 // NewCommit snapshots HEAD immediately. A later HEAD difference satisfies the
@@ -151,15 +167,17 @@ func NewCommit(ctx context.Context, session, cwd string) (Condition, error) {
 	return &commitCondition{
 		session: session, cwd: cwd, baseline: baseline,
 		logPath: filepath.Join(gitDir, "logs", "HEAD"),
+		watch:   watchParent,
+		ticker:  startTicker,
 	}, nil
 }
 
 func (condition *commitCondition) Wait(ctx context.Context) (Result, error) {
 	started := time.Now()
-	wake, closeWake := watchParent(condition.logPath)
+	wake, closeWake := condition.watch(condition.logPath)
 	defer closeWake()
-	ticker := time.NewTicker(commitPollInterval)
-	defer ticker.Stop()
+	ticker := condition.ticker(commitPollInterval)
+	defer ticker.stop()
 	for {
 		result, satisfied, err := condition.check(ctx)
 		if err != nil {
@@ -169,10 +187,13 @@ func (condition *commitCondition) Wait(ctx context.Context) (Result, error) {
 			result.Elapsed = time.Since(started)
 			return result, nil
 		}
+		if condition.checked != nil {
+			condition.checked()
+		}
 		select {
 		case <-ctx.Done():
 			return Result{}, ctx.Err()
-		case <-ticker.C:
+		case <-ticker.ticks:
 		case <-wake:
 		}
 	}
@@ -237,6 +258,8 @@ type fileContainsCondition struct {
 	path    string
 	needle  []byte
 	literal string
+	watch   watchFactory
+	ticker  tickerFactory
 }
 
 // NewFileContains creates a literal-byte file condition. Relative paths are
@@ -261,15 +284,18 @@ func NewFileContains(session, cwd, path, literal string) (Condition, error) {
 	if len(needle) > MaxFileRead {
 		return nil, precondition("literal is larger than the %d-byte file read cap", MaxFileRead)
 	}
-	return &fileContainsCondition{session: session, cwd: cwd, path: resolved, needle: needle, literal: literal}, nil
+	return &fileContainsCondition{
+		session: session, cwd: cwd, path: resolved, needle: needle, literal: literal,
+		watch: watchParent, ticker: startTicker,
+	}, nil
 }
 
 func (condition *fileContainsCondition) Wait(ctx context.Context) (Result, error) {
 	started := time.Now()
-	wake, closeWake := watchParent(condition.path)
+	wake, closeWake := condition.watch(condition.path)
 	defer closeWake()
-	ticker := time.NewTicker(filePollInterval)
-	defer ticker.Stop()
+	ticker := condition.ticker(filePollInterval)
+	defer ticker.stop()
 	for {
 		satisfied, err := fileContains(condition.path, condition.needle)
 		if err != nil {
@@ -284,7 +310,7 @@ func (condition *fileContainsCondition) Wait(ctx context.Context) (Result, error
 		select {
 		case <-ctx.Done():
 			return Result{}, ctx.Err()
-		case <-ticker.C:
+		case <-ticker.ticks:
 		case <-wake:
 		}
 	}
@@ -336,6 +362,8 @@ type idleStableCondition struct {
 	cwd     string
 	stable  time.Duration
 	observe IdleObserver
+	now     func() time.Time
+	ticker  tickerFactory
 }
 
 // NewIdleStable creates a continuous idle-observation condition.
@@ -346,11 +374,14 @@ func NewIdleStable(session, cwd string, stable time.Duration, observe IdleObserv
 	if observe == nil {
 		return nil, precondition("idle observer is required")
 	}
-	return &idleStableCondition{session: session, cwd: cwd, stable: stable, observe: observe}, nil
+	return &idleStableCondition{
+		session: session, cwd: cwd, stable: stable, observe: observe,
+		now: time.Now, ticker: startTicker,
+	}, nil
 }
 
 func (condition *idleStableCondition) Wait(ctx context.Context) (Result, error) {
-	started := time.Now()
+	started := condition.now()
 	poll := idlePollInterval
 	if quarter := condition.stable / 4; quarter > 0 && quarter < poll {
 		poll = quarter
@@ -358,11 +389,11 @@ func (condition *idleStableCondition) Wait(ctx context.Context) (Result, error) 
 	if poll < 10*time.Millisecond {
 		poll = 10 * time.Millisecond
 	}
-	ticker := time.NewTicker(poll)
-	defer ticker.Stop()
+	ticker := condition.ticker(poll)
+	defer ticker.stop()
 	var idleSince time.Time
 	for {
-		now := time.Now()
+		now := condition.now()
 		sample, err := condition.observe(ctx)
 		if err != nil {
 			if IsPrecondition(err) {
@@ -378,14 +409,14 @@ func (condition *idleStableCondition) Wait(ctx context.Context) (Result, error) 
 			if now.Sub(idleSince) >= condition.stable {
 				return Result{
 					Kind: IdleStableKind, Session: condition.session, Cwd: condition.cwd,
-					Stable: condition.stable, Source: sample.Source, Elapsed: time.Since(started),
+					Stable: condition.stable, Source: sample.Source, Elapsed: condition.now().Sub(started),
 				}, nil
 			}
 		}
 		select {
 		case <-ctx.Done():
 			return Result{}, ctx.Err()
-		case <-ticker.C:
+		case <-ticker.ticks:
 		}
 	}
 }

@@ -68,12 +68,14 @@ type Runner struct {
 	exited      bool
 	subscribers map[uint64]chan proto.Event
 	nextSubID   uint64
+	changes     chan struct{}
 }
 
 func NewRunner(info proto.RunnerInfo) *Runner {
 	return &Runner{
 		info: info, cols: info.Cols, rows: info.Rows,
 		subscribers: make(map[uint64]chan proto.Event),
+		changes:     make(chan struct{}, 1),
 	}
 }
 
@@ -112,6 +114,7 @@ func (r *Runner) Input(_ context.Context, data string) error {
 		return errors.New("runner exited")
 	}
 	r.inputs = append(r.inputs, data)
+	r.signalChangeLocked()
 	return nil
 }
 
@@ -122,6 +125,7 @@ func (r *Runner) Resize(_ context.Context, cols, rows int) error {
 		return errors.New("runner exited")
 	}
 	r.cols, r.rows = cols, rows
+	r.signalChangeLocked()
 	return nil
 }
 
@@ -184,7 +188,20 @@ func (r *Runner) Emit(event proto.Event) {
 			delete(r.subscribers, id)
 		}
 	}
+	r.signalChangeLocked()
 	r.mu.Unlock()
+}
+
+// Changes reports coalesced state transitions so tests can synchronize with
+// fake-runner work without scheduler sleeps. Callers must always re-read the
+// state they care about after a notification.
+func (r *Runner) Changes() <-chan struct{} { return r.changes }
+
+func (r *Runner) signalChangeLocked() {
+	select {
+	case r.changes <- struct{}{}:
+	default:
+	}
 }
 
 func (r *Runner) Inputs() []string {

@@ -90,6 +90,12 @@ func TestGoDaemonRunnerMirrorRoundTrip(t *testing.T) {
 	if created.ID == "" || created.PID <= 0 {
 		t.Fatalf("invalid create response: %#v", created)
 	}
+	session, ok := registry.Get(created.ID)
+	if !ok {
+		t.Fatal("created session was not registered")
+	}
+	attachment := session.Attach(state.AttachOptions{})
+	defer attachment.Cancel()
 
 	inputBody, _ := json.Marshal(map[string]string{"data": "echo E2E_$RANDOM\r"})
 	inputResponse := doE2ERequest(t, http.MethodPost, baseURL+"/api/sessions/"+created.ID+"/input", inputBody)
@@ -100,22 +106,27 @@ func TestGoDaemonRunnerMirrorRoundTrip(t *testing.T) {
 
 	markerPattern := regexp.MustCompile(`E2E_[0-9]+`)
 	var marker string
-	deadline := time.Now().Add(10 * time.Second)
-	for marker == "" && time.Now().Before(deadline) {
-		snapshotResponse := doE2ERequest(t, http.MethodGet, baseURL+"/api/sessions/"+created.ID+"/snapshot", nil)
-		snapshot, readErr := io.ReadAll(snapshotResponse.Body)
-		snapshotResponse.Body.Close()
-		if readErr != nil {
-			t.Fatal(readErr)
+	for marker == "" {
+		select {
+		case event, open := <-attachment.Events:
+			if !open {
+				t.Fatal("session exited before emitting expanded E2E_$RANDOM marker")
+			}
+			if match := markerPattern.FindString(event.Output.Data); match != "" {
+				marker = match
+			}
+		case <-t.Context().Done():
+			t.Fatal("test ended before expanded E2E_$RANDOM marker arrived")
 		}
-		if match := markerPattern.Find(snapshot); match != nil {
-			marker = string(match)
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
 	}
-	if marker == "" {
-		t.Fatal("snapshot never contained expanded E2E_$RANDOM marker")
+	snapshotResponse := doE2ERequest(t, http.MethodGet, baseURL+"/api/sessions/"+created.ID+"/snapshot", nil)
+	snapshot, readErr := io.ReadAll(snapshotResponse.Body)
+	snapshotResponse.Body.Close()
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if match := markerPattern.Find(snapshot); match == nil {
+		t.Fatalf("snapshot did not retain expanded marker %q", marker)
 	}
 
 	killResponse := doE2ERequest(t, http.MethodDelete, baseURL+"/api/sessions/"+created.ID, nil)
@@ -123,14 +134,19 @@ func TestGoDaemonRunnerMirrorRoundTrip(t *testing.T) {
 	if killResponse.StatusCode != http.StatusOK {
 		t.Fatalf("kill status=%d", killResponse.StatusCode)
 	}
-	waitFor(t, func() bool {
-		session, ok := registry.Get(created.ID)
-		if !ok {
-			return false
+	for {
+		event, open := <-attachment.Events
+		if !open {
+			break
 		}
-		exited, _ := session.TerminalState()
-		return exited
-	})
+		if event.Kind == proto.EventExit || event.Kind == proto.EventRunnerLost {
+			break
+		}
+	}
+	exited, _ := session.TerminalState()
+	if !exited {
+		t.Fatal("session did not retain terminal state")
+	}
 	t.Logf("round trip session=%s marker=%s snapshot=mirror kill=ok", created.ID, marker)
 }
 
@@ -208,9 +224,10 @@ func (l *processLauncher) Launch(ctx context.Context, request proto.LaunchReques
 		close(process.done)
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
 	var lastErr error
-	for time.Now().Before(deadline) {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		runner, err := l.Attach(ctx, request.Info)
 		if err == nil {
 			return runner, nil
@@ -224,10 +241,9 @@ func (l *processLauncher) Launch(ctx context.Context, request proto.LaunchReques
 			return nil, fmt.Errorf("runner exited before attach: %v (last dial: %v; log: %s)", processErr, lastErr, logPath)
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(20 * time.Millisecond):
+		case <-ticker.C:
 		}
 	}
-	return nil, fmt.Errorf("runner attach timeout: %w (log: %s)", lastErr, logPath)
 }
 
 func (l *processLauncher) Attach(ctx context.Context, info proto.RunnerInfo) (proto.Runner, error) {

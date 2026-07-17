@@ -6,8 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
-	"time"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
@@ -302,11 +302,12 @@ func hasEvent(t *testing.T, store *ledger.Store, id string, kind ledger.EventTyp
 
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
 	for !condition() {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for scratch lifecycle event")
+		select {
+		case <-t.Context().Done():
+			t.Fatal("test ended before scratch lifecycle event arrived")
+		default:
+			runtime.Gosched()
 		}
-		time.Sleep(time.Millisecond)
 	}
 }
