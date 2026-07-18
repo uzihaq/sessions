@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/backup"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/integrations"
@@ -402,18 +404,36 @@ func creatorHeaderValue(header http.Header, name string) (string, bool, error) {
 
 func readJSON(request *http.Request, target any) error {
 	reader := http.MaxBytesReader(nil, request.Body, maxJSONBody)
-	decoder := json.NewDecoder(reader)
+	encoded, err := io.ReadAll(reader)
+	if err != nil {
+		return jsonRequestError(err)
+	}
+	if !utf8.Valid(encoded) {
+		return errors.New("request body must be valid UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	if err := decoder.Decode(target); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return errors.New("request body too large")
+		return jsonRequestError(err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain a single JSON value")
 		}
-		return err
+		return jsonRequestError(err)
 	}
 	return nil
+}
+
+func jsonRequestError(err error) error {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return errors.New("request body too large")
+	}
+	return err
 }
 
 func sessionRoute(path string) (id, suffix string, ok bool) {
@@ -455,10 +475,11 @@ func isStaticRequest(path, method string) bool {
 }
 
 func (s *Server) serveStatic(response http.ResponseWriter, request *http.Request) bool {
-	info, err := os.Stat(s.config.WebDir)
-	if err != nil || !info.IsDir() {
+	root, err := os.OpenRoot(s.config.WebDir)
+	if err != nil {
 		return webassets.ServeHTTP(response, request)
 	}
+	defer root.Close()
 	escaped := request.URL.EscapedPath()
 	decoded, err := url.PathUnescape(escaped)
 	if err != nil {
@@ -474,45 +495,50 @@ func (s *Server) serveStatic(response http.ResponseWriter, request *http.Request
 		s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": "invalid path"}, "")
 		return true
 	}
-	candidate := filepath.Join(s.config.WebDir, normalized)
-	resolved, err := filepath.Abs(candidate)
-	if err != nil || (resolved != s.config.WebDir && !strings.HasPrefix(resolved, s.config.WebDir+string(filepath.Separator))) {
+	canonicalRoot := canonicalPath(s.config.WebDir)
+	canonicalCandidate := canonicalPath(filepath.Join(canonicalRoot, normalized))
+	if !pathWithinBase(canonicalCandidate, canonicalRoot) {
 		s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": "invalid path"}, "")
 		return true
 	}
-	file := readableFile(resolved)
-	if file == "" {
-		file = readableFile(filepath.Join(s.config.WebDir, "index.html"))
+	opened, fileInfo := readableRootFile(root, normalized)
+	if opened == nil {
+		opened, fileInfo = readableRootFile(root, "index.html")
 	}
-	if file == "" {
-		return false
-	}
-	opened, err := os.Open(file)
-	if err != nil {
+	if opened == nil {
 		return false
 	}
 	defer opened.Close()
-	fileInfo, err := opened.Stat()
-	if err != nil {
-		return false
-	}
-	http.ServeContent(response, request, filepath.Base(file), fileInfo.ModTime(), opened)
+	http.ServeContent(response, request, filepath.Base(opened.Name()), fileInfo.ModTime(), opened)
 	return true
 }
 
-func readableFile(path string) string {
-	info, err := os.Stat(path)
+func readableRootFile(root *os.Root, name string) (*os.File, os.FileInfo) {
+	if name == "" {
+		name = "."
+	}
+	opened, err := root.Open(name)
 	if err != nil {
-		return ""
+		return nil, nil
+	}
+	info, err := opened.Stat()
+	if err != nil {
+		_ = opened.Close()
+		return nil, nil
 	}
 	if info.Mode().IsRegular() {
-		return path
+		return opened, info
 	}
+	_ = opened.Close()
 	if info.IsDir() {
-		index := filepath.Join(path, "index.html")
-		if info, err := os.Stat(index); err == nil && info.Mode().IsRegular() {
-			return index
+		index, err := root.Open(filepath.Join(name, "index.html"))
+		if err == nil {
+			indexInfo, statErr := index.Stat()
+			if statErr == nil && indexInfo.Mode().IsRegular() {
+				return index, indexInfo
+			}
+			_ = index.Close()
 		}
 	}
-	return ""
+	return nil, nil
 }

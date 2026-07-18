@@ -128,14 +128,31 @@ func (s *Server) handleFSList(response http.ResponseWriter, request *http.Reques
 	}
 	canonical := canonicalPath(path)
 	canonicalHome := canonicalPath(home)
-	if canonical != canonicalHome && !strings.HasPrefix(canonical, canonicalHome+string(filepath.Separator)) {
+	if !pathWithinBase(canonical, canonicalHome) {
 		s.sendJSON(response, http.StatusForbidden, map[string]any{
 			"error": "path outside home directory", "path": canonical,
 		}, corsOrigin)
 		return
 	}
 
-	info, err := os.Stat(canonical)
+	root, err := os.OpenRoot(canonicalHome)
+	if err != nil {
+		s.sendFilesystemError(response, err, corsOrigin)
+		return
+	}
+	defer root.Close()
+	relative, err := filepath.Rel(canonicalHome, canonical)
+	if err != nil {
+		s.sendFilesystemError(response, err, corsOrigin)
+		return
+	}
+	directory, err := root.Open(relative)
+	if err != nil {
+		s.sendFilesystemError(response, err, corsOrigin)
+		return
+	}
+	defer directory.Close()
+	info, err := directory.Stat()
 	if err != nil {
 		s.sendFilesystemError(response, err, corsOrigin)
 		return
@@ -146,7 +163,7 @@ func (s *Server) handleFSList(response http.ResponseWriter, request *http.Reques
 		}, corsOrigin)
 		return
 	}
-	children, err := os.ReadDir(canonical)
+	children, err := directory.ReadDir(-1)
 	if err != nil {
 		s.sendFilesystemError(response, err, corsOrigin)
 		return
@@ -154,12 +171,18 @@ func (s *Server) handleFSList(response http.ResponseWriter, request *http.Reques
 	entries := make([]directoryEntry, 0, len(children))
 	for _, child := range children {
 		kind := "other"
-		full := filepath.Join(canonical, child.Name())
-		linkInfo, err := os.Lstat(full)
+		childPath := filepath.Join(relative, child.Name())
+		linkInfo, err := root.Lstat(childPath)
 		if err == nil {
 			switch {
 			case linkInfo.Mode()&os.ModeSymlink != 0:
-				target, targetErr := os.Stat(full)
+				resolvedTarget := canonicalPath(filepath.Join(canonical, child.Name()))
+				targetPath, relativeErr := filepath.Rel(canonicalHome, resolvedTarget)
+				var target os.FileInfo
+				targetErr := errors.New("symlink target outside home")
+				if relativeErr == nil && pathWithinBase(resolvedTarget, canonicalHome) {
+					target, targetErr = root.Stat(targetPath)
+				}
 				switch {
 				case targetErr != nil:
 					kind = "symlink"
@@ -196,13 +219,36 @@ func (s *Server) handleFSList(response http.ResponseWriter, request *http.Reques
 }
 
 func canonicalPath(path string) string {
-	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		absolute = filepath.Clean(path)
+	}
+	absolute = filepath.Clean(absolute)
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
 		return resolved
 	}
-	if absolute, err := filepath.Abs(path); err == nil {
-		return filepath.Clean(absolute)
+	current := absolute
+	tail := make([]string, 0, 4)
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return absolute
+		}
+		tail = append([]string{filepath.Base(current)}, tail...)
+		current = parent
+		if resolved, err := filepath.EvalSymlinks(current); err == nil {
+			parts := append([]string{resolved}, tail...)
+			return filepath.Join(parts...)
+		}
 	}
-	return filepath.Clean(path)
+}
+
+func pathWithinBase(path, base string) bool {
+	relative, err := filepath.Rel(base, path)
+	if err != nil || filepath.IsAbs(relative) {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (s *Server) sendFilesystemError(response http.ResponseWriter, err error, corsOrigin string) {
@@ -270,7 +316,19 @@ func (s *Server) handleUpload(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	uploadsDir := filepath.Join(home, ".local", "state", "pretty-PTY", "uploads")
-	if err := os.MkdirAll(uploadsDir, 0o700); err != nil {
+	canonicalHome := canonicalPath(home)
+	if !pathWithinBase(canonicalPath(uploadsDir), canonicalHome) {
+		s.sendJSON(response, http.StatusForbidden, map[string]any{"error": "upload directory outside home"}, corsOrigin)
+		return
+	}
+	root, err := os.OpenRoot(canonicalHome)
+	if err != nil {
+		s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
+		return
+	}
+	defer root.Close()
+	relativeUploads := filepath.Join(".local", "state", "pretty-PTY", "uploads")
+	if err := root.MkdirAll(relativeUploads, 0o700); err != nil {
 		s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
 		return
 	}
@@ -281,7 +339,6 @@ func (s *Server) handleUpload(response http.ResponseWriter, request *http.Reques
 		return
 	}
 	if len(body) > maxUploadBody {
-		_, _ = io.Copy(io.Discard, request.Body)
 		s.sendJSON(response, http.StatusRequestEntityTooLarge, map[string]any{
 			"error": "file too large", "max": maxUploadBody,
 		}, corsOrigin)
@@ -294,7 +351,7 @@ func (s *Server) handleUpload(response http.ResponseWriter, request *http.Reques
 	}
 	outName := stem + "-" + hex.EncodeToString(random) + extension
 	outPath := filepath.Join(uploadsDir, outName)
-	if err := os.WriteFile(outPath, body, 0o600); err != nil {
+	if err := root.WriteFile(filepath.Join(relativeUploads, outName), body, 0o600); err != nil {
 		s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
 		return
 	}
