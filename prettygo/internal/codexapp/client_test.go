@@ -161,7 +161,6 @@ func TestReadLoopSkipsMalformedFrameAndProcessesFollowingEvent(t *testing.T) {
 		}},
 		pending: make(map[string]chan callResponse),
 		turns:   map[string]*turnState{"thread-1": state},
-		done:    make(chan struct{}),
 	}
 	stream := state.stream()
 

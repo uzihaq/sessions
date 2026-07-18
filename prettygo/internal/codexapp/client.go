@@ -132,7 +132,6 @@ type Client struct {
 	convs          map[string]conversationDefaults
 	remoteEndpoint string
 	closed         bool
-	done           chan struct{}
 }
 
 // NewClient starts (or reuses) the managed app-server daemon, launches the
@@ -315,7 +314,6 @@ func newClientWithTransport(
 		pending:   make(map[string]chan callResponse),
 		turns:     make(map[string]*turnState),
 		convs:     make(map[string]conversationDefaults),
-		done:      make(chan struct{}),
 	}
 	go client.readLoop(process != nil)
 	if process != nil {
@@ -576,6 +574,11 @@ func (c *Client) call(ctx context.Context, method string, params, output any) er
 		return err
 	}
 
+	// The per-call response is the single terminal signal: handleResponse
+	// supplies a result, while fail resolves every still-pending call with an
+	// error. Do not also select on client closure here. A valid reply may already
+	// be buffered when the read loop observes a following EOF, and competing
+	// ready channels would randomly discard that reply.
 	select {
 	case reply := <-response:
 		if reply.err != nil {
@@ -591,8 +594,6 @@ func (c *Client) call(ctx context.Context, method string, params, output any) er
 	case <-ctx.Done():
 		c.removePending(key)
 		return ctx.Err()
-	case <-c.done:
-		return ErrClosed
 	}
 }
 
@@ -800,7 +801,6 @@ func (c *Client) fail(err error) {
 	turns := c.turns
 	c.pending = make(map[string]chan callResponse)
 	c.turns = make(map[string]*turnState)
-	close(c.done)
 	c.mu.Unlock()
 
 	for _, response := range pending {
