@@ -68,7 +68,9 @@ func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 		DisableWatchers: true, Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
 	})
 	t.Cleanup(manager.Close)
-	info, err := manager.Create(context.Background(), state.CreateSessionRequest{Cmd: "/bin/sh", Cwd: repo, Name: "status scratch"})
+	info, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "/bin/sh", Cwd: repo, Name: "status scratch", Description: "Prove the status description contract",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +93,7 @@ func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 		t.Fatalf("decode status: %v\n%s", err, stdout.String())
 	}
 	t.Logf("status_json=%s", strings.TrimSpace(stdout.String()))
-	wantKeys := []string{"age_ms", "created_at", "cwd", "git", "id", "kind", "last_activity_at", "last_verdict", "name", "state", "tool"}
+	wantKeys := []string{"age_ms", "created_at", "cwd", "description", "description_source", "git", "id", "kind", "last_activity_at", "last_verdict", "name", "state", "tool"}
 	gotKeys := make([]string, 0, len(output))
 	for key := range output {
 		gotKeys = append(gotKeys, key)
@@ -102,6 +104,9 @@ func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 	}
 	if output["id"] != info.ID || output["name"] != "status scratch" || output["kind"] != "session" || output["state"] != "idle" || output["cwd"] != repo {
 		t.Fatalf("status identity/state = %#v", output)
+	}
+	if output["description"] != "Prove the status description contract" || output["description_source"] != "explicit" {
+		t.Fatalf("status description = %#v", output)
 	}
 	git, ok := output["git"].(map[string]any)
 	if !ok || git["dirty_count"] != float64(2) || git["branch"] == "" || git["head"] == "" {

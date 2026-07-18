@@ -58,6 +58,35 @@ func TestCreatedProvenanceFoldsOnceAndRemainsImmutable(t *testing.T) {
 	}
 }
 
+func TestExplicitCreatedDescriptionWinsOverDerivedFallback(t *testing.T) {
+	events := []Event{
+		ledgerEvent(1, "lane", EventCreated, 100, createdPayload{
+			Tool: "terminal", Cwd: "/tmp", LaneUUID: "lane",
+			Description: "explicit purpose", DescriptionSource: DescriptionExplicit,
+		}),
+		ledgerEvent(2, "lane", EventDescriptionDerived, 200, descriptionPayload{
+			Description: "later first message", Source: DescriptionFirstMessage,
+		}),
+	}
+	got := Fold(events)
+	if len(got) != 1 || got[0].Description != "explicit purpose" || got[0].DescriptionSource != DescriptionExplicit {
+		t.Fatalf("folded description = %#v", got)
+	}
+
+	derived := Fold([]Event{
+		createdLedgerEvent(1, "fallback", "terminal", ""),
+		ledgerEvent(2, "fallback", EventDescriptionDerived, 200, descriptionPayload{
+			Description: "first user request", Source: DescriptionFirstMessage,
+		}),
+		ledgerEvent(3, "fallback", EventDescriptionDerived, 300, descriptionPayload{
+			Description: "later request must not replace it", Source: DescriptionFirstMessage,
+		}),
+	})
+	if len(derived) != 1 || derived[0].Description != "first user request" || derived[0].DescriptionSource != DescriptionFirstMessage {
+		t.Fatalf("derived description = %#v", derived)
+	}
+}
+
 func TestTombstoneWinsForever(t *testing.T) {
 	provider := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	events := []Event{

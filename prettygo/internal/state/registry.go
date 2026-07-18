@@ -39,18 +39,22 @@ type Registry struct {
 // PreparedSession is the complete, sanitized launch identity exposed to the
 // higher-level composition root before any launch side effect occurs.
 type PreparedSession struct {
-	Info     proto.RunnerInfo
-	Name     string
-	Kind     string
-	SpecPath string
-	Tool     SessionTool
+	Info              proto.RunnerInfo
+	Name              string
+	Description       string
+	DescriptionSource string
+	Kind              string
+	SpecPath          string
+	Tool              SessionTool
 }
 
 type SessionMetadata struct {
-	Name     string
-	OnIdle   string
-	Kind     string
-	SpecPath string
+	Name              string
+	Description       string
+	DescriptionSource string
+	OnIdle            string
+	Kind              string
+	SpecPath          string
 }
 
 // CreateLifecycle lets the session manager place durable boundaries around
@@ -182,12 +186,21 @@ func (r *Registry) CreateWithLifecycle(
 		// place a metered API key in its launchd environment.
 		delete(launchRequest.Env, "ANTHROPIC_API_KEY")
 	}
+	description := strings.TrimSpace(request.Description)
+	descriptionSource := ""
+	if description != "" {
+		descriptionSource = DescriptionExplicit
+	}
 	prepared := PreparedSession{
-		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Kind: kind,
-		SpecPath: specPath, Tool: tool,
+		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Description: description,
+		DescriptionSource: descriptionSource, Kind: kind, SpecPath: specPath, Tool: tool,
 	}
 	if prepared.Name != "" {
 		launchRequest.Env["RUNNER_NAME"] = prepared.Name
+	}
+	if prepared.Description != "" {
+		launchRequest.Env["RUNNER_DESCRIPTION"] = prepared.Description
+		launchRequest.Env["RUNNER_DESCRIPTION_SOURCE"] = prepared.DescriptionSource
 	}
 	if prepared.Kind != "" {
 		launchRequest.Env["RUNNER_KIND"] = prepared.Kind
@@ -207,7 +220,10 @@ func (r *Registry) CreateWithLifecycle(
 			return SessionInfo{}, err
 		}
 	}
-	metadata := SessionMetadata{Name: prepared.Name, OnIdle: strings.TrimSpace(request.OnIdle), Kind: prepared.Kind, SpecPath: prepared.SpecPath}
+	metadata := SessionMetadata{
+		Name: prepared.Name, Description: prepared.Description, DescriptionSource: prepared.DescriptionSource,
+		OnIdle: strings.TrimSpace(request.OnIdle), Kind: prepared.Kind, SpecPath: prepared.SpecPath,
+	}
 	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo, metadata); err != nil {
 		return SessionInfo{}, err
 	}
@@ -319,8 +335,39 @@ func (r *Registry) Register(ctx context.Context, runner proto.Runner, name, onId
 
 func (r *Registry) RegisterMetadata(ctx context.Context, runner proto.Runner, metadata RunnerMetadata, onIdle string) (*Session, error) {
 	return r.register(ctx, runner, SessionMetadata{
-		Name: metadata.Name, OnIdle: onIdle, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
+		OnIdle: onIdle, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 	})
+}
+
+// SetFirstMessageDescription records a best-effort purpose without replacing
+// an explicit description supplied at creation time.
+func (r *Registry) SetFirstMessageDescription(id, description string) (bool, error) {
+	session, ok := r.Get(id)
+	if !ok || session.Info().DescriptionSource == DescriptionExplicit {
+		return false, nil
+	}
+	path := filepath.Join(r.config.RunnerStateDir, id+".json")
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return true, err
+	}
+	var metadata Metadata
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		return true, err
+	}
+	if metadata.DescriptionSource == DescriptionExplicit {
+		return false, nil
+	}
+	if !session.setFirstMessageDescription(description) {
+		return false, nil
+	}
+	metadata.Description = description
+	metadata.DescriptionSource = DescriptionFirstMessage
+	if err := WriteMetadata(path, metadata); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 // MarkDiscovering exposes startup progress to the API while the higher-level
@@ -536,7 +583,8 @@ func launchdPath(value string) string {
 
 func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMetadata) error {
 	metadata := Metadata{
-		ID: info.ID, Name: sessionMetadata.Name, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
+		ID: info.ID, Name: sessionMetadata.Name, Description: sessionMetadata.Description,
+		DescriptionSource: sessionMetadata.DescriptionSource, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
 		Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
 		SockPath:       info.SocketPath,
@@ -551,10 +599,12 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 }
 
 type RunnerMetadata struct {
-	Info     proto.RunnerInfo
-	Name     string
-	Kind     string
-	SpecPath string
+	Info              proto.RunnerInfo
+	Name              string
+	Description       string
+	DescriptionSource string
+	Kind              string
+	SpecPath          string
 }
 
 func readRunnerMetadata(path string) (RunnerMetadata, error) {
@@ -581,7 +631,8 @@ func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 			ConversationID: metadata.ConversationID, RemoteEndpoint: metadata.RemoteEndpoint,
 			ClaudeSessionID: metadata.ClaudeSessionID,
 		},
-		Name: metadata.Name, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
+		Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 	}, nil
 }
 

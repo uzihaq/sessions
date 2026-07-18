@@ -78,7 +78,7 @@ func (a *app) cmdLanes(args []string) error {
 		_, err := io.WriteString(a.stdout, "(no lanes)\n")
 		return err
 	}
-	rows := [][]string{{"ID", "NAME", "TOOL", "CWD", "STATE", "EXIT", "DURATION", "PROVENANCE"}}
+	rows := [][]string{{"ID", "NAME", "DESC", "TOOL", "CWD", "STATE", "EXIT", "DURATION", "PROVENANCE"}}
 	for _, lane := range response.Lanes {
 		name := "-"
 		if strings.TrimSpace(lane.Name) != "" {
@@ -104,7 +104,7 @@ func (a *app) cmdLanes(args []string) error {
 			}
 		}
 		rows = append(rows, []string{
-			prefixString(lane.ID, 8), name, toolOfSession(lane.session),
+			prefixString(lane.ID, 8), name, compactDescription(lane.Description), toolOfSession(lane.session),
 			strings.Replace(lane.Cwd, a.home, "~", 1), state, exit, duration, laneProvenanceLabel(lane),
 		})
 	}

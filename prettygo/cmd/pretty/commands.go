@@ -56,14 +56,15 @@ var toolPresets = map[string]toolPreset{
 var toolPresetOrder = []string{"claude", "codex", "shell"}
 
 type createSessionRequest struct {
-	Cmd       string   `json:"cmd,omitempty"`
-	Args      []string `json:"args,omitempty"`
-	Cwd       string   `json:"cwd,omitempty"`
-	Name      string   `json:"name,omitempty"`
-	OnIdle    string   `json:"onIdle,omitempty"`
-	WaitReady bool     `json:"waitReady,omitempty"`
-	Kind      string   `json:"kind,omitempty"`
-	Force     bool     `json:"force,omitempty"`
+	Cmd         string   `json:"cmd,omitempty"`
+	Args        []string `json:"args,omitempty"`
+	Cwd         string   `json:"cwd,omitempty"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	OnIdle      string   `json:"onIdle,omitempty"`
+	WaitReady   bool     `json:"waitReady,omitempty"`
+	Kind        string   `json:"kind,omitempty"`
+	Force       bool     `json:"force,omitempty"`
 }
 
 type agentControls struct {
@@ -178,11 +179,31 @@ func pluckControl(args *[]string, name string) (*string, error) {
 	return nil, nil
 }
 
+func pluckDescription(args *[]string) (string, error) {
+	description, full := pluck(args, "--description")
+	alias, short := pluck(args, "--desc")
+	if full && short {
+		return "", fail(1, "--description and --desc cannot be combined")
+	}
+	if short {
+		description = alias
+	}
+	if (full || short) && strings.TrimSpace(description) == "" {
+		return "", fail(1, "--description needs a non-empty purpose")
+	}
+	return strings.TrimSpace(description), nil
+}
+
 func (a *app) cmdNew(args []string) error {
 	if err := a.configureCreateOwner(&args); err != nil {
 		return err
 	}
 	var body createSessionRequest
+	description, err := pluckDescription(&args)
+	if err != nil {
+		return err
+	}
+	body.Description = description
 	body.Force = removeFirst(&args, "--force")
 	forceStructuredClaude := removeFirst(&args, "--structured")
 	forceAppServer := removeFirst(&args, "--codex-appserver")

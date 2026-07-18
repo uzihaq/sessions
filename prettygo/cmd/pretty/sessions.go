@@ -120,11 +120,11 @@ func (a *app) cmdSessions(args []string) error {
 		_, err := io.WriteString(a.stdout, "(no sessions or lanes)\n")
 		return err
 	}
-	rows := [][]string{{"ID", "TYPE", "NAME", "TOOL", "CWD", "STATE", "AGE", "OWNER"}}
+	rows := [][]string{{"ID", "TYPE", "NAME", "DESC", "TOOL", "CWD", "STATE", "AGE", "OWNER"}}
 	for _, record := range records {
 		value := record.value
 		rows = append(rows, []string{
-			prefixString(value.ID, 8), sessionType(value), compactSessionName(value.Name), toolOfSession(value),
+			prefixString(value.ID, 8), sessionType(value), compactSessionName(value.Name), compactDescription(value.Description), toolOfSession(value),
 			strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value), a.ageOf(value.CreatedAt),
 			ownershipLabel(value),
 		})
@@ -267,6 +267,19 @@ func compactSessionName(name string) string {
 		return "-"
 	}
 	return strings.Join(strings.Fields(name), " ")
+}
+
+func compactDescription(description string) string {
+	description = strings.Join(strings.Fields(description), " ")
+	if description == "" {
+		return "-"
+	}
+	const maximum = 40
+	runes := []rune(description)
+	if len(runes) > maximum {
+		return string(runes[:maximum-1]) + "…"
+	}
+	return description
 }
 
 func sessionState(value session) string {

@@ -16,23 +16,24 @@ const SchemaVersion = 1
 type EventType string
 
 const (
-	EventCreated           EventType = "created"
-	EventLaunchStarted     EventType = "launch_started"
-	EventRunnerReady       EventType = "runner_ready"
-	EventProviderBound     EventType = "provider_bound"
-	EventAttached          EventType = "attached"
-	EventActivity          EventType = "activity"
-	EventIdle              EventType = "idle"
-	EventRenamed           EventType = "renamed"
-	EventUserKillRequested EventType = "user_kill_requested"
-	EventRunnerExited      EventType = "runner_exited"
-	EventRunnerLost        EventType = "runner_lost"
-	EventReaped            EventType = "reaped"
-	EventReopened          EventType = "reopened"
-	EventDaemonRestart     EventType = "daemon_restart"
-	EventMovedTo           EventType = "moved_to"
-	EventMovedFrom         EventType = "moved_from"
-	EventProviderRebound   EventType = "provider_rebound"
+	EventCreated            EventType = "created"
+	EventLaunchStarted      EventType = "launch_started"
+	EventRunnerReady        EventType = "runner_ready"
+	EventProviderBound      EventType = "provider_bound"
+	EventAttached           EventType = "attached"
+	EventActivity           EventType = "activity"
+	EventIdle               EventType = "idle"
+	EventRenamed            EventType = "renamed"
+	EventDescriptionDerived EventType = "description_derived"
+	EventUserKillRequested  EventType = "user_kill_requested"
+	EventRunnerExited       EventType = "runner_exited"
+	EventRunnerLost         EventType = "runner_lost"
+	EventReaped             EventType = "reaped"
+	EventReopened           EventType = "reopened"
+	EventDaemonRestart      EventType = "daemon_restart"
+	EventMovedTo            EventType = "moved_to"
+	EventMovedFrom          EventType = "moved_from"
+	EventProviderRebound    EventType = "provider_rebound"
 )
 
 // Actor identifies the subsystem that observed or requested a lifecycle fact.
@@ -79,20 +80,29 @@ const (
 	CreatorExternal CreatorKind = "external"
 )
 
+type DescriptionSource string
+
+const (
+	DescriptionExplicit     DescriptionSource = "explicit"
+	DescriptionFirstMessage DescriptionSource = "first-message"
+)
+
 // Created is the only payload accepted by the creation write-ahead boundary.
 // ResumeArgv is a reconstructed provider resume command, not the original
 // process argv. LaneUUID intentionally mirrors LaneID inside the payload so a
 // copied payload remains self-identifying.
 type Created struct {
 	Meta
-	Name         string
-	Tool         string
-	Cwd          string
-	ResumeArgv   []string
-	LaneUUID     string
-	ProviderUUID string
-	CreatorKind  CreatorKind
-	CreatorID    string
+	Name              string
+	Description       string
+	DescriptionSource DescriptionSource
+	Tool              string
+	Cwd               string
+	ResumeArgv        []string
+	LaneUUID          string
+	ProviderUUID      string
+	CreatorKind       CreatorKind
+	CreatorID         string
 }
 
 type UserKill struct {
@@ -133,6 +143,12 @@ type Activity struct {
 type Rename struct {
 	Meta
 	Name string
+}
+
+type DescriptionDerived struct {
+	Meta
+	Description string
+	Source      DescriptionSource
 }
 
 type RunnerExit struct {
@@ -181,6 +197,7 @@ type ObservationWriter interface {
 	RecordActivity(context.Context, Activity) error
 	RecordIdle(context.Context, Observation) error
 	RecordRenamed(context.Context, Rename) error
+	RecordDescriptionDerived(context.Context, DescriptionDerived) error
 	RecordRunnerExited(context.Context, RunnerExit) error
 	RecordRunnerLost(context.Context, Observation) error
 	RecordReaped(context.Context, Observation) error

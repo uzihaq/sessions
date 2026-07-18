@@ -234,8 +234,17 @@ func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error 
 	if value.Actor == "" {
 		value.Actor = ActorDaemon
 	}
+	value.Description = strings.TrimSpace(value.Description)
+	if value.Description == "" {
+		value.DescriptionSource = ""
+	} else if value.DescriptionSource == "" {
+		value.DescriptionSource = DescriptionExplicit
+	} else if value.DescriptionSource != DescriptionExplicit {
+		return fmt.Errorf("record created: invalid description source %q", value.DescriptionSource)
+	}
 	payload := createdPayload{
-		Name: value.Name, Tool: value.Tool, Cwd: value.Cwd,
+		Name: value.Name, Description: value.Description, DescriptionSource: value.DescriptionSource,
+		Tool: value.Tool, Cwd: value.Cwd,
 		ResumeArgv: append([]string{}, value.ResumeArgv...),
 		LaneUUID:   value.LaneUUID, ProviderUUID: value.ProviderUUID,
 		CreatorKind: value.CreatorKind, CreatorID: value.CreatorID,
@@ -307,6 +316,19 @@ func (w observationWriter) RecordIdle(ctx context.Context, value Observation) er
 
 func (w observationWriter) RecordRenamed(ctx context.Context, value Rename) error {
 	return w.store.observe(ctx, EventRenamed, value.Meta, ActorUser, renamePayload{Name: value.Name})
+}
+
+func (w observationWriter) RecordDescriptionDerived(ctx context.Context, value DescriptionDerived) error {
+	value.Description = strings.TrimSpace(value.Description)
+	if value.Description == "" {
+		return errors.New("record derived description: description is required")
+	}
+	if value.Source != DescriptionFirstMessage {
+		return fmt.Errorf("record derived description: invalid source %q", value.Source)
+	}
+	return w.store.observe(ctx, EventDescriptionDerived, value.Meta, ActorUser, descriptionPayload{
+		Description: value.Description, Source: value.Source,
+	})
 }
 
 func (w observationWriter) RecordRunnerExited(ctx context.Context, value RunnerExit) error {
@@ -468,14 +490,16 @@ func (s *Store) QuickCheck(ctx context.Context) error {
 type emptyPayload struct{}
 
 type createdPayload struct {
-	Name         string      `json:"name,omitempty"`
-	Tool         string      `json:"tool"`
-	Cwd          string      `json:"cwd"`
-	ResumeArgv   []string    `json:"argv"`
-	LaneUUID     string      `json:"lane_uuid"`
-	ProviderUUID string      `json:"provider_uuid,omitempty"`
-	CreatorKind  CreatorKind `json:"creator_kind"`
-	CreatorID    string      `json:"creator_id"`
+	Name              string            `json:"name,omitempty"`
+	Description       string            `json:"description,omitempty"`
+	DescriptionSource DescriptionSource `json:"description_source,omitempty"`
+	Tool              string            `json:"tool"`
+	Cwd               string            `json:"cwd"`
+	ResumeArgv        []string          `json:"argv"`
+	LaneUUID          string            `json:"lane_uuid"`
+	ProviderUUID      string            `json:"provider_uuid,omitempty"`
+	CreatorKind       CreatorKind       `json:"creator_kind"`
+	CreatorID         string            `json:"creator_id"`
 }
 
 type providerPayload struct {
@@ -494,6 +518,11 @@ type activityPayload struct {
 
 type renamePayload struct {
 	Name string `json:"name"`
+}
+
+type descriptionPayload struct {
+	Description string            `json:"description"`
+	Source      DescriptionSource `json:"description_source"`
 }
 
 type runnerExitPayload struct {

@@ -20,18 +20,20 @@ type gitStatus struct {
 }
 
 type statusOutput struct {
-	ID             string                   `json:"id"`
-	Name           string                   `json:"name"`
-	Kind           string                   `json:"kind"`
-	Tool           string                   `json:"tool"`
-	State          string                   `json:"state"`
-	ExitCode       *int                     `json:"exit_code,omitempty"`
-	Cwd            string                   `json:"cwd"`
-	Git            *gitStatus               `json:"git"`
-	LastVerdict    *verdictprotocol.Summary `json:"last_verdict,omitempty"`
-	LastActivityAt string                   `json:"last_activity_at"`
-	CreatedAt      string                   `json:"created_at"`
-	AgeMS          int64                    `json:"age_ms"`
+	ID                string                   `json:"id"`
+	Name              string                   `json:"name"`
+	Description       string                   `json:"description"`
+	DescriptionSource string                   `json:"description_source,omitempty"`
+	Kind              string                   `json:"kind"`
+	Tool              string                   `json:"tool"`
+	State             string                   `json:"state"`
+	ExitCode          *int                     `json:"exit_code,omitempty"`
+	Cwd               string                   `json:"cwd"`
+	Git               *gitStatus               `json:"git"`
+	LastVerdict       *verdictprotocol.Summary `json:"last_verdict,omitempty"`
+	LastActivityAt    string                   `json:"last_activity_at"`
+	CreatedAt         string                   `json:"created_at"`
+	AgeMS             int64                    `json:"age_ms"`
 }
 
 func (a *app) cmdStatus(args []string) error {
@@ -79,7 +81,8 @@ func (a *app) cmdStatus(args []string) error {
 		state = "working"
 	}
 	output := statusOutput{
-		ID: id, Name: current.Name, Kind: "session", Tool: toolOfSession(*current),
+		ID: id, Name: current.Name, Description: current.Description,
+		DescriptionSource: current.DescriptionSource, Kind: "session", Tool: toolOfSession(*current),
 		State: state, Cwd: current.Cwd, Git: git, LastVerdict: summary,
 		LastActivityAt: lastActivityTime.Format(time.RFC3339Nano),
 		CreatedAt:      formatStatusTime(createdAt),
@@ -194,6 +197,13 @@ func (a *app) writeStatusCard(output statusOutput, lastActivityAt int64) error {
 	}
 	if _, err := fmt.Fprintf(a.stdout, "  id       %s\n  kind     %s\n  tool     %s\n  cwd      %s\n",
 		output.ID, output.Kind, output.Tool, strings.Replace(output.Cwd, a.home, "~", 1)); err != nil {
+		return err
+	}
+	description := output.Description
+	if description == "" {
+		description = "-"
+	}
+	if _, err := fmt.Fprintf(a.stdout, "  desc     %s\n", description); err != nil {
 		return err
 	}
 	if output.ExitCode != nil {

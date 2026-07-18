@@ -7,12 +7,13 @@ import (
 )
 
 type runLaneRequest struct {
-	Cmd      string   `json:"cmd"`
-	Args     []string `json:"args"`
-	Cwd      string   `json:"cwd"`
-	Name     string   `json:"name,omitempty"`
-	Kind     string   `json:"kind"`
-	SpecPath string   `json:"specPath,omitempty"`
+	Cmd         string   `json:"cmd"`
+	Args        []string `json:"args"`
+	Cwd         string   `json:"cwd"`
+	Name        string   `json:"name,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Kind        string   `json:"kind"`
+	SpecPath    string   `json:"specPath,omitempty"`
 }
 
 func (a *app) cmdRun(args []string) error {
@@ -31,6 +32,10 @@ func (a *app) cmdRun(args []string) error {
 		return err
 	}
 	command := append([]string(nil), args[separator+1:]...)
+	description, err := pluckDescription(&options)
+	if err != nil {
+		return err
+	}
 	wait := removeFirst(&options, "--wait")
 	output := removeFirst(&options, "--output")
 	if output && !wait {
@@ -51,7 +56,6 @@ func (a *app) cmdRun(args []string) error {
 	if len(options) != 0 {
 		return fail(1, "unknown run option %s", options[0])
 	}
-	var err error
 	if cwd == "" {
 		cwd, err = os.Getwd()
 	} else {
@@ -76,7 +80,7 @@ func (a *app) cmdRun(args []string) error {
 		}
 	}
 	body := runLaneRequest{
-		Cmd: command[0], Args: command[1:], Cwd: cwd, Name: strings.TrimSpace(name),
+		Cmd: command[0], Args: command[1:], Cwd: cwd, Name: strings.TrimSpace(name), Description: description,
 		Kind: "lane", SpecPath: specPath,
 	}
 	var created map[string]any

@@ -142,7 +142,8 @@ func (r *claudeStructuredRunner) historyWorking() bool {
 
 func (r *claudeStructuredRunner) writeMetadata() error {
 	return state.WriteMetadata(r.paths.Meta, state.Metadata{
-		ID: r.cfg.id, Name: r.cfg.name, Kind: r.cfg.kind, SpecPath: r.cfg.specPath,
+		ID: r.cfg.id, Name: r.cfg.name, Description: r.cfg.description,
+		DescriptionSource: r.cfg.descriptionSource, Kind: r.cfg.kind, SpecPath: r.cfg.specPath,
 		Cmd: r.cfg.cmd, Args: r.cfg.args, Cwd: r.cfg.cwd,
 		Cols: r.cfg.cols, Rows: r.cfg.rows, CreatedAt: r.createdAt,
 		PID: os.Getpid(), SockPath: r.paths.Socket, ClaudeSessionID: r.sessionID,
