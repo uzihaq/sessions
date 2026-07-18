@@ -74,7 +74,7 @@ pretty snap <id>                # current screen (human viewing only — DON'T p
 
 ## Sacred rules (do not violate)
 
-1. **Never `kill` a session you did not create.** Others' sessions may be real work. Use `pretty lanes --mine` to know which are yours. When unsure, don't kill.
+1. **Never `kill` a session you did not create.** Others' sessions may be real work. Use `pretty sessions --mine` to know which are yours (sessions + lanes). When unsure, don't kill.
 2. **Conversation collision guard:** if `pretty new`/resume refuses with "already live as ...", the conversation is being driven elsewhere — **do not `--force` past it** unless you're certain the other driver is dead. Two drivers on one conversation corrupt it.
 3. **Prefer structured output.** Use `--json` and `pretty last`/`status`/`transcript`, not `snap` scraping. Codex-app-server and Claude-`--structured` sessions give authoritative done/working signals; PTY sessions are best-effort.
 4. **`ask` for request→response, `send`+`wait` for fire-then-monitor.** `send` alone returns before the reply is done.
