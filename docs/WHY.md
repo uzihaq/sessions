@@ -26,3 +26,8 @@ Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/la
 - **JSON casing normalization** — the inconsistency is real but a broad rename breaks the frontend; not worth it now.
 - **Permission-default reversal** — codex says constrain-by-default for safety; user explicitly wants skip-perms for their trusted orchestration. PENDING USER DECISION for the public build.
 - **More fuzzing/guards** — every package is fuzzed; stop chasing invented edge cases (user steer 2026-07-17: keep life easy).
+
+## Search roadmap (added 2026-07-17, user-requested)
+- **`pretty search` (keyword, one daemon)** — you can't find text once it scrolls off. — building — PROMOTE: yes
+- **Central / fleet search (keyword, all machines)** — one search across mini + MacBook + VMs; fan `/api/search` across configured daemons + merge. The "central place to search." — roadmap — PROMOTE: yes
+- **Semantic search (LOCAL embeddings)** — find by meaning, not exact words. MUST use a local embedding model (a cloud embed API would break "we never see your data"); ~90MB local model → vectors → local vector index (sqlite-vec/flat cosine); query embedded locally. Opt-in, incremental, off the critical path (daemon stays a dumb pipe). The local-model requirement is what makes PRIVATE semantic search possible — it's a feature, not a limitation. — roadmap — PROMOTE: yes (big differentiator: private semantic recall over your whole agent history)
