@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/uzihaq/pretty-pty/prettygo/internal/claudep"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/codexapp"
@@ -153,6 +154,8 @@ type runtimeSession struct {
 	stopOnce                   sync.Once
 	outputObserved             chan struct{}
 	structuredEventArrived     chan struct{}
+	firstMessageInput          []byte
+	firstMessageDone           bool
 }
 
 func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...ManagerOptions) *Manager {
@@ -232,7 +235,9 @@ func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSess
 	}
 	if err := m.boundaries.RecordCreated(ctx, ledger.Created{
 		Meta: ledger.Meta{LaneID: info.ID, AtMS: info.CreatedAt},
-		Name: prepared.Name, Tool: string(prepared.Tool), Cwd: info.Cwd,
+		Name: prepared.Name, Description: prepared.Description,
+		DescriptionSource: ledger.DescriptionSource(prepared.DescriptionSource),
+		Tool:              string(prepared.Tool), Cwd: info.Cwd,
 		ResumeArgv: resumeArgv, LaneUUID: info.ID, ProviderUUID: providerUUID,
 		CreatorKind: creatorKind, CreatorID: creatorID,
 	}); err != nil {
@@ -456,7 +461,8 @@ func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionIn
 		}
 		exitedAt := lane.LastEventAtMS
 		info := state.SessionInfo{
-			ID: lane.LaneID, Name: lane.Name, Cwd: lane.Cwd,
+			ID: lane.LaneID, Name: lane.Name, Description: lane.Description,
+			DescriptionSource: string(lane.DescriptionSource), Cwd: lane.Cwd,
 			CreatedAt: lane.CreatedAtMS, LastDataAt: lane.LastEventAtMS,
 			Tool: state.SessionTool(lane.Tool), Exited: true, ExitedAt: &exitedAt,
 			ExitCode: lane.ExitCode, ExitSignal: lane.ExitSignal,
@@ -495,6 +501,10 @@ func (m *Manager) withProvenance(ctx context.Context, infos []state.SessionInfo)
 		current, exists := byID[infos[index].ID]
 		if !exists || !current.Created {
 			continue
+		}
+		if infos[index].DescriptionSource != state.DescriptionExplicit && current.Description != "" {
+			infos[index].Description = current.Description
+			infos[index].DescriptionSource = string(current.DescriptionSource)
 		}
 		infos[index].CreatorKind = string(current.CreatorKind)
 		infos[index].CreatorID = current.CreatorID
@@ -707,12 +717,108 @@ func (m *Manager) Input(ctx context.Context, id, data string) bool {
 	if !m.registry.Input(ctx, id, data) {
 		return false
 	}
+	m.captureFirstMessageDescription(id, data)
 	m.observe(ctx, "human activity", func(writer ledger.ObservationWriter) error {
 		return writer.RecordActivity(ctx, ledger.Activity{
 			Meta: ledger.Meta{LaneID: id}, Source: ledger.ActivityHumanInput,
 		})
 	})
 	return true
+}
+
+func (m *Manager) captureFirstMessageDescription(id, data string) {
+	m.mu.Lock()
+	runtime := m.runtimes[id]
+	m.mu.Unlock()
+	if runtime == nil {
+		return
+	}
+
+	runtime.mu.Lock()
+	if runtime.firstMessageDone {
+		runtime.mu.Unlock()
+		return
+	}
+	info := runtime.session.Info()
+	if info.DescriptionSource == state.DescriptionExplicit || info.Description != "" {
+		runtime.firstMessageDone = true
+		runtime.mu.Unlock()
+		return
+	}
+
+	complete := false
+	for _, value := range []byte(data) {
+		if value == '\r' || (value == '\n' && len(data) == 1) {
+			complete = len(runtime.firstMessageInput) > 0
+			if complete {
+				break
+			}
+			continue
+		}
+		if len(runtime.firstMessageInput) < 4096 {
+			runtime.firstMessageInput = append(runtime.firstMessageInput, value)
+		}
+	}
+	if !complete {
+		runtime.mu.Unlock()
+		return
+	}
+	description := firstMessageDescription(string(runtime.firstMessageInput))
+	if description == "" {
+		runtime.firstMessageInput = nil
+		runtime.mu.Unlock()
+		return
+	}
+	runtime.firstMessageDone = true
+	runtime.firstMessageInput = nil
+	runtime.mu.Unlock()
+
+	changed, err := m.registry.SetFirstMessageDescription(id, description)
+	if err != nil {
+		log.Printf("[description] persist first-message description for %s: %v", id, err)
+	}
+	if !changed {
+		return
+	}
+	m.observe(context.Background(), "derived description", func(writer ledger.ObservationWriter) error {
+		return writer.RecordDescriptionDerived(context.Background(), ledger.DescriptionDerived{
+			Meta: ledger.Meta{LaneID: id}, Description: description, Source: ledger.DescriptionFirstMessage,
+		})
+	})
+}
+
+func firstMessageDescription(value string) string {
+	var cleaned strings.Builder
+	escapeSequence := 0
+	for _, character := range value {
+		if escapeSequence != 0 {
+			if escapeSequence == 1 {
+				if character == '[' {
+					escapeSequence = 2
+				} else {
+					escapeSequence = 0
+				}
+			} else if character >= '@' && character <= '~' {
+				escapeSequence = 0
+			}
+			continue
+		}
+		if character == '\x1b' {
+			escapeSequence = 1
+			continue
+		}
+		if unicode.IsControl(character) {
+			cleaned.WriteRune(' ')
+			continue
+		}
+		cleaned.WriteRune(character)
+	}
+	description := strings.Join(strings.Fields(cleaned.String()), " ")
+	runes := []rune(description)
+	if len(runes) > 80 {
+		description = string(runes[:79]) + "…"
+	}
+	return description
 }
 
 func (m *Manager) Close() {

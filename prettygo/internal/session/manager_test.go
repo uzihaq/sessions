@@ -711,6 +711,79 @@ func TestProviderActivityTimestampFlowsFromRecordClaudeLocked(t *testing.T) {
 	t.Fatalf("provider activity with timestamp %d was not recorded: %#v", wantAt.UnixMilli(), events)
 }
 
+func TestDescriptionPersistsAndFirstMessageFallbackNeverOverridesExplicit(t *testing.T) {
+	tests := []struct {
+		name            string
+		explicit        string
+		firstInput      string
+		wantDescription string
+		wantSource      string
+	}{
+		{
+			name: "first message fallback", firstInput: "\x1b[200~Investigate flaky cleanup ownership\x1b[201~",
+			wantDescription: "Investigate flaky cleanup ownership", wantSource: state.DescriptionFirstMessage,
+		},
+		{
+			name: "explicit wins", explicit: "Keep the release lane healthy", firstInput: "Replace the explicit purpose",
+			wantDescription: "Keep the release lane healthy", wantSource: state.DescriptionExplicit,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			store, err := ledger.Open(context.Background(), ledger.Options{Path: filepath.Join(root, "ledger.sqlite3")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			manager := NewManager(testConfig(root), prototest.NewLauncher(), ManagerOptions{
+				DisableWatchers: true, ActivityInterval: time.Hour,
+				Boundaries: store.Boundaries(), Observations: store.Observations(), LedgerReader: store,
+			})
+			defer manager.Close()
+
+			created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+				Cmd: "/bin/sh", Cwd: root, Description: test.explicit,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !manager.Input(context.Background(), created.ID, test.firstInput) ||
+				!manager.Input(context.Background(), created.ID, "\r") {
+				t.Fatal("first user message was not accepted")
+			}
+			current, ok := manager.Get(created.ID)
+			if !ok {
+				t.Fatal("created session disappeared")
+			}
+			if got := current.Info(); got.Description != test.wantDescription || got.DescriptionSource != test.wantSource {
+				t.Fatalf("session description = %q/%q, want %q/%q", got.Description, got.DescriptionSource, test.wantDescription, test.wantSource)
+			}
+			metadata, err := state.ReadRunnerMetadata(filepath.Join(manager.config.RunnerStateDir, created.ID+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if metadata.Description != test.wantDescription || metadata.DescriptionSource != test.wantSource {
+				t.Fatalf("metadata description = %q/%q, want %q/%q", metadata.Description, metadata.DescriptionSource, test.wantDescription, test.wantSource)
+			}
+			events, err := store.Events(context.Background(), created.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			folded := ledger.Fold(events)
+			if len(folded) != 1 || folded[0].Description != test.wantDescription || string(folded[0].DescriptionSource) != test.wantSource {
+				t.Fatalf("folded description = %#v, want %q/%q", folded, test.wantDescription, test.wantSource)
+			}
+			if test.explicit != "" {
+				if !strings.Contains(string(events[0].Payload), `"description":"Keep the release lane healthy"`) ||
+					!strings.Contains(string(events[0].Payload), `"description_source":"explicit"`) {
+					t.Fatalf("created event did not persist explicit description: %s", events[0].Payload)
+				}
+			}
+		})
+	}
+}
+
 func TestMassKillGuardRefusesDiscoverySweepBeforeBootout(t *testing.T) {
 	root := t.TempDir()
 	config := testConfig(root)

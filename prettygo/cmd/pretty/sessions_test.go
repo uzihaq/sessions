@@ -154,6 +154,68 @@ func TestLSMineJSONFiltersTypesWithoutRewritingRawFieldCasing(t *testing.T) {
 	}
 }
 
+func TestDescriptionShowsInCleanupListsStatusAndJSON(t *testing.T) {
+	t.Setenv("PRETTY_OWNER_ID", "team:description")
+	t.Setenv("PRETTY_SESSION_ID", "")
+	const (
+		sessionID   = "23000000-0000-4000-8000-000000000001"
+		laneID      = "23000000-0000-4000-8000-000000000002"
+		description = "Investigate cleanup behavior with a deliberately long full purpose description"
+	)
+	sessionJSON := `{"id":"` + sessionID + `","description":"` + description + `","description_source":"explicit","cmd":"/bin/sh","cwd":"/tmp","createdAt":1,"lastDataAt":1,"tool":"terminal","root_creator_kind":"external","root_creator_id":"team:description"}`
+	laneJSON := `{"id":"` + laneID + `","kind":"lane","description":"Clean generated release artifacts","description_source":"explicit","cmd":"/bin/sh","cwd":"/tmp","createdAt":1,"lastDataAt":1,"tool":"lane","root_creator_kind":"external","root_creator_id":"team:description"}`
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/sessions":
+			_, _ = response.Write([]byte(`{"sessions":[` + sessionJSON + `,` + laneJSON + `]}`))
+		case "/api/lanes":
+			_, _ = response.Write([]byte(`{"lanes":[` + laneJSON + `],"user_creator_id":"uid:424242"}`))
+		case "/api/sessions/" + sessionID + "/verdict":
+			response.WriteHeader(http.StatusNotFound)
+			_, _ = response.Write([]byte(`{"error":"not found"}`))
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := runOwnershipCLI(t, server.URL, "sessions", "--mine")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "DESC") ||
+		!strings.Contains(stdout, "Investigate cleanup behavior with a del…") ||
+		!strings.Contains(stdout, "Clean generated release artifacts") {
+		t.Fatalf("sessions cleanup view exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "ls")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "DESC") || !strings.Contains(stdout, "Investigate cleanup") {
+		t.Fatalf("ls exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "lanes")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "DESC") || !strings.Contains(stdout, "Clean generated release artifacts") {
+		t.Fatalf("lanes exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "status", sessionID)
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "desc     "+description) {
+		t.Fatalf("status exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "--json", "sessions", "--mine")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, `"description": "`+description+`"`) ||
+		!strings.Contains(stdout, `"description_source": "explicit"`) {
+		t.Fatalf("sessions JSON exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	for _, command := range []string{"ls", "lanes"} {
+		stdout, stderr, code = runOwnershipCLI(t, server.URL, "--json", command)
+		if code != 0 || stderr != "" || !strings.Contains(stdout, `"description"`) ||
+			!strings.Contains(stdout, `"description_source": "explicit"`) {
+			t.Fatalf("%s JSON exit=%d stdout=%q stderr=%q", command, code, stdout, stderr)
+		}
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "--json", "status", sessionID)
+	if code != 0 || stderr != "" || !strings.Contains(stdout, `"description": "`+description+`"`) {
+		t.Fatalf("status JSON exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+}
+
 func runOwnershipCLI(t *testing.T, host string, args ...string) (string, string, int) {
 	t.Helper()
 	arguments := append([]string{"--host", host}, args...)

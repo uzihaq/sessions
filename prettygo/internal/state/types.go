@@ -5,18 +5,22 @@ import "encoding/json"
 type SessionTool string
 
 const (
-	ToolClaude           SessionTool = "claude-code"
-	ToolCodex            SessionTool = "codex"
-	ToolTerminal         SessionTool = "terminal"
-	ToolLane             SessionTool = "lane"
-	KindLane                         = "lane"
-	KindCodexAppServer               = "codex-app-server"
-	KindClaudeStructured             = "claude-structured"
+	ToolClaude              SessionTool = "claude-code"
+	ToolCodex               SessionTool = "codex"
+	ToolTerminal            SessionTool = "terminal"
+	ToolLane                SessionTool = "lane"
+	KindLane                            = "lane"
+	KindCodexAppServer                  = "codex-app-server"
+	KindClaudeStructured                = "claude-structured"
+	DescriptionExplicit                 = "explicit"
+	DescriptionFirstMessage             = "first-message"
 )
 
 type SessionInfo struct {
 	ID                string      `json:"id"`
 	Name              string      `json:"name,omitempty"`
+	Description       string      `json:"description"`
+	DescriptionSource string      `json:"description_source,omitempty"`
 	Kind              string      `json:"kind,omitempty"`
 	SpecPath          string      `json:"specPath,omitempty"`
 	Cmd               string      `json:"cmd"`
@@ -53,18 +57,19 @@ type SessionInfo struct {
 }
 
 type CreateSessionRequest struct {
-	Cmd       string            `json:"cmd,omitempty"`
-	Args      []string          `json:"args,omitempty"`
-	Cwd       string            `json:"cwd,omitempty"`
-	Cols      int               `json:"cols,omitempty"`
-	Rows      int               `json:"rows,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Kind      string            `json:"kind,omitempty"`
-	SpecPath  string            `json:"specPath,omitempty"`
-	OnIdle    string            `json:"onIdle,omitempty"`
-	WaitReady bool              `json:"waitReady,omitempty"`
-	Force     bool              `json:"force,omitempty"`
+	Cmd         string            `json:"cmd,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Cwd         string            `json:"cwd,omitempty"`
+	Cols        int               `json:"cols,omitempty"`
+	Rows        int               `json:"rows,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	SpecPath    string            `json:"specPath,omitempty"`
+	OnIdle      string            `json:"onIdle,omitempty"`
+	WaitReady   bool              `json:"waitReady,omitempty"`
+	Force       bool              `json:"force,omitempty"`
 	// CreatorSessionID and CreatorOwnerID are populated from trusted HTTP
 	// headers at the daemon boundary. They are deliberately not JSON fields.
 	CreatorSessionID string `json:"-"`

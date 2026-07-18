@@ -67,7 +67,8 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 		runner: runner,
 		mirror: terminal,
 		info: SessionInfo{
-			ID: info.ID, Name: metadata.Name, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+			ID: info.ID, Name: metadata.Name, Description: metadata.Description,
+			DescriptionSource: metadata.DescriptionSource, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 			Cmd: info.Cmd, Args: append([]string{}, info.Args...),
 			Cwd: info.Cwd, Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt,
 			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: metadata.OnIdle,
@@ -187,6 +188,17 @@ func (s *Session) Info() SessionInfo {
 	info := s.info
 	info.Args = append([]string{}, s.info.Args...)
 	return info
+}
+
+func (s *Session) setFirstMessageDescription(description string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.info.DescriptionSource == DescriptionExplicit || s.info.Description != "" {
+		return false
+	}
+	s.info.Description = description
+	s.info.DescriptionSource = DescriptionFirstMessage
+	return true
 }
 
 func (s *Session) Replay(after uint32) proto.ReplayWindow {

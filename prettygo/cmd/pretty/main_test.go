@@ -288,6 +288,52 @@ func TestNewNameFlowsThroughPostBodyAndList(t *testing.T) {
 	}
 }
 
+func TestDescriptionAndDescFlagsFlowThroughNewAndRun(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		args []string
+	}{
+		{name: "new description", path: "/api/sessions", args: []string{"new", "--cmd", "/bin/sh", "--description", "  Diagnose release failures  "}},
+		{name: "new desc alias", path: "/api/sessions", args: []string{"new", "--cmd", "/bin/sh", "--desc", "  Diagnose release failures  "}},
+		{name: "run description", path: "/api/lanes", args: []string{"run", "--description", "  Diagnose release failures  ", "--", "/bin/sh", "--description", "child-value"}},
+		{name: "run desc alias", path: "/api/lanes", args: []string{"run", "--desc", "  Diagnose release failures  ", "--", "/bin/sh", "--description", "child-value"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var posted map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodPost || request.URL.Path != test.path {
+					http.NotFound(response, request)
+					return
+				}
+				if err := json.NewDecoder(request.Body).Decode(&posted); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				response.Header().Set("Content-Type", "application/json")
+				response.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(response, `{"id":"description-test"}`)
+			}))
+			defer server.Close()
+			t.Setenv("HOME", t.TempDir())
+			arguments := append([]string{"--host", server.URL}, test.args...)
+			var stdout, stderr bytes.Buffer
+			if code := run(arguments, strings.NewReader(""), &stdout, &stderr); code != 0 {
+				t.Fatalf("exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+			}
+			if posted["description"] != "Diagnose release failures" {
+				t.Fatalf("posted description = %#v", posted)
+			}
+			if test.path == "/api/lanes" {
+				args, _ := posted["args"].([]any)
+				if len(args) != 2 || args[0] != "--description" || args[1] != "child-value" {
+					t.Fatalf("run child args were changed: %#v", posted["args"])
+				}
+			}
+		})
+	}
+}
+
 func TestForceThreadsThroughConversationBindingCommands(t *testing.T) {
 	provider := "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 	tests := []struct {

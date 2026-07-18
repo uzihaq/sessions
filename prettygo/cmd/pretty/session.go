@@ -15,6 +15,8 @@ import (
 type session struct {
 	ID                string          `json:"id"`
 	Name              string          `json:"name,omitempty"`
+	Description       string          `json:"description"`
+	DescriptionSource string          `json:"description_source,omitempty"`
 	Kind              string          `json:"kind,omitempty"`
 	Cmd               string          `json:"cmd"`
 	Args              []string        `json:"args"`
@@ -201,7 +203,7 @@ func (a *app) cmdLS(args []string) error {
 		_, err := io.WriteString(a.stdout, "(no sessions)\n")
 		return err
 	}
-	rows := [][]string{{"ID", "NAME", "TOOL", "CWD", "STATE", "AGE", "LAST-USER", "PID"}}
+	rows := [][]string{{"ID", "NAME", "DESC", "TOOL", "CWD", "STATE", "AGE", "LAST-USER", "PID"}}
 	for _, record := range records {
 		value := record.value
 		lastUser := "-"
@@ -209,7 +211,7 @@ func (a *app) cmdLS(args []string) error {
 			lastUser = a.ageOf(*value.LastUserMessageAt)
 		}
 		rows = append(rows, []string{
-			prefixString(value.ID, 8), compactSessionName(value.Name), toolOfSession(value),
+			prefixString(value.ID, 8), compactSessionName(value.Name), compactDescription(value.Description), toolOfSession(value),
 			strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value),
 			a.ageOf(value.CreatedAt), lastUser, strconv.Itoa(value.PID),
 		})

@@ -8,6 +8,8 @@ import (
 type LaneState struct {
 	LaneID                   string
 	Name                     string
+	Description              string
+	DescriptionSource        DescriptionSource
 	Tool                     string
 	Cwd                      string
 	ResumeArgv               []string
@@ -77,6 +79,8 @@ func Fold(events []Event) []LaneState {
 			state.Created = true
 			state.CreatedAtMS = event.AtMS
 			state.Name = payload.Name
+			state.Description = payload.Description
+			state.DescriptionSource = payload.DescriptionSource
 			state.Tool = payload.Tool
 			state.Cwd = payload.Cwd
 			state.ResumeArgv = append([]string(nil), payload.ResumeArgv...)
@@ -131,6 +135,14 @@ func Fold(events []Event) []LaneState {
 			var payload renamePayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
 				state.Name = payload.Name
+			}
+		case EventDescriptionDerived:
+			var payload descriptionPayload
+			if json.Unmarshal(event.Payload, &payload) == nil &&
+				payload.Source == DescriptionFirstMessage &&
+				state.DescriptionSource == "" && state.Description == "" {
+				state.Description = payload.Description
+				state.DescriptionSource = payload.Source
 			}
 		case EventUserKillRequested:
 			// This bit is monotonic. No later observation, including reopened,

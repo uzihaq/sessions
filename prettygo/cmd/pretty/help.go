@@ -28,16 +28,16 @@ const (
 // top-level help, and per-command help. Keep the daily path first.
 var commandTable = []commandSpec{
 	{
-		name: "new", usage: "new [--tool claude|codex|shell] [--cwd P] [--name L] [options] [args...]",
+		name: "new", usage: "new [--tool claude|codex|shell] [--cwd P] [--name L] [--description PURPOSE] [options] [args...]",
 		summary: "create an interactive session", group: dailyCommandGroup,
-		longHelp: "Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.",
+		longHelp: "Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --description (alias --desc) records why the session exists. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.",
 		examples: []string{"pretty new --tool claude --cwd ~/work", "pretty new --tool codex --model gpt-5-codex", "pretty new --cmd /bin/zsh"},
 		run:      (*app).cmdNew,
 	},
 	{
-		name: "run", usage: "run [--name N] [--cwd D] [--spec FILE] [--wait [--output]] -- <cmd args...>",
+		name: "run", usage: "run [--name N] [--description PURPOSE] [--cwd D] [--spec FILE] [--wait [--output]] -- <cmd args...>",
 		summary: "run a command in a headless lane", group: dailyCommandGroup,
-		longHelp: "Create a headless lane for the command following the first -- separator. Every child argument after that separator is passed unchanged. Without --wait, print the lane id and return. --wait blocks for completion and propagates the child exit code; --output prints the captured output tail.",
+		longHelp: "Create a headless lane for the command following the first -- separator. --description (alias --desc) records why the lane exists. Every child argument after that separator is passed unchanged. Without --wait, print the lane id and return. --wait blocks for completion and propagates the child exit code; --output prints the captured output tail.",
 		examples: []string{"pretty run -- make test", "pretty run --name lint --wait --output -- npm run lint", "pretty --json run --wait -- sh -c 'exit 3'"},
 		run:      (*app).cmdRun,
 	},

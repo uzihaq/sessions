@@ -31,16 +31,18 @@ import (
 const idleShutdown = 30 * time.Second
 
 type config struct {
-	id       string
-	name     string
-	kind     string
-	specPath string
-	stateDir string
-	cmd      string
-	args     []string
-	cwd      string
-	cols     int
-	rows     int
+	id                string
+	name              string
+	description       string
+	descriptionSource string
+	kind              string
+	specPath          string
+	stateDir          string
+	cmd               string
+	args              []string
+	cwd               string
+	cols              int
+	rows              int
 }
 
 type hello struct {
@@ -239,7 +241,8 @@ func run() int {
 		jsonlMissing: jsonlMissing,
 	}
 	meta := state.Metadata{
-		ID: cfg.id, Name: cfg.name, Kind: cfg.kind, SpecPath: cfg.specPath,
+		ID: cfg.id, Name: cfg.name, Description: cfg.description,
+		DescriptionSource: cfg.descriptionSource, Kind: cfg.kind, SpecPath: cfg.specPath,
 		Cmd: cfg.cmd, Args: cfg.args, Cwd: cfg.cwd,
 		Cols: cfg.cols, Rows: cfg.rows, CreatedAt: r.createdAt,
 		PID: command.Process.Pid, SockPath: paths.Socket,
@@ -286,6 +289,8 @@ func configFromEnv() (config, string, error) {
 		return config{}, "", errors.New("RUNNER_ID env var required")
 	}
 	name := strings.TrimSpace(os.Getenv("RUNNER_NAME"))
+	description := strings.TrimSpace(os.Getenv("RUNNER_DESCRIPTION"))
+	descriptionSource := strings.TrimSpace(os.Getenv("RUNNER_DESCRIPTION_SOURCE"))
 	kind := strings.TrimSpace(os.Getenv("RUNNER_KIND"))
 	if kind != "" && kind != state.KindLane && kind != state.KindCodexAppServer && kind != state.KindClaudeStructured {
 		return config{}, "", fmt.Errorf("unsupported RUNNER_KIND=%q", kind)
@@ -329,7 +334,10 @@ func configFromEnv() (config, string, error) {
 	if cols <= 0 || cols > 65535 || rows <= 0 || rows > 65535 {
 		return config{}, "", fmt.Errorf("invalid PTY size %dx%d", cols, rows)
 	}
-	return config{id: id, name: name, kind: kind, specPath: specPath, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows}, "", nil
+	return config{
+		id: id, name: name, description: description, descriptionSource: descriptionSource,
+		kind: kind, specPath: specPath, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows,
+	}, "", nil
 }
 
 func envInt(name string, fallback int) (int, error) {
@@ -357,7 +365,8 @@ func childEnv() []string {
 		"RUNNER_ID": {}, "RUNNER_CMD": {}, "RUNNER_ARGS_JSON": {},
 		"RUNNER_CWD": {}, "RUNNER_COLS": {}, "RUNNER_ROWS": {},
 		"RUNNER_STATE_DIR": {}, "RUNNER_NAME": {}, "RUNNER_KIND": {},
-		"RUNNER_SPEC_PATH": {}, "TERM": {}, "COLORTERM": {},
+		"RUNNER_SPEC_PATH": {}, "RUNNER_DESCRIPTION": {}, "RUNNER_DESCRIPTION_SOURCE": {},
+		"TERM": {}, "COLORTERM": {},
 		"PRETTY_CODEX_APP_SERVER_SOCKET": {},
 	}
 	out := make([]string, 0, len(os.Environ())+2)
