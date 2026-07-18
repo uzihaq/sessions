@@ -1,0 +1,10 @@
+# Lane: SEARCH — `pretty search` across session chat history (user daily-use need)
+Work ONLY in /Users/uzair/pretty-PTY-search. WHY THIS EXISTS: the user cannot find text in a Claude/Codex chat once it scrolls off screen, even though every message is on disk (JSONL/rollout). Scrolling-and-losing-it is a real daily frustration. Make search a command.
+FILE OWNERSHIP: internal/search (new), api handler in NEW file search_handlers.go + route registration, cmd/pretty/search.go (new) + one dispatch line + help-table entry. Reuse internal/watch's existing history resolution/normalization (the same source pretty last/transcript reads) — do NOT re-implement conversation parsing.
+BUILD:
+`pretty search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex] [--json]`
+- Searches the NORMALIZED message history of sessions the daemon knows (across all live+known sessions by default; --session limits to one). Case-insensitive substring by default; --regex for regex.
+- Runs DAEMON-SIDE via GET /api/search?q=... (so it works against a remote daemon with --host too — this is how the user will later search the mini's PM chat from anywhere). The daemon iterates known sessions, resolves each one's conversation store (internal/watch resolvers), scans messages, returns matches.
+- Output per match: session id (short) + name, tool, role, timestamp, and a SNIPPET with the match highlighted/centered (± some context chars). Group by session. --json returns {matches:[{session_id,name,tool,role,timestamp,text,snippet}], total}.
+- Sensible limits: cap total matches (default 100, -n to raise), cap snippet length, bounded per-file read.
+GATES: CGO_ENABLED=0 build/vet/full-suite green; tests: seed a couple fake normalized conversations with known text, assert search finds them by substring + regex, --session filters, --role filters, snippet centers the match, --json shape. docs/lanes/search-NOTES.md with a real run against the local daemon (grep for something in the soak-d2 or a scratch session). No commit. Scratch only.

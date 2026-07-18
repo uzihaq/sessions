@@ -223,8 +223,16 @@ func (s *Service) History(live []state.SessionInfo) (HistoryResponse, error) {
 	return s.history.List(live)
 }
 
+func (s *Service) SearchSessions(live []state.SessionInfo) ([]HistorySession, error) {
+	return s.history.SearchSessions(live)
+}
+
 func (s *Service) Transcript(live []state.SessionInfo, id string) (TranscriptResponse, error) {
 	return s.history.Transcript(live, id)
+}
+
+func (s *Service) TranscriptLimited(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
+	return s.history.TranscriptLimited(live, id, maxBytes)
 }
 
 func (s *Service) Raw(live []state.SessionInfo, id string) ([]byte, error) {
