@@ -21,6 +21,8 @@ type LaneState struct {
 	LastProviderActivityAtMS int64
 	LastActivitySource       ActivitySource
 	LatestEvent              EventType
+	ExitCode                 *int
+	ExitSignal               *string
 
 	Created           bool
 	LaunchStarted     bool
@@ -138,6 +140,11 @@ func Fold(events []Event) []LaneState {
 		case EventRunnerExited:
 			state.RunnerExited = true
 			state.ManagedActive = false
+			var payload runnerExitPayload
+			if json.Unmarshal(event.Payload, &payload) == nil {
+				state.ExitCode = payload.Code
+				state.ExitSignal = payload.Signal
+			}
 		case EventRunnerLost:
 			state.RunnerLost = true
 			state.ManagedActive = false
@@ -162,6 +169,14 @@ func Fold(events []Event) []LaneState {
 	result := make([]LaneState, 0, len(states))
 	for _, state := range states {
 		state.ResumeArgv = append([]string(nil), state.ResumeArgv...)
+		if state.ExitCode != nil {
+			code := *state.ExitCode
+			state.ExitCode = &code
+		}
+		if state.ExitSignal != nil {
+			signal := *state.ExitSignal
+			state.ExitSignal = &signal
+		}
 		result = append(result, *state)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].LaneID < result[j].LaneID })

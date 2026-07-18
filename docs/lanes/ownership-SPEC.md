@@ -1,0 +1,14 @@
+# Lane: OWNERSHIP — unified truthful ownership/cleanup (honest-feedback F5)
+Work ONLY in /Users/uzair/pretty-PTY-ownership. FILE OWNERSHIP: cmd/pretty (ls.go/lanes.go/recover.go + a new sessions cmd) + internal/session or internal/ledger ownership-resolution helpers ONLY. Do NOT touch --json field casing/shapes broadly (a separate deferred lane owns that) — only the specific correctness fixes below.
+PROBLEM (codex dogfood, cited): the skill tells agents `pretty lanes --mine` to find+clean up their work, but it's broken/misleading:
+- `pretty lanes --mine` shows ONLY headless lanes, NOT the agent SESSIONS the same caller created (so an agent can't find the codex/claude session it must clean up).
+- Outside a pretty session, `--mine` falls back to uid:501 = "anything by this OS user", not "this invocation" — unsafe when the skill says "never kill work you didn't create".
+- Exited lanes vanish fast from `lanes --mine`/`ls -a`; `pretty kill` on them says "stale ID" though `pretty last <id> --json` still has the durable manifest — no way to list/forget closed records.
+- `pretty recover` default dumps 11 rows incl `<provider-unbound>` and blocked/stale entries under a column literally labeled RESUME — makes a diagnostic inventory look like an actionable plan.
+
+BUILD:
+1. `pretty sessions [--mine|--owner ID|--all] [--include-closed]` — a UNIFIED list of BOTH agent sessions AND headless lanes owned by the caller (resolved by the same provenance ancestry as lanes --mine: PRETTY_OWNER_ID → PRETTY_SESSION_ID subtree → uid). Default hides closed; --include-closed shows tombstoned/exited with their state. This is the command the skill should point agents at for "what did I create / clean up".
+2. Make `ls --mine` and `lanes --mine` consistent: --mine on BOTH should filter to the caller's ancestry (ls --mine = my agent sessions; sessions --mine = both). Document that bare uid fallback outside a session means "this OS user" (label it in output so it's not mistaken for invocation-scoped).
+3. `pretty recover` default: show ONLY actionable/resumable items (has a real resume recipe, unexpectedly-lost). Move blocked/provider-unbound/stale to `pretty recover --all` with a clear REASON column (not "RESUME"). --json keeps everything (with a status field per row) for tooling.
+4. Closed-record hygiene: `pretty kill` on an already-exited lane should succeed-noop with a clear "already exited" message (not "stale ID"), since the manifest is still retrievable.
+GATES: CGO_ENABLED=0 build/vet/full-suite -count=1 green; tests: sessions --mine returns both a scratch agent session + a scratch lane by the same owner; --include-closed shows a tombstoned one; recover default excludes provider-unbound rows and --all includes them with a REASON; kill-on-exited is a clean noop. docs/lanes/ownership-NOTES.md. No commit. Scratch only.

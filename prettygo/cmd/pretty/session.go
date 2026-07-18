@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -171,90 +169,52 @@ func (a *app) ageOf(timestamp int64) string {
 }
 
 func (a *app) cmdLS(args []string) error {
-	includeExited := contains(args, "--include-exited") || contains(args, "-a") || a.wantJSON
-	path := "/api/sessions"
-	if includeExited {
-		path += "?include_exited=1"
-	}
-	response, err := a.api.request(context.Background(), "GET", path, nil, 0)
+	options, err := parseLSListOptions(args)
 	if err != nil {
 		return err
 	}
-	if response.status >= 400 {
-		return fail(2, "%s → %d %s", path, response.status, prefixBytes(response.body, 200))
-	}
-	var raw struct {
-		Sessions json.RawMessage `json:"sessions"`
-	}
-	if err := json.Unmarshal(response.body, &raw); err != nil {
+	// Preserve the historical JSON behavior of including closed sessions while
+	// keeping the raw daemon objects (and their existing field casing) intact.
+	includeClosed := options.includeClosed || a.wantJSON
+	records, err := a.fetchSessionRecords(includeClosed)
+	if err != nil {
 		return err
 	}
-	var sessions []session
-	if err := json.Unmarshal(raw.Sessions, &sessions); err != nil {
-		return err
-	}
-	if a.wantJSON {
-		var formatted bytes.Buffer
-		if err := json.Indent(&formatted, raw.Sessions, "", "  "); err != nil {
+	records = filterSessionRecords(records, func(value session) bool { return value.Kind != "lane" })
+	var scope ownershipScope
+	if options.mine {
+		scope, err = a.resolveOwnershipScope("", "")
+		if err != nil {
 			return err
 		}
-		formatted.WriteByte('\n')
-		_, err := formatted.WriteTo(a.stdout)
-		return err
+		records = filterSessionRecords(records, func(value session) bool {
+			return matchesOwnership(value, scope, false)
+		})
 	}
-	if len(sessions) == 0 {
+	if a.wantJSON {
+		return writeRawSessionRecords(a.stdout, records)
+	}
+	if scope.osUserFallback {
+		writeOSUserScope(a.stdout, scope)
+	}
+	if len(records) == 0 {
 		_, err := io.WriteString(a.stdout, "(no sessions)\n")
 		return err
 	}
 	rows := [][]string{{"ID", "NAME", "TOOL", "CWD", "STATE", "AGE", "LAST-USER", "PID"}}
-	for _, value := range sessions {
-		state := "idle"
-		if value.Exited {
-			code := "∅"
-			if value.ExitCode != nil {
-				code = strconv.Itoa(*value.ExitCode)
-			}
-			signal := ""
-			if value.ExitSignal != nil && *value.ExitSignal != "" {
-				signal = " " + *value.ExitSignal
-			}
-			state = "exited(" + code + signal + ")"
-		} else if value.Working {
-			state = "working"
-		}
-		name := "-"
-		if strings.TrimSpace(value.Name) != "" {
-			name = regexp.MustCompile(`\s+`).ReplaceAllString(strings.TrimSpace(value.Name), " ")
-		}
+	for _, record := range records {
+		value := record.value
 		lastUser := "-"
 		if value.LastUserMessageAt != nil && *value.LastUserMessageAt != 0 {
 			lastUser = a.ageOf(*value.LastUserMessageAt)
 		}
 		rows = append(rows, []string{
-			prefixString(value.ID, 8), name, toolOfSession(value),
-			strings.Replace(value.Cwd, a.home, "~", 1), state,
+			prefixString(value.ID, 8), compactSessionName(value.Name), toolOfSession(value),
+			strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value),
 			a.ageOf(value.CreatedAt), lastUser, strconv.Itoa(value.PID),
 		})
 	}
-	widths := make([]int, len(rows[0]))
-	for _, row := range rows {
-		for column, cell := range row {
-			if jsLength(cell) > widths[column] {
-				widths[column] = jsLength(cell)
-			}
-		}
-	}
-	for _, row := range rows {
-		for column, cell := range row {
-			if column > 0 {
-				io.WriteString(a.stdout, "  ")
-			}
-			io.WriteString(a.stdout, cell)
-			io.WriteString(a.stdout, strings.Repeat(" ", widths[column]-jsLength(cell)))
-		}
-		io.WriteString(a.stdout, "\n")
-	}
-	return nil
+	return writePaddedRows(a.stdout, rows)
 }
 
 func jsLength(value string) int { return len(utf16.Encode([]rune(value))) }

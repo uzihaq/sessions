@@ -211,7 +211,12 @@ func (m *Manager) Config() state.Config      { return m.config }
 func (m *Manager) Uptime() time.Duration     { return time.Since(m.started) }
 func (m *Manager) IsDiscovering() bool       { return m.registry.IsDiscovering() }
 func (m *Manager) List(includeExited bool) []state.SessionInfo {
-	return m.withProvenance(context.Background(), m.registry.List(includeExited))
+	ctx := context.Background()
+	infos := m.registry.List(includeExited)
+	if includeExited {
+		infos = m.withDurableClosed(ctx, infos)
+	}
+	return m.withProvenance(ctx, infos)
 }
 func (m *Manager) Get(id string) (*state.Session, bool) { return m.registry.Get(id) }
 func (m *Manager) DeepDiagnostics() []map[string]any    { return m.registry.DeepDiagnostics() }
@@ -427,6 +432,50 @@ func (m *Manager) ledgerStates(ctx context.Context) ([]ledger.LaneState, error) 
 		return nil, err
 	}
 	return ledger.Fold(events), nil
+}
+
+// withDurableClosed restores closed records after Registry's short exited
+// grace has elapsed. The ledger is authoritative for lifecycle and ownership;
+// live runtime details continue to come from Registry while they are present.
+func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionInfo) []state.SessionInfo {
+	states, err := m.ledgerStates(ctx)
+	if err != nil {
+		log.Printf("[ledger] read durable closed sessions: %v", err)
+		return infos
+	}
+	seen := make(map[string]struct{}, len(infos))
+	for _, info := range infos {
+		seen[info.ID] = struct{}{}
+	}
+	for _, lane := range states {
+		if !lane.Created || !durablyClosed(lane) {
+			continue
+		}
+		if _, exists := seen[lane.LaneID]; exists {
+			continue
+		}
+		exitedAt := lane.LastEventAtMS
+		info := state.SessionInfo{
+			ID: lane.LaneID, Name: lane.Name, Cwd: lane.Cwd,
+			CreatedAt: lane.CreatedAtMS, LastDataAt: lane.LastEventAtMS,
+			Tool: state.SessionTool(lane.Tool), Exited: true, ExitedAt: &exitedAt,
+			ExitCode: lane.ExitCode, ExitSignal: lane.ExitSignal,
+		}
+		if len(lane.ResumeArgv) > 0 {
+			info.Cmd = lane.ResumeArgv[0]
+			info.Args = append([]string(nil), lane.ResumeArgv[1:]...)
+		}
+		if lane.Tool == string(state.ToolLane) {
+			info.Kind = state.KindLane
+		}
+		infos = append(infos, info)
+		seen[lane.LaneID] = struct{}{}
+	}
+	return infos
+}
+
+func durablyClosed(lane ledger.LaneState) bool {
+	return lane.UserKillRequested || lane.RunnerExited || lane.Reaped || lane.ReopenedAs != ""
 }
 
 func (m *Manager) withProvenance(ctx context.Context, infos []state.SessionInfo) []state.SessionInfo {

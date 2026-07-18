@@ -109,7 +109,7 @@ func TestDeclarativeHelpIsCompleteDailyFirstAndSuccessful(t *testing.T) {
 		}
 	}
 	previous := -1
-	for _, name := range []string{"new", "run", "ls", "lanes", "send", "ask", "wait", "last", "status", "kill", "recover"} {
+	for _, name := range []string{"new", "run", "ls", "sessions", "lanes", "send", "ask", "wait", "last", "status", "kill", "recover"} {
 		index := strings.Index(top, fmt.Sprintf("\n  %-24s", name))
 		if index < 0 {
 			t.Fatalf("top-level help missing daily command %q", name)

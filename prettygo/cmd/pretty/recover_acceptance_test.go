@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/proto/prototest"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/recovery"
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
@@ -98,6 +100,59 @@ func TestRecoverCLIEndToEndAgainstScratchManager(t *testing.T) {
 	}
 	t.Logf("scratch CLI plan_orphan=true first_reopen_launches=%d second_reopen=%q launchctl_path_excluded=true",
 		len(launcher.Launches), strings.TrimSpace(stdout.String()))
+}
+
+func TestRecoverDefaultIsActionableAndAllExplainsBlockedRows(t *testing.T) {
+	actionableID := "30000000-0000-4000-8000-000000000001"
+	blockedID := "30000000-0000-4000-8000-000000000002"
+	unboundID := "30000000-0000-4000-8000-000000000003"
+	report := recovery.Report{
+		Lanes: []recovery.Lane{
+			{ID: actionableID, Name: "actionable", Tool: "codex", Cwd: "/work", Class: ledger.ClassUnexpectedlyLost},
+			{ID: blockedID, Name: "stale source", Tool: "codex", Cwd: "/work", Class: ledger.ClassUnexpectedlyLost, Anomalies: []ledger.Anomaly{ledger.AnomalyResumeSourceMissing}},
+			{ID: unboundID, Name: "unbound", Tool: "codex", Cwd: "/work", Class: ledger.ClassUnexpectedlyLost, Anomalies: []ledger.Anomaly{ledger.AnomalyProviderUnbound}},
+		},
+		Plan: ledger.RecoveryPlan{Recipes: []ledger.RecoveryRecipe{
+			{SourceLaneID: actionableID, Cmd: "codex", Args: []string{"resume", "conversation"}},
+			{SourceLaneID: blockedID, Cmd: "codex", Args: []string{"resume", "missing"}, Blocked: true},
+		}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/recovery" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(response).Encode(report)
+	}))
+	defer server.Close()
+
+	stdout, stderr, code := runOwnershipCLI(t, server.URL, "recover")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "RESUME") || !strings.Contains(stdout, "actionable") ||
+		strings.Contains(stdout, "stale source") || strings.Contains(stdout, "unbound") || strings.Contains(stdout, "provider-unbound") {
+		t.Fatalf("recover default exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "recover", "--all")
+	if code != 0 || stderr != "" || !strings.Contains(stdout, "REASON") || strings.Contains(stdout, "\tRESUME") ||
+		!strings.Contains(stdout, "actionable") || !strings.Contains(stdout, "blocked") ||
+		!strings.Contains(stdout, "provider-unbound") || !strings.Contains(stdout, "stale or missing") {
+		t.Fatalf("recover --all exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	stdout, stderr, code = runOwnershipCLI(t, server.URL, "--json", "recover")
+	if code != 0 || stderr != "" {
+		t.Fatalf("recover --json exit=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+	var decoded struct {
+		Lanes []struct {
+			Status string `json:"status"`
+		} `json:"lanes"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Lanes) != 3 || decoded.Lanes[0].Status != "actionable" || decoded.Lanes[1].Status != "blocked" || decoded.Lanes[2].Status != "provider-unbound" {
+		t.Fatalf("recover JSON statuses = %+v", decoded.Lanes)
+	}
 }
 
 func TestAdoptCLIExplicitlyBindsScratchCodexConversation(t *testing.T) {

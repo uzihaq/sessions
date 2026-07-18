@@ -67,6 +67,13 @@ func (a *app) cmdLanes(args []string) error {
 	if a.wantJSON {
 		return writeJSON(a.stdout, response.Lanes, true)
 	}
+	if options.mine && options.owner == "" && os.Getenv("PRETTY_OWNER_ID") == "" && os.Getenv("PRETTY_SESSION_ID") == "" {
+		userID := response.UserCreatorID
+		if userID == "" {
+			userID = "uid:" + strconv.Itoa(os.Getuid())
+		}
+		writeOSUserScope(a.stdout, ownershipScope{kind: "user", id: userID, osUserFallback: true})
+	}
 	if len(response.Lanes) == 0 {
 		_, err := io.WriteString(a.stdout, "(no lanes)\n")
 		return err
@@ -87,31 +94,21 @@ func (a *app) cmdLanes(args []string) error {
 				exit += "/" + *lane.Manifest.Signal
 			}
 			duration = formatLaneDuration(lane.Manifest.DurationMS)
+		} else if lane.Exited {
+			state = "exited"
+			if lane.ExitCode != nil {
+				exit = strconv.Itoa(*lane.ExitCode)
+			}
+			if lane.ExitSignal != nil && *lane.ExitSignal != "" {
+				exit += "/" + *lane.ExitSignal
+			}
 		}
 		rows = append(rows, []string{
 			prefixString(lane.ID, 8), name, toolOfSession(lane.session),
 			strings.Replace(lane.Cwd, a.home, "~", 1), state, exit, duration, laneProvenanceLabel(lane),
 		})
 	}
-	widths := make([]int, len(rows[0]))
-	for _, row := range rows {
-		for column, cell := range row {
-			if jsLength(cell) > widths[column] {
-				widths[column] = jsLength(cell)
-			}
-		}
-	}
-	for _, row := range rows {
-		for column, cell := range row {
-			if column > 0 {
-				io.WriteString(a.stdout, "  ")
-			}
-			io.WriteString(a.stdout, cell)
-			io.WriteString(a.stdout, strings.Repeat(" ", widths[column]-jsLength(cell)))
-		}
-		io.WriteString(a.stdout, "\n")
-	}
-	return nil
+	return writePaddedRows(a.stdout, rows)
 }
 
 type laneListOptions struct {
@@ -217,31 +214,10 @@ func filterLaneViews(lanes []laneView, options laneListOptions, daemonUserID str
 	if options.direct && kind != "session" {
 		return nil, fail(1, "--direct applies only to session ancestry")
 	}
+	scope := ownershipScope{kind: kind, id: id}
 	filtered := make([]laneView, 0, len(lanes))
 	for _, lane := range lanes {
-		match := false
-		if kind == "session" {
-			if options.direct {
-				match = lane.CreatorKind == "session" && lane.CreatorID == id
-			} else {
-				for _, ancestor := range lane.CreatorAncestry {
-					if ancestor == id {
-						match = true
-						break
-					}
-				}
-				if len(lane.CreatorAncestry) == 0 {
-					match = lane.CreatorKind == "session" && lane.CreatorID == id
-				}
-			}
-		} else {
-			rootKind, rootID := lane.RootCreatorKind, lane.RootCreatorID
-			if rootKind == "" && lane.CreatorKind != "session" {
-				rootKind, rootID = lane.CreatorKind, lane.CreatorID
-			}
-			match = rootKind == kind && rootID == id
-		}
-		if match {
+		if matchesOwnership(lane.session, scope, options.direct) {
 			filtered = append(filtered, lane)
 		}
 	}

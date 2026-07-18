@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -361,9 +363,41 @@ func (a *app) cmdKill(ids []string) error {
 	}
 	anyFailed := false
 	for _, idArg := range ids {
-		id, err := a.resolveSessionID(idArg)
+		laneID, isLane, err := a.resolveLaneID(idArg)
 		if err != nil {
 			return err
+		}
+		if isLane {
+			_, statusCode, err := a.fetchLaneManifest(context.Background(), laneID)
+			if err != nil {
+				return err
+			}
+			if statusCode == http.StatusOK {
+				fmt.Fprintf(a.stdout, "lane %s already exited; nothing to kill\n", laneID)
+				continue
+			}
+		}
+		id := laneID
+		if !isLane {
+			id, err = a.resolveSessionID(idArg)
+			if err != nil {
+				return err
+			}
+		}
+		listed, err := a.listSessions(true)
+		if err != nil {
+			return err
+		}
+		alreadyExitedLane := false
+		for _, candidate := range listed {
+			if candidate.ID == id && candidate.Kind == "lane" && candidate.Exited {
+				alreadyExitedLane = true
+				break
+			}
+		}
+		if alreadyExitedLane {
+			fmt.Fprintf(a.stdout, "lane %s already exited; nothing to kill\n", id)
+			continue
 		}
 		ok, err := a.delete("/api/sessions/" + escapeID(id))
 		if err != nil {

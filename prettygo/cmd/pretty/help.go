@@ -42,15 +42,21 @@ var commandTable = []commandSpec{
 		run:      (*app).cmdRun,
 	},
 	{
-		name: "ls", usage: "ls [-a | --include-exited]",
+		name: "ls", usage: "ls [--mine | --all] [-a | --include-exited]",
 		summary: "list sessions", group: dailyCommandGroup, localJSON: true,
-		longHelp: "List sessions known to the daemon. Exited sessions are hidden by default; -a and --include-exited include them.",
-		examples: []string{"pretty ls", "pretty --json ls"}, run: (*app).cmdLSDispatch,
+		longHelp: "List agent sessions known to the daemon. --mine follows PRETTY_OWNER_ID, then the PRETTY_SESSION_ID descendant subtree, then the daemon OS user. The OS-user fallback is user-wide, not invocation-scoped. Exited sessions are hidden by default; -a and --include-exited include them.",
+		examples: []string{"pretty ls", "pretty ls --mine", "pretty --json ls"}, run: (*app).cmdLSDispatch,
+	},
+	{
+		name: "sessions", usage: "sessions [--mine | --owner ID | --all] [--include-closed]",
+		summary: "list agent sessions and headless lanes", group: dailyCommandGroup, localJSON: true,
+		longHelp: "List agent sessions and headless lanes together. --mine follows PRETTY_OWNER_ID, then the PRETTY_SESSION_ID descendant subtree, then the daemon OS user. The OS-user fallback is user-wide, not invocation-scoped. Closed records are hidden unless --include-closed is supplied.",
+		examples: []string{"pretty sessions --mine", "pretty sessions --mine --include-closed", "pretty sessions --owner team:mine"}, run: (*app).cmdSessions,
 	},
 	{
 		name: "lanes", usage: "lanes [--all | --mine [--owner ID] | --subtree ID] [--direct] [--detach]",
 		summary: "list headless lanes", group: dailyCommandGroup, localJSON: true,
-		longHelp: "List retained headless lanes. --mine follows the inherited owner/session and then the daemon user; --subtree selects session ancestry; --direct limits ancestry to immediate children.",
+		longHelp: "List retained headless lanes. --mine follows PRETTY_OWNER_ID, then the PRETTY_SESSION_ID descendant subtree, then the daemon OS user. The OS-user fallback is user-wide, not invocation-scoped. --subtree selects session ancestry; --direct limits ancestry to immediate children.",
 		examples: []string{"pretty lanes", "pretty lanes --mine", "pretty lanes --subtree 0123abcd --direct"}, run: (*app).cmdLanes,
 	},
 	{
@@ -90,10 +96,10 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty kill 0123abcd", "pretty kill 0123abcd 89abcdef"}, run: (*app).cmdKill,
 	},
 	{
-		name: "recover", usage: "recover [--reopen [--force]]",
+		name: "recover", usage: "recover [--all | --reopen [--force]]",
 		summary: "inspect or reopen recoverable sessions", group: dailyCommandGroup, localJSON: true,
-		longHelp: "List recoverable conversations. --reopen creates replacement sessions for eligible records; --force overrides the live or moved conversation guard.",
-		examples: []string{"pretty recover", "pretty recover --reopen", "pretty --json recover --reopen --force"}, run: (*app).cmdRecover,
+		longHelp: "List actionable recovery recipes. --all also shows blocked and unresumable lost records with reasons. --reopen creates replacement sessions for eligible records; --force overrides the live or moved conversation guard.",
+		examples: []string{"pretty recover", "pretty recover --all", "pretty recover --reopen", "pretty --json recover --reopen --force"}, run: (*app).cmdRecover,
 	},
 	{
 		name: "recall", usage: "recall [<full-session-id> [--raw]]",
