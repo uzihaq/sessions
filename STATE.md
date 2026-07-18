@@ -1,27 +1,34 @@
-# pretty-PTY — STATE (verified 2026-07-16)
+# pretty-PTY — STATE (2026-07-18, post Go-rewrite)
 
-Machine roles (DECIDED 2026-07-16, after 3rd mass session loss):
-- **Mac mini = PRODUCTION ONLY.** launchd daemon `tech.pretty-pty.daemon` runs `node prettyd/dist/server.js`, binds 100.86.76.84:8787, serves API + built UI single-origin. ~35 live lanes. NO pretty development, NO test daemons, NO rehearsals here — ever.
-- **MacBook = development.** Clone from GitHub, own daemon/state, lanes break things freely.
-- Ops brain: a Claude tmux session on the mini (conversation ce1c91ab; migration runbook in docs/RUNBOOKS.md).
+## Reality
+- **The product is the Go rewrite** on branch `go-rewrite` (~38k Go LOC, 18 pkgs green, race-clean, fuzz-hardened, opus-audit-cleared). Committed + pushed. `pty-runner-architecture` = old TS branch (superseded).
+- **Daily driver = THIS MacBook.** Installed launchd service `tech.pretty-pty.dev.daemon` (dev label), http://localhost:8787, `pretty` on PATH (~/.local/bin/pretty). Durable soak-d2 shell survives every restart.
+- **Mac mini (100.86.76.84) = PRODUCTION, still OLD node daemon, UNTOUCHED.** Cutover to Go is a LATER joint step (rehearsed, reversible, interop-proven: Go daemon adopts node runners).
+- **Cron is OFF** (user steer: keep life easy, don't chase edge cases/guards). No autonomous loop.
 
-Sources of truth: **code = GitHub (uzihaq/pretty-pty)** — everything committed+pushed incl. lane branches; **work queue = somewhere board `pretty-pty`**; **conversations = ~/.claude/projects + ~/.codex/sessions** (a lane = conversation + workspace + resume recipe — proven recoverable).
+## Shipped (Go)
+- Single static binary (no npm/node/install-scripts); daemon+runner+CLI+ledger+watchers+mirror; embedded UI; cross-compiles Linux.
+- Reliability: lane ledger (recover/adopt/collision-guard/provenance), mass-kill guard, periodic re-discovery, sessions-sacred.
+- STRUCTURED CONTRACTS (big win): Codex app-server (JSON-RPC, streaming, tokens, dual-view attach, model catalog) + Claude `claude -p` stream-json (subscription-billed, multi-turn) — both SIDE BY SIDE with PTY fallback. Scraping demoted to fallback.
+- CLI/UX shipped incl: `--` passthrough fix, complete `--help`, `run --wait`, unified `sessions --mine`, recover cleanup, `pretty search` (covers exited sessions), lane `--description`.
+- Distribution: hosted onboarding site LIVE (pretty-pty.somewhere.site); brew formula/release script; pretty Claude skill (skills/pretty/SKILL.md + ~/.claude/skills/pretty/).
 
-## Deployed & live (main = pty-runner-architecture)
-- Send confirm-or-fail; bounded tail-load history + paging; terminal snapshot-prefill
-- Notifications: 🟢 done / 🟡 needs-you / 🔴 error classifier + final-message summary; hooks env PRETTY_OUTCOME/FINAL_MESSAGE/DURATION_MS; global ~/.config/pretty/hooks.json
-- Agent controls: `pretty new --model/--effort/--fast` (validated vs live catalog), `pretty model`; skip-perms default on every entry path (CLI + daemon guard); codex update-prompt suppressed
-- npm package REAL: tarball embeds frontend (web/) + MIT LICENSE; `pretty install` hardened; `pretty doctor` node-pty preflight
-- `pretty remote enable/status/disable` (tailscale serve wrapper; honest MagicDNS handling; QR → hosted connect)
-- `pretty deploy`: pull → npm install BOTH dirs → build → PRETTYD_SMOKE import-preflight → guarded kickstart + runner-survival check (kills the dep-crash class)
-- Codex history: resolver 64KiB first-line (16KiB truncation was the real bug) + createdAt-date + full-scan fallback; watcher BACKFILL on attach (byte-offset handoff)
-- Hosted site v2 LIVE at **pretty-pty.somewhere.site** (platform migrated domains; .tech 308s → .site; daemon allowlists BOTH): index / setup / connect (fragment #endpoint+token, scrubbed) / docs. sw.js cache version build-stamped.
+## Live vs not
+- Local (MacBook): FULLY USABLE NOW (CLI + web UI localhost:8787).
+- Hosted site: onboarding pages LIVE; drive-your-daemon APP SHELL BUILT but NOT deployed (pending user go).
+- Remote access: NOT enabled (`pretty remote enable` built/Tailscale but off; daemon localhost-only).
 
-## Branches
-- Parked (deliberate): `codex-app-server` (contract client foundation, smoke-proven), `appserver-spawn` (built; NOT shipping — headless spawn judged wrong product shape; contract belongs IN real sessions)
-- Lane output, UNREVIEWED: `pretty-wait` (wait --until commit), `localhost-auth` (loopback auth exemption), `readme-v01` (user-first README)
+## PENDING USER DECISIONS (only real blockers)
+1. Permission default — keep skip-perms (user's use) vs constrain-by-default + loud --dangerous flag (public build).
+2. Deploy hosted app + `pretty remote enable` → phone access (~15 min, user's go, public-facing).
+3. Mini cutover — swap node->Go together when dogfooded enough.
+4. Product name — considering "somewhere PTY"/rebrand. Keep CLI command `pretty` regardless (muscle memory + skill). Decide before public launch.
 
-## Incident 2026-07-16 (3rd mass loss) + response
-All runner plists/sockets/metadata wiped in one sweep (~48 lanes); daemon fine. Killer unconfirmed; prime suspect = a rehearsal lane booting the packaged daemon. Recovery: mined conversation stores + surviving idle-sentinels (they carry lane NAMES — how PM/RAILTIME came back); ~35 lanes resumed. Systemic fixes designed, on the board: **lane ledger** (tsk_64772bd2 — SQLite outside failure domain, write-ahead kill tombstones, `pretty recover --reopen`, 4-way owned/external/closed/lost classification, `pretty adopt`) and the **mass-kill guard**. Build on the MacBook.
+## Roadmap (docs/WHY.md = rationale + PROMOTE flags)
+- Search: substring (done) -> FTS5 ranked (NEXT, confirmed free: modernc sqlite has FTS5) -> semantic embeddings (EARN-IT only; local model for privacy).
+- Fleet: view + move shipped; central/fleet search + customer VM (needs Linux/systemd runner) deferred.
 
-Principles (non-negotiable): sessions are sacred; pretty is a dumb pipe (zero LLM calls — observation, never interpretation); no orchestration intelligence in pretty (lives in calling agents); worktrees only; deploys only via `pretty deploy`.
+## Build/deploy
+- Build: cd prettygo && export PATH=$PATH:/opt/homebrew/bin && make binaries
+- Update daemon: launchctl kickstart -k gui/$(id -u)/tech.pretty-pty.dev.daemon (verify soak-d2 survives; count runners via metadata not bare pgrep).
+- Lanes via codex worktrees; gate (build+vet+suite+gated-integration, re-run acceptance myself) -> merge -> update daemon.
