@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -81,5 +82,20 @@ func TestHistoryNormalizesCodexRolloutThroughWatchContract(t *testing.T) {
 		transcript.Messages[0].Text != "Codex fixture question" ||
 		transcript.Messages[1].Role != "assistant" || transcript.Messages[1].Text != "Codex fixture answer" {
 		t.Fatalf("messages = %#v", transcript.Messages)
+	}
+	raw, err := os.ReadFile(rolloutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := bytes.Index(raw, []byte(`"role":"assistant"`))
+	if cut < 1 {
+		t.Fatalf("assistant record missing from fixture: %s", raw)
+	}
+	limited, err := store.TranscriptLimited(nil, id, int64(cut))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited.Messages) != 1 || limited.Messages[0].Text != "Codex fixture question" {
+		t.Fatalf("bounded messages = %#v", limited.Messages)
 	}
 }

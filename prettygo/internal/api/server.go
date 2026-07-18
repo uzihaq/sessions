@@ -199,6 +199,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if s.handleIntegrationsRoute(response, request, corsOrigin) {
 		return
 	}
+	if s.handleSearchRoute(response, request, corsOrigin) {
+		return
+	}
 	if s.handleLanesRoute(response, request, corsOrigin) {
 		return
 	}

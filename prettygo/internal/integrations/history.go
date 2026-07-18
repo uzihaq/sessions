@@ -81,12 +81,27 @@ func NewHistoryStore(options HistoryOptions) *HistoryStore {
 }
 
 func (h *HistoryStore) List(live []state.SessionInfo) (HistoryResponse, error) {
+	sessions, err := h.list(live, true)
+	if err != nil {
+		return HistoryResponse{}, err
+	}
+	return HistoryResponse{SchemaVersion: SchemaVersion, Sessions: sessions}, nil
+}
+
+// SearchSessions returns the known history sources without parsing every
+// transcript just to count its messages. Search reads only candidates that
+// survive its session/tool filters and applies its own bounded transcript read.
+func (h *HistoryStore) SearchSessions(live []state.SessionInfo) ([]HistorySession, error) {
+	return h.list(live, false)
+}
+
+func (h *HistoryStore) list(live []state.SessionInfo, countMessages bool) ([]HistorySession, error) {
 	sources := backup.CollectSessions(live, h.options.RunnerStateDir)
 	sessions := make([]HistorySession, 0, len(sources))
 	for _, source := range sources {
-		session, _, _, err := h.describe(source)
+		session, _, _, err := h.describe(source, countMessages)
 		if err != nil {
-			return HistoryResponse{}, err
+			return nil, err
 		}
 		sessions = append(sessions, session)
 	}
@@ -96,22 +111,32 @@ func (h *HistoryStore) List(live []state.SessionInfo) (HistoryResponse, error) {
 		}
 		return sessions[i].ID < sessions[j].ID
 	})
-	return HistoryResponse{SchemaVersion: SchemaVersion, Sessions: sessions}, nil
+	return sessions, nil
 }
 
 func (h *HistoryStore) Transcript(live []state.SessionInfo, id string) (TranscriptResponse, error) {
+	return h.transcript(live, id, 0)
+}
+
+// TranscriptLimited reads at most maxBytes from the normalized conversation
+// file. A non-positive limit preserves the unbounded recall behavior.
+func (h *HistoryStore) TranscriptLimited(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
+	return h.transcript(live, id, maxBytes)
+}
+
+func (h *HistoryStore) transcript(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
 	source, ok := h.find(live, id)
 	if !ok {
 		return TranscriptResponse{}, ErrHistoryNotFound
 	}
-	session, path, tool, err := h.describe(source)
+	session, path, tool, err := h.describe(source, false)
 	if err != nil {
 		return TranscriptResponse{}, err
 	}
 	if path == "" || !session.ConversationAvailable {
 		return TranscriptResponse{}, ErrHistoryNotFound
 	}
-	messages, err := normalizeTranscript(path, tool)
+	messages, err := normalizeTranscript(path, tool, maxBytes)
 	if err != nil {
 		return TranscriptResponse{}, fmt.Errorf("read history transcript %s: %w", id, err)
 	}
@@ -128,7 +153,7 @@ func (h *HistoryStore) Raw(live []state.SessionInfo, id string) ([]byte, error) 
 	if !ok {
 		return nil, ErrHistoryNotFound
 	}
-	_, path, _, err := h.describe(source)
+	_, path, _, err := h.describe(source, false)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +179,7 @@ func (h *HistoryStore) find(live []state.SessionInfo, id string) (backup.Session
 	return backup.Session{}, false
 }
 
-func (h *HistoryStore) describe(source backup.Session) (HistorySession, string, string, error) {
+func (h *HistoryStore) describe(source backup.Session, countMessages bool) (HistorySession, string, string, error) {
 	// Backup opt-out controls external upload only. These local, authenticated
 	// recall endpoints remain able to read the user's own conversation.
 	source.OptOut = false
@@ -184,6 +209,9 @@ func (h *HistoryStore) describe(source backup.Session) (HistorySession, string, 
 	}
 	result.ConversationAvailable = true
 	result.LastActivityAt = max(result.LastActivityAt, info.ModTime().UnixMilli())
+	if !countMessages {
+		return result, path, tool, nil
+	}
 	count, err := h.messageCount(path, tool, info)
 	if err != nil {
 		return HistorySession{}, "", "", fmt.Errorf("count history transcript %s: %w", source.ID, err)
@@ -200,7 +228,7 @@ func (h *HistoryStore) messageCount(path, tool string, info os.FileInfo) (int, e
 		return cached.count, nil
 	}
 	h.cacheMu.Unlock()
-	messages, err := normalizeTranscript(path, tool)
+	messages, err := normalizeTranscript(path, tool, 0)
 	if err != nil {
 		return 0, err
 	}
@@ -227,7 +255,7 @@ func historyTool(tool state.SessionTool, resolved string) string {
 	}
 }
 
-func normalizeTranscript(path, tool string) ([]TranscriptMessage, error) {
+func normalizeTranscript(path, tool string, maxBytes int64) ([]TranscriptMessage, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -235,7 +263,11 @@ func normalizeTranscript(path, tool string) ([]TranscriptMessage, error) {
 	defer file.Close()
 
 	messages := make([]TranscriptMessage, 0)
-	reader := bufio.NewReader(file)
+	var source io.Reader = file
+	if maxBytes > 0 {
+		source = io.LimitReader(file, maxBytes)
+	}
+	reader := bufio.NewReader(source)
 	lineIndex := 0
 	for {
 		line, readErr := reader.ReadBytes('\n')
