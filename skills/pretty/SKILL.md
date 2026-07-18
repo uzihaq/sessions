@@ -46,12 +46,13 @@ pretty lanes                            # list headless lanes
 If you (an agent) are running **inside a pretty session**, every lane you spawn is automatically tagged with your session as parent. So to find what you created — **ask pretty, don't remember** (this survives context compaction):
 
 ```bash
-pretty lanes --mine            # lanes you (this session, transitively) created
-pretty lanes --mine --direct   # only your immediate children
-pretty lanes --all             # everything (all users/sessions) — use sparingly
+pretty sessions --mine              # BOTH agent sessions AND lanes you created (this session, transitively)
+pretty sessions --mine --include-closed  # include exited/tombstoned records
+pretty lanes --mine                 # just headless lanes you created
+pretty sessions --all               # everything (all users) — use sparingly
 ```
 
-**Rule: before ending your work, `pretty lanes --mine` and `pretty kill` the ones you no longer need.** Leaked lanes are the #1 orchestration failure. Never track lane ids in scratch files — query `--mine`.
+**Rule: before ending your work, `pretty sessions --mine` and `pretty kill` the ones you no longer need** (this lists both agent sessions and lanes — `lanes --mine` alone misses agent sessions). Leaked lanes are the #1 orchestration failure. Never track lane ids in scratch files — query `--mine`.
 
 ## Recovery (after a crash / lost daemon)
 
@@ -93,7 +94,7 @@ Run `pretty wait "$id" --timeout 30m &` in the background so your orchestration 
 | send (confirmed) | `pretty send <id> "msg"` |
 | wait until idle | `pretty wait <id> --idle 30s --timeout 30m` |
 | structured result | `pretty last <id> --json` / `pretty status <id> --json` |
-| my lanes | `pretty lanes --mine` |
+| my sessions + lanes | `pretty sessions --mine` |
 | list all | `pretty ls` |
 | model catalog | `pretty models --json` |
 | recover lost | `pretty recover [--reopen]` |
