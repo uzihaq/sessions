@@ -17,6 +17,8 @@ import (
 
 const laneExitKind waitcond.Kind = "lane_exit"
 
+const defaultLaneWaitTimeout = 30 * time.Second
+
 type laneManifest struct {
 	ExitCode       int     `json:"exit_code"`
 	Signal         *string `json:"signal"`
@@ -350,8 +352,16 @@ func (a *app) cmdWaitDispatch(args []string) error {
 	if len(resolved) > 1 && !any {
 		return fail(1, "multiple lanes require --any")
 	}
-	conditions := make([]waitcond.Condition, 0, len(resolved))
-	for _, id := range resolved {
+	completedID, manifest, err := a.waitForLaneExit(resolved, timeout)
+	if err != nil {
+		return err
+	}
+	return a.writeLaneWaitCompletion(completedID, manifest, false)
+}
+
+func (a *app) waitForLaneExit(ids []string, timeout time.Duration) (string, laneManifest, error) {
+	conditions := make([]waitcond.Condition, 0, len(ids))
+	for _, id := range ids {
 		conditions = append(conditions, &laneExitCondition{app: a, id: id})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -360,30 +370,49 @@ func (a *app) cmdWaitDispatch(args []string) error {
 	result, err := waitcond.WaitAny(ctx, conditions)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return a.writeWaitTimeout(timeout, time.Since(started), len(conditions))
+			return "", laneManifest{}, a.writeWaitTimeout(timeout, time.Since(started), len(conditions))
 		}
-		return fail(1, "%s", err)
+		return "", laneManifest{}, fail(1, "%s", err)
 	}
 	manifest, statusCode, err := a.fetchLaneManifest(context.Background(), result.Session)
 	if err != nil || statusCode != http.StatusOK {
 		if err == nil {
 			err = fmt.Errorf("completion manifest returned HTTP %d", statusCode)
 		}
-		return fail(1, "%s", err)
+		return "", laneManifest{}, fail(1, "%s", err)
 	}
+	return result.Session, manifest, nil
+}
+
+func (a *app) writeLaneWaitCompletion(id string, manifest laneManifest, outputOnly bool) error {
 	if a.wantJSON {
 		output := struct {
 			ID string `json:"id"`
 			laneManifest
-		}{ID: result.Session, laneManifest: manifest}
+		}{ID: id, laneManifest: manifest}
 		if err := writeJSON(a.stdout, output, false); err != nil {
 			return err
 		}
+	} else if outputOnly {
+		if err := writeLaneOutputTail(a.stdout, manifest.LastOutputTail); err != nil {
+			return err
+		}
 	} else {
-		fmt.Fprintf(a.stdout, "%s exited %d after %s\n", result.Session, manifest.ExitCode, formatLaneDuration(manifest.DurationMS))
+		fmt.Fprintf(a.stdout, "%s exited %d after %s\n", id, manifest.ExitCode, formatLaneDuration(manifest.DurationMS))
 	}
 	if manifest.ExitCode != 0 {
 		return status(manifest.ExitCode)
+	}
+	return nil
+}
+
+func writeLaneOutputTail(writer io.Writer, output string) error {
+	if _, err := io.WriteString(writer, output); err != nil {
+		return err
+	}
+	if !strings.HasSuffix(output, "\n") {
+		_, err := io.WriteString(writer, "\n")
+		return err
 	}
 	return nil
 }
@@ -401,7 +430,7 @@ func hasWaitCondition(args []string) bool {
 func parseLaneWaitArgs(args []string) ([]string, bool, time.Duration, error) {
 	ids := make([]string, 0, 2)
 	any := false
-	timeout := 30 * time.Second
+	timeout := defaultLaneWaitTimeout
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
 		case "--any":

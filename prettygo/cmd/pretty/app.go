@@ -74,10 +74,7 @@ type app struct {
 }
 
 func newApp(arguments []string, stdin io.Reader, stdout, stderr io.Writer) (*app, error) {
-	args := append([]string(nil), arguments...)
-	host := readGlobalFlag(&args, "host", getenv("PRETTYD_HOST", "127.0.0.1"))
-	port := readGlobalFlag(&args, "port", getenv("PRETTYD_PORT", "8787"))
-	wantJSON := removeFirst(&args, "--json")
+	args, host, port, wantJSON := parseGlobalArgs(arguments)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
@@ -106,100 +103,80 @@ func (a *app) close() {
 }
 
 func (a *app) dispatch() error {
-	switch a.sub {
-	case "ls":
-		return a.cmdLSDispatch(append([]string(nil), a.args...))
-	case "lanes":
-		return a.cmdLanes(append([]string(nil), a.args...))
-	case "backup":
-		return a.cmdBackup(append([]string(nil), a.args...))
-	case "recall":
-		return a.cmdRecall(append([]string(nil), a.args...))
-	case "run":
-		return a.cmdRun(append([]string(nil), a.args...))
-	case "snap":
-		return a.cmdSnap(append([]string(nil), a.args...))
-	case "send", "input":
-		return a.cmdSend(append([]string(nil), a.args...))
-	case "last":
-		return a.cmdLastDispatch(append([]string(nil), a.args...))
-	case "transcript":
-		return a.cmdTranscript(append([]string(nil), a.args...))
-	case "ask":
-		return a.cmdAsk(append([]string(nil), a.args...))
-	case "keys":
-		return a.cmdKeys(append([]string(nil), a.args...))
-	case "new":
-		return a.cmdNew(append([]string(nil), a.args...))
-	case "move":
-		return a.cmdMove(append([]string(nil), a.args...))
-	case "recover":
-		return a.cmdRecover(append([]string(nil), a.args...))
-	case "adopt":
-		return a.cmdAdopt(append([]string(nil), a.args...))
-	case "verdict":
-		return a.cmdVerdict(append([]string(nil), a.args...))
-	case "status":
-		return a.cmdStatus(append([]string(nil), a.args...))
-	case "model":
-		return a.cmdModel(append([]string(nil), a.args...))
-	case "models":
-		return a.cmdModels(append([]string(nil), a.args...))
-	case "kill":
-		return a.cmdKill(append([]string(nil), a.args...))
-	case "tail":
-		return a.cmdTail(append([]string(nil), a.args...))
-	case "wait":
-		return a.cmdWaitDispatch(append([]string(nil), a.args...))
-	case "attach":
-		return a.cmdAttach(append([]string(nil), a.args...))
-	case "resize":
-		return a.cmdResize(append([]string(nil), a.args...))
-	case "doctor":
-		return a.cmdDoctor()
-	case "token":
-		return a.cmdToken()
-	case "install":
-		return a.cmdInstall(append([]string(nil), a.args...))
-	case "uninstall":
-		return a.cmdUninstall(append([]string(nil), a.args...))
-	case "deploy":
-		return a.cmdDeploy(append([]string(nil), a.args...))
-	case "remote":
-		return a.cmdRemote(append([]string(nil), a.args...))
-	case "version", "--version", "-v":
-		_, err := fmt.Fprintln(a.stdout, version)
-		return err
-	case "", "help", "--help", "-h":
-		_, err := io.WriteString(a.stdout, helpText)
-		return err
-	default:
+	if a.sub == "" || a.sub == "--help" || a.sub == "-h" {
+		return writeTopLevelHelp(a.stdout)
+	}
+	if a.sub == "help" {
+		if len(a.args) == 0 || a.args[0] == "--help" || a.args[0] == "-h" {
+			return writeTopLevelHelp(a.stdout)
+		}
+		return writeCommandHelp(a.stdout, a.args[0])
+	}
+	command, ok := lookupCommand(a.sub)
+	if !ok {
+		if helpRequested(a.args) {
+			return writeTopLevelHelp(a.stdout)
+		}
 		return fail(1, "unknown command: %s\n\nrun 'pretty help' for usage", a.sub)
 	}
+	if helpRequested(a.args) {
+		return writeCommandHelp(a.stdout, command.name)
+	}
+	args := append([]string(nil), a.args...)
+	if command.localJSON && removeBeforeSeparator(&args, "--json") {
+		a.wantJSON = true
+	}
+	return command.run(a, args)
 }
 
-func readGlobalFlag(args *[]string, name, fallback string) string {
-	flag := "--" + name
-	for i, arg := range *args {
-		if arg != flag {
-			continue
+// parseGlobalArgs deliberately considers only the prefix before the command.
+// Once the command token (or a bare --) is observed, the remaining arguments
+// are opaque to global parsing. In particular, a run child receives every
+// argument following its -- separator unchanged.
+func parseGlobalArgs(arguments []string) (args []string, host, port string, wantJSON bool) {
+	host = getenv("PRETTYD_HOST", "127.0.0.1")
+	port = getenv("PRETTYD_PORT", "8787")
+	index := 0
+	for index < len(arguments) {
+		switch arguments[index] {
+		case "--json":
+			wantJSON = true
+			index++
+		case "--host", "--port":
+			name := arguments[index]
+			if index+1 >= len(arguments) || arguments[index+1] == "--" {
+				return append([]string(nil), arguments[index:]...), host, port, wantJSON
+			}
+			if name == "--host" {
+				host = arguments[index+1]
+			} else {
+				port = arguments[index+1]
+			}
+			index += 2
+		default:
+			return append([]string(nil), arguments[index:]...), host, port, wantJSON
 		}
-		value := ""
-		if i+1 < len(*args) {
-			value = (*args)[i+1]
-			*args = append((*args)[:i], (*args)[i+2:]...)
-		} else {
-			*args = (*args)[:i]
-		}
-		return value
 	}
-	return fallback
+	return nil, host, port, wantJSON
 }
 
 func removeFirst(args *[]string, target string) bool {
 	for i, arg := range *args {
 		if arg == target {
 			*args = append((*args)[:i], (*args)[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func removeBeforeSeparator(args *[]string, target string) bool {
+	for index, argument := range *args {
+		if argument == "--" {
+			return false
+		}
+		if argument == target {
+			*args = append((*args)[:index], (*args)[index+1:]...)
 			return true
 		}
 	}
@@ -301,99 +278,3 @@ func randomUUID() (string, error) {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		value[0:4], value[4:6], value[6:8], value[8:10], value[10:16]), nil
 }
-
-const helpText = `pretty — prettyd CLI
-Session ids may be full ids or unique prefixes from ` + "`pretty ls`" + `.
-
-Subcommands:
-  ls [-a | --include-exited]  list sessions (default: hides exited)
-  lanes [--all | --mine [--owner ID] | --subtree ID] [--direct] [--detach]
-                           list headless lanes. Plain lanes/--all is global;
-                           --mine follows PRETTY_OWNER_ID, PRETTY_SESSION_ID,
-                           then the daemon user. Session ancestry is transitive;
-                           --direct limits it to immediate children. Explicit
-                           --owner inside a session requires --detach.
-  snap <id> [--raw]        print current buffer (default: clean text)
-  tail <id> [-f] [-n N]    print last N (default 50) lines; -f to follow
-  wait <id> [--idle Ns] [--timeout Ns]
-                           block until session has been idle for Ns.
-                           Default --idle 2s, default --timeout 30s;
-                           --timeout is tunable/uncapped (e.g. 30m).
-                           Background use: pretty wait <id> --timeout 1800s &
-                           so an orchestrating agent can be re-invoked on completion.
-  send <id> [--timeout Ns] [--no-wait] [--file path] <text...>
-                           send text + Enter (alias: ` + "`input`" + `).
-                           For Claude/Codex sessions: blocks until the
-                           event log confirms receipt (default --timeout 10s),
-                           or the cleared composer is visibly working.
-                           Re-presses Enter only when text is still visible
-                           in the composer (anti-duplicate guard).
-                           --file reads the message body from UTF-8 file.
-                           --no-wait: fire-and-forget (old behavior).
-                           Ambiguous timeouts exit 2; definite failures exit 1.
-  input <id> <text...>     same as send
-  last <id> [--role user|assistant] [-n N]
-                           print the last message(s) from the JSONL log.
-                           Default: last user + last assistant message.
-  transcript <id>          print all user/assistant turns from the event log
-                           (clean text; --json emits structured turns).
-  ask <id> [--timeout Ns] [--idle Ns] [--wait-timeout Ns] <text...>
-                           send (with event confirmation), wait for the tool
-                           to finish its reply (working→idle), then print
-                           the last assistant message. Claude/Codex only.
-  keys <id> <key>          send esc|up|down|left|right|^c|^d|enter|tab
-  resize <id> <cols> <rows> resize the session PTY through the daemon
-  verdict <id> [--json]    print the latest explicit producer verdict
-  verdict emit <id> --json '{...}'
-                           append a schemaVersion 1 producer verdict;
-                           omit the JSON argument to read it from stdin
-  status <id> [--json]     compact session, git, activity, and verdict card
-  new --tool <claude|codex|shell> [--cwd P] [--name L]
-                           [--model M] [--effort L] [--fast]
-                           [--on-idle C] [--wait-ready] [--no-skip-perms]
-                           [--structured] [--codex-appserver|--pty-codex]
-                           [--force] [extra args]
-  new [--cwd P] [--name L] [--model M] [--effort L] [--fast]
-                           [--on-idle C] [--wait-ready] [--cmd C] [args...]
-                           create a session.  --tool is the easy path:
-                              pretty new --tool claude
-                              pretty new --tool claude --structured
-                              pretty new --tool claude --cwd ~/foo
-                              pretty new --tool codex --no-skip-perms
-                           Codex uses the structured app-server by default.
-                           PRETTY_CODEX_APPSERVER=0 or --pty-codex restores
-                           the original PTY-backed Codex session.
-                           Claude remains PTY-backed by default. --structured
-                           uses subscription-authenticated claude -p turns;
-                           it has rendered history but no live TUI attach.
-                           --name labels the session in ` + "`pretty ls`" + `.
-                           --on-idle runs a shell command on working→idle.
-                           --wait-ready waits for tool startup before returning.
-                           --force overrides a live/moved conversation guard.
-                           or supply --cmd / a positional command directly.
-  model <id> <model> [--effort L]
-                           switch model/effort on an idle Claude session.
-  models                   print the live Codex app-server model catalog.
-                           --json emits the complete catalog as JSON.
-  kill <id> [<id>...]      terminate one or more sessions
-  attach <id>              raw two-way stream (Ctrl+Q to detach)
-  doctor                   per-session health: QoS (throttled?), spawn
-                           path (dist/tsx), flags sessions needing recreate
-  token                    print the daemon auth token (paste into web UI)
-  install                  register the dev prettyd macOS LaunchAgent and start it
-  uninstall                stop and remove the dev prettyd LaunchAgent
-  deploy [--repo P] [--no-pull] [--dry-run]
-                           canonical safe update: pull, always install both
-                           dependency trees, build, smoke-import dist/server.js,
-                           then restart, health-check, and verify runners.
-                           --no-pull skips only git pull; --dry-run executes
-                           only the smoke import and never touches launchd.
-  remote enable            expose the daemon over tailnet-only Tailscale HTTPS
-  remote disable           remove Pretty's Tailscale Serve HTTPS root handler
-  remote status            verify the Serve endpoint and /api/health
-
-Global flags:
-  --json   machine-friendly output
-  --host   prettyd host (default 127.0.0.1)
-  --port   prettyd port (default 8787)
-`

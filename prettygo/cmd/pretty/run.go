@@ -24,13 +24,18 @@ func (a *app) cmdRun(args []string) error {
 		}
 	}
 	if separator < 0 || separator+1 >= len(args) || args[separator+1] == "" {
-		return fail(1, "usage: pretty run [--name N] [--cwd D] [--spec FILE] -- <cmd args...>")
+		return fail(1, "usage: pretty run [--name N] [--cwd D] [--spec FILE] [--wait [--output]] -- <cmd args...>")
 	}
 	options := append([]string(nil), args[:separator]...)
 	if err := a.configureCreateOwner(&options); err != nil {
 		return err
 	}
 	command := append([]string(nil), args[separator+1:]...)
+	wait := removeFirst(&options, "--wait")
+	output := removeFirst(&options, "--output")
+	if output && !wait {
+		return fail(1, "--output requires --wait")
+	}
 	name, hasName := pluck(&options, "--name")
 	if hasName && strings.TrimSpace(name) == "" {
 		return fail(1, "--name needs a non-empty label")
@@ -78,12 +83,19 @@ func (a *app) cmdRun(args []string) error {
 	if err := a.postJSON("/api/lanes", body, &created, 2); err != nil {
 		return err
 	}
-	if a.wantJSON {
+	if !wait && a.wantJSON {
 		return writeJSON(a.stdout, created, true)
 	}
 	id, ok := created["id"].(string)
 	if !ok || id == "" {
 		return fail(2, "lane create response did not include an id")
+	}
+	if wait {
+		completedID, manifest, err := a.waitForLaneExit([]string{id}, defaultLaneWaitTimeout)
+		if err != nil {
+			return err
+		}
+		return a.writeLaneWaitCompletion(completedID, manifest, output)
 	}
 	_, err = a.stdout.Write([]byte(id + "\n"))
 	return err
