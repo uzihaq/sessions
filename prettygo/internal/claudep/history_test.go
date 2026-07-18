@@ -32,6 +32,15 @@ func TestNormalizeEventAndLifecycle(t *testing.T) {
 	}
 }
 
+func TestNormalizeEventRejectsMissingSessionID(t *testing.T) {
+	if event, err := NormalizeEvent(
+		json.RawMessage(`{"type":"result","subtype":"success","result":"poisoned"}`),
+		time.Unix(1, 0),
+	); err == nil {
+		t.Fatalf("NormalizeEvent accepted result without session id: %#v", event)
+	}
+}
+
 func TestTurnArgsForcePerTurnResumeAndStructuredOutput(t *testing.T) {
 	first := turnArgs("hello", TurnOptions{
 		SessionID: "session-1", Model: "sonnet",

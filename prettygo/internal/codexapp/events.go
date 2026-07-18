@@ -119,12 +119,15 @@ func (s *turnState) stream() *TurnStream {
 }
 
 func (s *turnState) acceptTurnID(turnID string) bool {
+	if turnID == "" {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.turnID == "" {
 		s.turnID = turnID
 	}
-	return turnID == "" || s.turnID == turnID
+	return s.turnID == turnID
 }
 
 func (s *turnState) emit(event Event) {

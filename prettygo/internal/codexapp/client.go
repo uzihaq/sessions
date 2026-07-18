@@ -647,10 +647,11 @@ func (c *Client) readLoop(waitForProcess bool) {
 			}
 			return
 		}
-		var message wireMessage
-		if err := json.Unmarshal(data, &message); err != nil {
-			c.fail(fmt.Errorf("decode JSON-RPC message: %w", err))
-			return
+		message, err := decodeJSONRPC(data)
+		if err != nil {
+			// A malformed external frame cannot be correlated safely. Ignore it
+			// without taking down unrelated pending calls or active turns.
+			continue
 		}
 		if message.Method != "" && len(message.ID) > 0 {
 			c.handleServerRequest(message)
@@ -741,76 +742,36 @@ func (c *Client) handleServerRequest(message wireMessage) {
 }
 
 func (c *Client) handleNotification(method string, params json.RawMessage) {
-	switch method {
-	case "item/agentMessage/delta":
-		var notification AgentMessageDeltaNotification
-		if json.Unmarshal(params, &notification) != nil {
-			return
-		}
-		state := c.turn(notification.ThreadID, notification.TurnID)
+	parsed, err := parseServerEvent(method, params)
+	if err != nil {
+		return
+	}
+	switch event := parsed.event.(type) {
+	case AgentMessageDelta:
+		state := c.turn(event.ConversationID, event.TurnID)
 		if state != nil {
-			state.emit(AgentMessageDelta{
-				ConversationID: notification.ThreadID,
-				TurnID:         notification.TurnID,
-				ItemID:         notification.ItemID,
-				Delta:          notification.Delta,
-			})
+			state.emit(event)
 		}
-	case "item/started":
-		var notification ItemStartedNotification
-		if json.Unmarshal(params, &notification) != nil {
-			return
-		}
-		state := c.turn(notification.ThreadID, notification.TurnID)
+	case ItemStarted:
+		state := c.turn(event.ConversationID, event.TurnID)
 		if state != nil {
-			state.emit(ItemStarted{
-				ConversationID: notification.ThreadID,
-				TurnID:         notification.TurnID,
-				StartedAtMS:    notification.StartedAtMS,
-				Item:           notification.Item,
-			})
+			state.emit(event)
 		}
-	case "item/completed":
-		var notification ItemCompletedNotification
-		if json.Unmarshal(params, &notification) != nil {
-			return
-		}
-		state := c.turn(notification.ThreadID, notification.TurnID)
+	case ItemCompleted:
+		state := c.turn(event.ConversationID, event.TurnID)
 		if state != nil {
-			state.emit(ItemCompleted{
-				ConversationID: notification.ThreadID,
-				TurnID:         notification.TurnID,
-				CompletedAtMS:  notification.CompletedAtMS,
-				Item:           notification.Item,
-			})
+			state.emit(event)
 		}
-	case "thread/tokenUsage/updated":
-		var notification ThreadTokenUsageUpdatedNotification
-		if json.Unmarshal(params, &notification) != nil {
-			return
-		}
-		state := c.turn(notification.ThreadID, notification.TurnID)
+	case TokenCount:
+		state := c.turn(event.ConversationID, event.TurnID)
 		if state != nil {
-			state.emit(TokenCount{
-				ConversationID: notification.ThreadID,
-				TurnID:         notification.TurnID,
-				Usage:          notification.TokenUsage,
-			})
+			state.emit(event)
 		}
-	case "turn/completed":
-		var notification TurnCompletedNotification
-		if json.Unmarshal(params, &notification) != nil {
-			return
-		}
-		state := c.turn(notification.ThreadID, notification.Turn.ID)
+	case TurnComplete:
+		state := c.turn(event.ConversationID, event.TurnID)
 		if state != nil {
-			state.complete(TurnComplete{
-				ConversationID: notification.ThreadID,
-				TurnID:         notification.Turn.ID,
-				Status:         notification.Turn.Status,
-				Error:          notification.Turn.Error,
-			}, notification.Turn.Items)
-			c.removeTurn(notification.ThreadID, state)
+			state.complete(event, parsed.items)
+			c.removeTurn(event.ConversationID, state)
 		}
 	}
 }

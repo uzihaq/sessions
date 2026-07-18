@@ -93,13 +93,9 @@ func consumeTurn(command *exec.Cmd, stdout io.Reader, stderr *bytes.Buffer, expe
 		if len(line) == 0 {
 			continue
 		}
-		event, err := NormalizeEvent(append(json.RawMessage(nil), line...), time.Now())
+		event, err := parseStreamJSONLine(append(json.RawMessage(nil), line...), time.Now(), expectedSessionID)
 		if err != nil {
 			streamErr = errors.Join(streamErr, err)
-			continue
-		}
-		if event.SessionID != "" && event.SessionID != expectedSessionID {
-			streamErr = errors.Join(streamErr, fmt.Errorf("Claude session id mismatch: got %s, want %s", event.SessionID, expectedSessionID))
 			continue
 		}
 		events <- event

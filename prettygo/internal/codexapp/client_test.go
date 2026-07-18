@@ -90,6 +90,113 @@ func TestConversationTurnStreamsStructuredEventsAndAutoApproves(t *testing.T) {
 	}
 }
 
+func TestNotificationWithoutTurnIDDoesNotMutateActiveTurn(t *testing.T) {
+	state := newTurnState("thread-1")
+	if !state.acceptTurnID("turn-1") {
+		t.Fatal("failed to initialize active turn id")
+	}
+	client := &Client{turns: map[string]*turnState{"thread-1": state}}
+
+	client.handleNotification("item/agentMessage/delta", json.RawMessage(
+		`{"threadId":"thread-1","itemId":"agent-1","delta":"untrusted"}`,
+	))
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if got := state.deltas["agent-1"]; got != "" {
+		t.Fatalf("notification without turn id mutated active turn: %q", got)
+	}
+}
+
+func TestDuplicateAndOutOfOrderNotificationsKeepCompletedResultStable(t *testing.T) {
+	state := newTurnState("thread-1")
+	if !state.acceptTurnID("turn-1") {
+		t.Fatal("failed to initialize active turn id")
+	}
+	client := &Client{turns: map[string]*turnState{"thread-1": state}}
+	stream := state.stream()
+	consumed := make(chan struct{})
+	go func() {
+		for range stream.Events {
+		}
+		close(consumed)
+	}()
+
+	completedItem := json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","item":{"id":"agent-1","type":"agentMessage","text":"authoritative"}}`)
+	client.handleNotification("item/agentMessage/delta", json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"agent-1","delta":"partial"}`))
+	client.handleNotification("item/completed", completedItem)
+	client.handleNotification("item/completed", completedItem)
+	client.handleNotification("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[{"id":"agent-1","type":"agentMessage","text":"authoritative"}]}}`))
+
+	// Late notifications and duplicate completion are ignored after the turn is
+	// removed; they cannot reopen or mutate the completed result.
+	client.handleNotification("item/agentMessage/delta", json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"agent-1","delta":"poison"}`))
+	client.handleNotification("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"failed","items":[]}}`))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := stream.Result(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Message != "authoritative" || result.Status != "completed" {
+		t.Fatalf("completed result was poisoned: %#v", result)
+	}
+	select {
+	case <-consumed:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+}
+
+func TestReadLoopSkipsMalformedFrameAndProcessesFollowingEvent(t *testing.T) {
+	state := newTurnState("thread-1")
+	if !state.acceptTurnID("turn-1") {
+		t.Fatal("failed to initialize active turn id")
+	}
+	client := &Client{
+		transport: &scriptedMessageTransport{messages: [][]byte{
+			[]byte(`{"method":"truncated"`),
+			[]byte(`{"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[]}}}`),
+		}},
+		pending: make(map[string]chan callResponse),
+		turns:   map[string]*turnState{"thread-1": state},
+		done:    make(chan struct{}),
+	}
+	stream := state.stream()
+
+	client.readLoop(false)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := stream.Result(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("following valid event was not processed: %#v", result)
+	}
+	for range stream.Events {
+	}
+}
+
+type scriptedMessageTransport struct {
+	messages [][]byte
+	next     int
+}
+
+func (t *scriptedMessageTransport) Read(context.Context) ([]byte, error) {
+	if t.next == len(t.messages) {
+		return nil, io.EOF
+	}
+	message := t.messages[t.next]
+	t.next++
+	return message, nil
+}
+
+func (*scriptedMessageTransport) Write(context.Context, []byte) error { return nil }
+func (*scriptedMessageTransport) Close() error                        { return nil }
+
 func TestResumeConversationRestoresTurnDefaults(t *testing.T) {
 	serverInput, clientInput := io.Pipe()
 	clientOutput, serverOutput := io.Pipe()
