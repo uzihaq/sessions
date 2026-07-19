@@ -1,5 +1,7 @@
 # WHY — feature rationale & promote log
 
+> Agent entry point: [`AGENTS.md`](../AGENTS.md).
+
 **Practice (adopted 2026-07-17):** every feature gets a line here answering *why it exists* — the real user pain or decision that drove it, not just what it does. This is the memory of the product's reasoning over time. When a feature ships, mark it **PROMOTE?** so we remember to announce/market the ones worth telling people about. Board tasks link here; this is the durable record.
 
 Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/later`
