@@ -44,8 +44,10 @@ Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/la
 - **Mobile push on blocked/done** — 6 competitors converged on it; most-wanted feature in the space, and most on-thesis for us (the ledger means you can walk away; push closes the loop). E2E-encrypted push machinery ALREADY in the daemon — remaining work is notify-event wiring + FCM delivery with the Android app. — roadmap — PROMOTE: **yes**
 - **`pretty new --worktree` (worktree-per-task)** — 5/5 orchestrators auto-create worktree+branch per session; we do it by hand for every codex lane. Ship our own workflow. — roadmap — PROMOTE: yes
 - **Diff viewer** — "agent done → what changed" shouldn't require leaving pretty. Cheap unified tier first; inline-comments-to-agent tier later. — roadmap — PROMOTE: later
-- **Prompt queuing** — park input typed mid-turn, deliver on completion (fixes our own documented can't-type pain). — roadmap — PROMOTE: later
+- **Prompt queuing** — REJECTED by user 2026-07-19 ("everything already does it") — not building.
 - **Session sharing** — deferred until after the QR-pairing/per-device-key ladder (its natural foundation).
+- **Account profiles (multi-login)** — running two Anthropic (or OpenAI) logins on one Mac is fiddly because both fight over `~/.claude`. Per-profile config dirs via `CLAUDE_CONFIG_DIR`/`CODEX_HOME` (`pretty new --profile work`) give simultaneous separate plans; first use logs in once inside the session. Session-move-between-logins deferred (user: "might be too complicated"). — roadmap (user-requested 2026-07-19) — PROMOTE: yes (nobody else does multi-plan cleanly)
+- **Code-signing (Developer ID)** — unsigned rebuilds get a fresh macOS TCC identity → repeated file-access dialogs (user hit 6 in one evening); signing with the user's Developer ID makes grants persist across updates. Actionable now (user has the ID). — queued — PROMOTE: no (table stakes)
 
 ## Search roadmap (added 2026-07-17, user-requested)
 - **`pretty search` (keyword, one daemon)** — you can't find text once it scrolls off. — building — PROMOTE: yes
