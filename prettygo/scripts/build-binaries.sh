@@ -96,6 +96,26 @@ for target in darwin/arm64 linux/arm64 linux/amd64; do
   build_binary "$goos" "$goarch" runner ""
 done
 
+# Sign darwin binaries when an identity is configured (PRETTY_SIGN_IDENTITY, a
+# SHA-1 hash or exact name from `security find-identity -v -p codesigning`).
+# A stable identifier per binary keeps the macOS TCC identity constant across
+# rebuilds, so file-access grants are asked ONCE instead of on every build.
+if [[ -z "${PRETTY_SIGN_IDENTITY:-}" && -r "$HOME/.config/pretty/sign-identity" ]]; then
+  PRETTY_SIGN_IDENTITY="$(head -n1 "$HOME/.config/pretty/sign-identity")"
+fi
+if [[ -n "${PRETTY_SIGN_IDENTITY:-}" ]]; then
+  for command_name in pretty prettyd runner; do
+    signed="$out_dir/${command_name}-darwin-arm64"
+    echo "> signing ${command_name}-darwin-arm64 (identity ${PRETTY_SIGN_IDENTITY:0:8}…)"
+    codesign --force --timestamp --options runtime \
+      --identifier "tech.pretty-pty.$command_name" \
+      --sign "$PRETTY_SIGN_IDENTITY" "$signed"
+    codesign --verify --strict "$signed"
+  done
+else
+  echo "> darwin binaries UNSIGNED (set PRETTY_SIGN_IDENTITY to sign; unsigned rebuilds re-trigger macOS file-access dialogs)"
+fi
+
 darwin_daemon="$out_dir/prettyd-darwin-arm64"
 darwin_runner="$out_dir/runner-darwin-arm64"
 daemon_label="${PRETTYD_DAEMON_LABEL:-tech.pretty-pty.dev.daemon}"
