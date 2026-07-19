@@ -1,5 +1,7 @@
 # pretty-PTY — STATE (2026-07-18, post Go-rewrite)
 
+> Agent entry point: [`AGENTS.md`](AGENTS.md).
+
 ## Reality
 - **The product is the Go rewrite** on branch `go-rewrite` (~38k Go LOC, 18 pkgs green, race-clean, fuzz-hardened, opus-audit-cleared). Committed + pushed. `pty-runner-architecture` = old TS branch (superseded).
 - **Daily driver = THIS MacBook.** Installed launchd service `tech.pretty-pty.dev.daemon` (dev label), http://localhost:8787, `pretty` on PATH (~/.local/bin/pretty). Durable soak-d2 shell survives every restart.
@@ -25,7 +27,7 @@
 4. Product name — considering "somewhere PTY"/rebrand. Keep CLI command `pretty` regardless (muscle memory + skill). Decide before public launch.
 
 ## Roadmap (docs/WHY.md = rationale + PROMOTE flags)
-- Search: substring (done) -> FTS5 ranked (NEXT, confirmed free: modernc sqlite has FTS5) -> semantic embeddings (EARN-IT only; local model for privacy).
+- Search: substring + opt-in FTS5 ranked (done) -> semantic embeddings (EARN-IT only; local model for privacy).
 - Fleet: view + move shipped; central/fleet search + customer VM (needs Linux/systemd runner) deferred.
 
 ## Build/deploy

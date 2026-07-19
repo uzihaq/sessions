@@ -2,12 +2,22 @@
 ## Deploy to prod (mini)
 `pretty deploy` — pulls, npm-installs BOTH dirs, builds, PRETTYD_SMOKE import-preflight, guarded kickstart, verifies runner survival. Never kickstart by hand after a package.json change.
 
-## Fleet recovery (until the lane ledger ships)
-A lane = conversation + workspace + resume recipe. If runners are wiped:
-1. Names: `~/.local/state/pretty-PTY/idle/*` sentinels ({id,name,at}) survive and map names→ids; `<id>.events` raw output pins tool/cwd.
-2. Conversations: `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` (first line has cwd; fallback = decode dir name) and `~/.codex/sessions/Y/M/D/rollout-*-<uuid>.jsonl` (first line payload.cwd). Filter by mtime window; NEVER trust 12h — use 7d+.
-3. Respawn: POST /api/sessions {cmd:"claude",args:["--dangerously-skip-permissions","--resume",uuid],cwd} or {cmd:"codex",args:["resume",uuid],cwd} (daemon injects codex bypass/update flags). Stagger ~350ms.
-4. Deleted cwds: recreate the dir, then resume (conversation may still exist).
+## Fleet recovery
+A lane = conversation + workspace + a validated resume recipe. The shipped
+ledger and recovery package are the source of truth
+(`prettygo/internal/ledger/fold.go`, `prettygo/internal/recovery/report.go`).
+
+1. Run `pretty recover` for a read-only reconciliation of ledger, runner, and
+   provider state.
+2. Run `pretty recover --reopen` only for entries whose safe recipe should be
+   relaunched. Recovery refuses duplicate live ownership
+   (`prettygo/internal/recovery/mutate.go`).
+3. Use `pretty adopt` with an explicit provider file or conversation UUID when
+   an artifact is not in the ledger; ambiguous adoption is rejected
+   (`prettygo/internal/recovery/adopt.go`).
+4. Treat old event logs and provider JSONL as last-resort evidence, not as an
+   invitation to hand-build parallel resumptions. Never run two live drivers for
+   the same provider conversation (`prettygo/internal/session/manager.go`).
 
 ## Move the ops chat (mini → MacBook)
 1. On mini: `rsync -a ~/.claude/projects/-Users-uzair-pretty-PTY/ macbook:~/.claude/projects/-Users-uzair-pretty-PTY/` (includes the conversation JSONLs AND the memory/ folder).

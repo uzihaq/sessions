@@ -1,17 +1,18 @@
 # pretty-PTY
 
 pretty-PTY keeps Claude Code, Codex, shells, and other terminal programs alive
-behind a local web UI and CLI. Each session has its own supervised PTY runner,
-so work survives a daemon restart and can be reopened from another browser.
+behind a local web UI and CLI. Each session has its own supervised runner,
+hosting either a PTY or a structured provider conversation, so work survives a
+daemon restart and can be reopened from another browser.
 
 ## Trust contract
 
-- **Dumb pipe:** Pretty launches tools you already installed and moves terminal
-  bytes between them and your clients. It makes zero LLM calls.
+- **Local runtime:** Pretty drives tools you already installed through a PTY or
+  their structured CLI contracts. It makes no direct model API calls.
 - **Local by default:** the daemon listens on `127.0.0.1:8787`; remote access is
   opt-in and goes directly over your Tailscale network.
-- **No phone-home:** no Pretty account, analytics, telemetry, relay, or hosted
-  terminal storage. Opt-in web push and Tailscale use their configured services.
+- **No default phone-home:** no Pretty account, analytics, telemetry, or relay.
+  Opt-in backup, web push, and Tailscale use their configured services.
 - **Small distribution:** three `CGO_ENABLED=0` Go binaries plus the embedded
   web UI. No Node, npm, native npm modules, or install script.
 - **Auditable:** source available under the [MIT license](LICENSE).
@@ -31,8 +32,9 @@ open http://localhost:8787
 
 `pretty install` registers `prettyd` as the per-user development LaunchAgent
 `tech.pretty-pty.dev.daemon`, starts it, and checks its health. Override the
-label explicitly with `PRETTYD_DAEMON_LABEL` when needed. The browser will ask
-for the token printed by the command; print it again later with `pretty token`.
+label explicitly with `PRETTYD_DAEMON_LABEL` when needed. Direct loopback use is
+zero-setup; LAN and remote clients normally authenticate with the token printed
+by the command. Print it again later with `pretty token`.
 
 Static archives are published for macOS arm64 and Linux arm64/amd64. Download
 the archive for your platform from [GitHub Releases](https://github.com/uzihaq/pretty-PTY/releases),
@@ -73,12 +75,20 @@ Session IDs may be replaced with a unique prefix shown by `pretty ls`.
 | `pretty status <id>` | Show compact session, git, activity, and verdict state |
 | `pretty recover [--reopen]` | Inspect or reopen unexpectedly lost lanes |
 | `pretty remote enable\|status\|disable` | Manage early-access Tailscale HTTPS access |
-| `pretty model <id> <model> [--effort LEVEL]` | Switch an idle Claude session model |
+| `pretty model <id> <model> [--effort LEVEL]` | Switch an idle supported Claude session model |
 | `pretty kill <id> [<id>...]` | Explicitly terminate selected sessions |
 
 Also useful: `pretty snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
 `verdict`, `doctor`, and `help`. Global flags are `--json`, `--host`, and
 `--port` (or `PRETTYD_HOST` / `PRETTYD_PORT`).
+
+## Documentation
+
+- [Agent entry point and repository rules](AGENTS.md)
+- [Source-derived codebase guide](docs/CODEBASE.md)
+- [Generated CLI reference](docs/CLI.md)
+- [Product rationale and decision log](docs/WHY.md)
+- [Current product and deployment state](STATE.md)
 
 ## Notifications and hooks
 
