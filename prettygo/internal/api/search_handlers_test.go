@@ -19,6 +19,8 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	daemon := newTestDaemon(t)
+	daemon.config.UserStateRoot = filepath.Join(daemon.root, "user-state")
+	daemon.handler.config.UserStateRoot = daemon.config.UserStateRoot
 	if err := os.MkdirAll(daemon.config.RunnerStateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +30,7 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 	writeSearchMetadata(t, daemon.config.RunnerStateDir, claudeID, "claude fixture", "claude", []string{"--session-id", claudeID}, claudeCWD, now)
 	claudePath := filepath.Join(home, ".claude", "projects", watch.EncodeClaudeCWD(claudeCWD), claudeID+".jsonl")
 	writeSearchJSONL(t, claudePath, []map[string]any{
-		{"type": "user", "timestamp": "2026-07-17T18:00:01Z", "message": map[string]any{"role": "user", "content": "Find the Aurora phrase"}},
+		{"type": "user", "timestamp": "2026-07-17T18:00:01Z", "message": map[string]any{"role": "user", "content": "Find the Aurora emails phrase"}},
 		{"type": "assistant", "timestamp": "2026-07-17T18:00:02Z", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "Claude saw AURORA."}}}},
 	})
 	if err := os.Chtimes(claudePath, now.Add(time.Minute), now.Add(time.Minute)); err != nil {
@@ -68,6 +70,15 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 	if result.Total != 3 || len(result.Matches) != 3 || claudeMatches != 2 || codexMatches != 1 || !highlighted {
 		t.Fatalf("result = %#v", result)
 	}
+	ranked := serve(t, daemon.handler, http.MethodGet, "/api/search?q=email&ranked=1", nil, "127.0.0.1:4321", nil)
+	decodeBody(t, ranked, &result)
+	if ranked.Code != http.StatusOK || result.Total != 1 || result.Matches[0].Text != "Find the Aurora emails phrase" ||
+		!strings.Contains(result.Matches[0].Snippet, "[[emails]]") {
+		t.Fatalf("ranked status=%d result=%#v", ranked.Code, result)
+	}
+	if _, err := os.Stat(filepath.Join(daemon.config.UserStateRoot, "search-index.db")); err != nil {
+		t.Fatalf("search index: %v", err)
+	}
 
 	parameters := url.Values{
 		"q": {`number [0-9]+`}, "regex": {"true"}, "session": {codexID[:8]},
@@ -80,7 +91,10 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 		t.Fatalf("filtered status=%d result=%#v", filtered.Code, result)
 	}
 
-	for _, target := range []string{"/api/search", "/api/search?q=(&regex=true", "/api/search?q=x&role=tool", "/api/search?q=x&limit=0"} {
+	for _, target := range []string{
+		"/api/search", "/api/search?q=(&regex=true", "/api/search?q=x&role=tool", "/api/search?q=x&limit=0",
+		"/api/search?q=x&ranked=maybe", "/api/search?q=x&ranked=true&regex=true",
+	} {
 		invalid := serve(t, daemon.handler, http.MethodGet, target, nil, "127.0.0.1:4321", nil)
 		if invalid.Code != http.StatusBadRequest {
 			t.Errorf("%s status=%d body=%s", target, invalid.Code, invalid.Body.String())

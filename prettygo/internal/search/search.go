@@ -30,6 +30,7 @@ type Options struct {
 	Role      string
 	Tool      string
 	Regex     bool
+	Ranked    bool
 	Limit     int
 }
 
@@ -94,9 +95,12 @@ func (m matcher) find(text string) (int, int, bool) {
 
 // Run searches known sessions in recent-activity order and messages in their
 // normalized conversation order. One message contributes at most one match.
-func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, options Options) (Response, error) {
+func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, options Options, indexPath string) (Response, error) {
 	options.Role = strings.ToLower(strings.TrimSpace(options.Role))
 	options.Tool = strings.ToLower(strings.TrimSpace(options.Tool))
+	if options.Ranked && options.Regex {
+		return Response{}, &optionError{message: "--ranked cannot combine with --regex"}
+	}
 	if options.Role != "" && options.Role != "user" && options.Role != "assistant" {
 		return Response{}, &optionError{message: "role must be user or assistant"}
 	}
@@ -108,6 +112,9 @@ func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, op
 	}
 	if options.Limit < 1 || options.Limit > MaxLimit {
 		return Response{}, &optionError{message: fmt.Sprintf("limit must be between 1 and %d", MaxLimit)}
+	}
+	if options.Ranked {
+		return runRanked(ctx, source, live, options, indexPath)
 	}
 	matchText, err := newMatcher(options.Query, options.Regex)
 	if err != nil {

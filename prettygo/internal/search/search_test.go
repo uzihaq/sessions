@@ -57,7 +57,7 @@ func searchFixture() *fakeHistory {
 
 func TestSearchSubstringFiltersAndCenteredSnippet(t *testing.T) {
 	fixture := searchFixture()
-	result, err := Run(context.Background(), fixture, nil, Options{Query: "needle"})
+	result, err := Run(context.Background(), fixture, nil, Options{Query: "needle"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestSearchSubstringFiltersAndCenteredSnippet(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			result, err := Run(context.Background(), searchFixture(), nil, test.options)
+			result, err := Run(context.Background(), searchFixture(), nil, test.options, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -105,11 +105,11 @@ func TestSearchSubstringFiltersAndCenteredSnippet(t *testing.T) {
 }
 
 func TestSearchLimitValidationAndEmptyShape(t *testing.T) {
-	result, err := Run(context.Background(), searchFixture(), nil, Options{Query: "needle", Limit: 2})
+	result, err := Run(context.Background(), searchFixture(), nil, Options{Query: "needle", Limit: 2}, "")
 	if err != nil || result.Total != 2 || len(result.Matches) != 2 {
 		t.Fatalf("limited result=%#v err=%v", result, err)
 	}
-	result, err = Run(context.Background(), searchFixture(), nil, Options{Query: "absent"})
+	result, err = Run(context.Background(), searchFixture(), nil, Options{Query: "absent"}, "")
 	if err != nil || result.Total != 0 || result.Matches == nil {
 		t.Fatalf("empty result=%#v err=%v", result, err)
 	}
@@ -118,13 +118,13 @@ func TestSearchLimitValidationAndEmptyShape(t *testing.T) {
 		{Query: "x", Tool: "terminal"}, {Query: "x", Limit: MaxLimit + 1},
 		{Query: "x", SessionID: "missing"},
 	} {
-		if _, err := Run(context.Background(), searchFixture(), nil, options); err == nil || !IsOptionError(err) {
+		if _, err := Run(context.Background(), searchFixture(), nil, options, ""); err == nil || !IsOptionError(err) {
 			t.Errorf("options %#v error = %v, want option error", options, err)
 		}
 	}
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := Run(canceled, searchFixture(), nil, Options{Query: "needle"}); !errors.Is(err, context.Canceled) {
+	if _, err := Run(canceled, searchFixture(), nil, Options{Query: "needle"}, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled error = %v", err)
 	}
 }
