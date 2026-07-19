@@ -48,7 +48,11 @@ func (s *Service) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return config.Status(), nil
+	status := config.Status()
+	if status.Encrypt {
+		status.KeyPath = s.pusher.options.KeyPath
+	}
+	return status, nil
 }
 
 // ReloadPeriodic applies the current enable flag and interval. It is called at

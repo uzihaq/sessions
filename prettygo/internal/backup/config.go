@@ -29,6 +29,7 @@ type Fingerprint struct {
 type Config struct {
 	Version          int                    `json:"version"`
 	Enabled          bool                   `json:"enabled"`
+	Encrypt          bool                   `json:"encrypt"`
 	Project          string                 `json:"project"`
 	TokenPath        string                 `json:"token_path"`
 	Interval         string                 `json:"interval"`
@@ -42,6 +43,8 @@ type Config struct {
 // Status is the non-secret subset printed by the CLI and returned by the API.
 type Status struct {
 	Enabled          bool   `json:"enabled"`
+	Encrypt          bool   `json:"encrypt"`
+	KeyPath          string `json:"key_path,omitempty"`
 	Project          string `json:"project,omitempty"`
 	Interval         string `json:"interval,omitempty"`
 	LastPushAt       string `json:"last_push_at,omitempty"`
@@ -60,7 +63,7 @@ func SomewhereConfigPath(home string) string {
 
 func (c Config) Status() Status {
 	return Status{
-		Enabled: c.Enabled, Project: c.Project, Interval: c.Interval,
+		Enabled: c.Enabled, Encrypt: c.Encrypt, Project: c.Project, Interval: c.Interval,
 		LastPushAt: c.LastPushAt, LastPushCount: c.LastPushCount,
 		LastPushSkipped: c.LastPushSkipped, LastSessionCount: c.LastSessionCount,
 	}
@@ -109,29 +112,54 @@ func LoadConfig(path string) (Config, error) {
 
 // Enable validates the existing somewhere credential but stores only its path.
 func Enable(configPath, tokenPath, project string, interval time.Duration) (Config, error) {
+	config, _, err := EnableWithEncryption(configPath, tokenPath, keyPathForConfig(configPath), project, interval, false)
+	return config, err
+}
+
+// EnableWithEncryption preserves the existing plaintext flow while managing
+// the optional local encryption key. Changing modes clears the upload cache so
+// the next push rewrites every transcript in the selected format.
+func EnableWithEncryption(configPath, tokenPath, keyPath, project string, interval time.Duration, encrypt bool) (Config, KeySetup, error) {
 	if err := validateProject(project); err != nil {
-		return Config{}, err
+		return Config{}, KeySetup{}, err
 	}
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
 	if _, err := ReadSomewhereToken(tokenPath); err != nil {
-		return Config{}, err
+		return Config{}, KeySetup{}, err
 	}
 	config := Config{Version: configVersion, Cache: make(map[string]Fingerprint)}
 	if existing, err := LoadConfig(configPath); err == nil {
 		config = existing
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return Config{}, err
+		return Config{}, KeySetup{}, err
+	}
+	previousEncrypt := config.Encrypt
+	keySetup := KeySetup{}
+	if encrypt {
+		key, created, err := LoadOrCreateKey(keyPath)
+		if err != nil {
+			return Config{}, KeySetup{}, err
+		}
+		phrase, err := RecoveryPhrase(key)
+		if err != nil {
+			return Config{}, KeySetup{}, err
+		}
+		keySetup = KeySetup{RecoveryPhrase: phrase, Reused: !created}
 	}
 	config.Enabled = true
+	config.Encrypt = encrypt
 	config.Project = project
 	config.TokenPath = tokenPath
 	config.Interval = interval.String()
-	if err := SaveConfig(configPath, config); err != nil {
-		return Config{}, err
+	if previousEncrypt != encrypt {
+		config.Cache = make(map[string]Fingerprint)
 	}
-	return config, nil
+	if err := SaveConfig(configPath, config); err != nil {
+		return Config{}, KeySetup{}, err
+	}
+	return config, keySetup, nil
 }
 
 func SaveConfig(path string, config Config) error {

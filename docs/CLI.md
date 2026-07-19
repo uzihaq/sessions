@@ -621,15 +621,16 @@ Global flags --json, --host, and --port must appear before the command.
 
 ```text
 Usage:
-  pretty backup <enable|now|status> [options]
+  pretty backup <enable|now|status|decrypt> [options]
 
 configure and run session backups
 
-Enable scheduled backup storage, push a backup immediately, or show backup status. Enable requires --project and accepts --interval.
+Enable scheduled backup storage, push a backup immediately, show backup status, or decrypt an encrypted backup. Enable requires --project and accepts --interval and --encrypt.
 
 Examples:
-  pretty backup enable --project my-project --interval 15m
+  pretty backup enable --project my-project --interval 15m --encrypt
   pretty backup now
+  pretty backup decrypt transcript.jsonl.enc
   pretty --json backup status
 
 Global flags --json, --host, and --port must appear before the command.
