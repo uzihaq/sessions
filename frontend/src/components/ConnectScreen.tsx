@@ -11,6 +11,8 @@ export function ConnectScreen(): JSX.Element {
   const servers = useServers((state) => state.servers);
   const setActive = useServers((state) => state.setActive);
   const removeServer = useServers((state) => state.removeServer);
+  const pairingError = useServers((state) => state.pairingError);
+  const setPairingError = useServers((state) => state.setPairingError);
   const [name, setName] = useState('');
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
@@ -24,6 +26,7 @@ export function ConnectScreen(): JSX.Element {
   );
 
   const probe = async (server: ServerConfig): Promise<void> => {
+    setPairingError(null);
     setCheckingId(server.id);
     setMessage(`Checking ${formatServerEndpoint(server)}…`);
     setError(null);
@@ -48,6 +51,7 @@ export function ConnectScreen(): JSX.Element {
     endpointValue: string,
     options: { name?: string; token?: string } = {}
   ): Promise<void> => {
+    setPairingError(null);
     setError(null);
     let server: ServerConfig;
     try {
@@ -168,7 +172,9 @@ export function ConnectScreen(): JSX.Element {
         </div>
 
         {message ? <p className="connect-status" role="status">{message}</p> : null}
-        {error ? <p className="connect-error" role="alert">{error}</p> : null}
+        {error || pairingError ? (
+          <p className="connect-error" role="alert">{error ?? pairingError}</p>
+        ) : null}
 
         <section className="connect-setup" aria-labelledby="setup-title">
           <h2 id="setup-title">First time?</h2>

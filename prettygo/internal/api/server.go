@@ -36,6 +36,7 @@ type Server struct {
 	registry             sessionService
 	push                 pushService
 	tokens               tokenStore
+	pair                 *pairService
 	lan                  *lanListener
 	backups              *backup.Service
 	integrationEndpoints *integrations.Service
@@ -71,6 +72,7 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 	}
 	server := &Server{
 		config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath},
+		pair: newPairService(config),
 		integrationEndpoints: integrations.NewService(integrations.ServiceOptions{
 			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
 		}),
@@ -130,6 +132,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		}, corsOrigin)
 		return
 	}
+	if s.handlePairClaimRoute(response, request, corsOrigin) {
+		return
+	}
 
 	authorized, err := s.authorized(request)
 	if err != nil {
@@ -149,6 +154,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if s.handleLANRoute(response, request, corsOrigin) {
+		return
+	}
+	if s.handlePairRoutes(response, request, corsOrigin) {
 		return
 	}
 	if path == "/api/push/vapid" && request.Method == http.MethodGet {
@@ -283,8 +291,19 @@ func (s *Server) authorized(request *http.Request) (bool, error) {
 	if strings.HasPrefix(authorization, "Bearer ") && tokenEqual(strings.TrimPrefix(authorization, "Bearer "), expected) {
 		return true, nil
 	}
+	if strings.HasPrefix(authorization, "Bearer ") {
+		if authorized, err := s.pair.devices.authorize(strings.TrimPrefix(authorization, "Bearer ")); authorized || err != nil {
+			return authorized, err
+		}
+	}
 	provided := request.URL.Query().Get("token")
-	return provided != "" && tokenEqual(provided, expected), nil
+	if provided == "" {
+		return false, nil
+	}
+	if tokenEqual(provided, expected) {
+		return true, nil
+	}
+	return s.pair.devices.authorize(provided)
 }
 
 func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.Request, id, suffix, corsOrigin string) {

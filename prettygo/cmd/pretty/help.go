@@ -204,6 +204,18 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty deploy", "pretty deploy --repo ~/src/pretty-PTY --no-pull", "pretty deploy --dry-run"}, run: (*app).cmdDeploy,
 	},
 	{
+		name: "pair", usage: "pair [--name NAME]",
+		summary: "pair a device with one QR scan", group: adminCommandGroup, localJSON: true,
+		longHelp: "Mint a five-minute, single-use pairing ticket and print one QR code for the best verified endpoint: Tailscale remote access first, then same-network LAN access. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.",
+		examples: []string{"pretty pair", "pretty pair --name 'Uzair phone'", "pretty --json pair"}, run: (*app).cmdPair,
+	},
+	{
+		name: "devices", usage: "devices [revoke <id-or-prefix>]",
+		summary: "list or revoke paired devices", group: adminCommandGroup, localJSON: true,
+		longHelp: "List per-device credentials by id prefix, name, creation time, and last use. Revoke resolves an exact id or unique prefix, reports the matched device, and invalidates its token immediately.",
+		examples: []string{"pretty devices", "pretty --json devices", "pretty devices revoke 0123abcd"}, run: (*app).cmdDevices,
+	},
+	{
 		name: "lan", usage: "lan <enable|disable|status>",
 		summary: "manage same-network access", group: adminCommandGroup, localJSON: true,
 		longHelp: "Enable, disable, or inspect explicit HTTP access from other devices on the same Wi-Fi or Ethernet network. Protected routes still require the daemon token.",

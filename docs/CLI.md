@@ -49,6 +49,8 @@ Admin/operational:
   install                  install and start the development daemon
   uninstall                stop and remove the development daemon
   deploy                   perform the canonical safe update
+  pair                     pair a device with one QR scan
+  devices                  list or revoke paired devices
   lan                      manage same-network access
   remote                   manage tailnet-only remote access
   token                    print the daemon authentication token
@@ -561,6 +563,42 @@ Examples:
   pretty deploy
   pretty deploy --repo ~/src/pretty-PTY --no-pull
   pretty deploy --dry-run
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty pair`
+
+```text
+Usage:
+  pretty pair [--name NAME]
+
+pair a device with one QR scan
+
+Mint a five-minute, single-use pairing ticket and print one QR code for the best verified endpoint: Tailscale remote access first, then same-network LAN access. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.
+
+Examples:
+  pretty pair
+  pretty pair --name 'Uzair phone'
+  pretty --json pair
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty devices`
+
+```text
+Usage:
+  pretty devices [revoke <id-or-prefix>]
+
+list or revoke paired devices
+
+List per-device credentials by id prefix, name, creation time, and last use. Revoke resolves an exact id or unique prefix, reports the matched device, and invalidates its token immediately.
+
+Examples:
+  pretty devices
+  pretty --json devices
+  pretty devices revoke 0123abcd
 
 Global flags --json, --host, and --port must appear before the command.
 ```
