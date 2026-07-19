@@ -14,6 +14,7 @@ import { SettingsMenu } from './components/SettingsMenu';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { ParserIcon } from './components/ParserIcon';
 import { ConnectScreen } from './components/ConnectScreen';
+import { formatServerEndpoint } from './lib/serverEndpoint';
 import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOrder';
 import { useTabLabel } from './lib/tabLabels';
 import { notify } from './lib/tauriBridge';
@@ -187,6 +188,7 @@ function ConnectedApp(): JSX.Element {
   // re-runs whenever the active server changes so switching servers
   // immediately repopulates the tab strip from the new prettyd.
   const activeServerId = useServers((s) => s.activeId);
+  const tokenRequiredServerId = useServers((s) => s.tokenRequiredServerId);
   useEffect(() => {
     void refresh();
     const id = window.setInterval(() => { void refresh(); }, 3000);
@@ -315,7 +317,12 @@ function ConnectedApp(): JSX.Element {
       </header>
 
       <main className="app-main">
-        {effectiveLayout === 'fleet' ? (
+        {tokenRequiredServerId === activeServerId ? (
+          <DaemonBanner
+            error="prettyd: authentication required (401)"
+            onRetry={() => void refresh()}
+          />
+        ) : effectiveLayout === 'fleet' ? (
           <FleetView onOpenSession={openFleetSession} />
         ) : effectiveLayout === 'grid' ? (
           sessions.length > 0 ? (
@@ -426,7 +433,7 @@ function DaemonBanner({
       {isAuthError ? (
         <>
           <p className="daemon-banner-title">Authentication required</p>
-          <p className="daemon-banner-host">{server.host}:{server.port}</p>
+          <p className="daemon-banner-host">{formatServerEndpoint(server)}</p>
           <p className="daemon-banner-hint">Enter the daemon token to connect.</p>
           <div className="daemon-banner-token-row">
             <input
