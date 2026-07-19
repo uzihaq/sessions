@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import * as api from '../api/prettyd';
 import type { CreateSessionRequest, SessionInfo } from '../types';
+import {
+  filterSessionsForWindow,
+  readWindowScope,
+  sessionMatchesWindowScope
+} from '../lib/windowScope';
+
+const windowScope = readWindowScope();
 
 // Re-use the previous object for any session whose render-relevant fields
 // are unchanged, so component selectors (`sessions.find(id)`) keep stable
@@ -85,7 +92,7 @@ interface CachedSession {
 function readCache(): { sessions: SessionInfo[]; activeId: string | null } {
   try {
     const raw = window.localStorage.getItem(CACHE_KEY);
-    const sessions: SessionInfo[] = raw
+    const sessions: SessionInfo[] = filterSessionsForWindow(raw
       ? (JSON.parse(raw) as CachedSession[]).map((c) => ({
           ...c,
           // Fill the live fields with neutral defaults — they'll be
@@ -100,9 +107,12 @@ function readCache(): { sessions: SessionInfo[]; activeId: string | null } {
           exitSignal: null,
           exitedAt: null
         }))
-      : [];
-    const activeId = window.localStorage.getItem(ACTIVE_KEY);
-    return { sessions, activeId: activeId && activeId !== 'null' ? activeId : null };
+      : [], windowScope);
+    const savedActiveId = window.localStorage.getItem(ACTIVE_KEY);
+    const activeId = savedActiveId && sessions.some((session) => session.id === savedActiveId)
+      ? savedActiveId
+      : (sessions[0]?.id ?? null);
+    return { sessions, activeId };
   } catch {
     return { sessions: [], activeId: null };
   }
@@ -144,7 +154,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   refresh: async () => {
     set({ loading: true, error: null });
     try {
-      const fresh = await api.listSessions();
+      const fresh = filterSessionsForWindow(await api.listSessions(), windowScope);
       const sessions = reconcileSessions(get().sessions, fresh);
       const active = get().activeId;
       const stillExists = active && sessions.some((s) => s.id === active);
@@ -162,6 +172,7 @@ export const useSessions = create<SessionsState>((set, get) => ({
   create: async (req) => {
     const info = await api.createSession(req);
     set((s) => {
+      if (!sessionMatchesWindowScope(info, windowScope)) return s;
       const sessions = [...s.sessions, info];
       writeCache(sessions, info.id);
       return { sessions, activeId: info.id };

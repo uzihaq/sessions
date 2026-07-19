@@ -29,11 +29,12 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 // user gesture. As a plain `_blank`, the browser opens it as a tab
 // and the user can drag it out into its own window if they want.
 export async function openSessionWindow(sessionId: string, title: string): Promise<void> {
+  const query = new URLSearchParams({ session: sessionId, mode: 'single' }).toString();
   if (isTauri()) {
-    await invoke<void>('open_session_window', { sessionId, title });
+    await invoke<void>('open_scoped_window', { query, title });
     return;
   }
-  const url = `${window.location.origin}${window.location.pathname}?session=${encodeURIComponent(sessionId)}&mode=single`;
+  const url = `${window.location.origin}${window.location.pathname}?${query}`;
   const w = window.open(url, '_blank', 'noopener,noreferrer');
   if (!w) {
     // Last-resort fallback — some hardened browsers block window.open
@@ -43,22 +44,13 @@ export async function openSessionWindow(sessionId: string, title: string): Promi
   }
 }
 
-// Fire a desktop notification for working→idle transitions etc. Tauri
-// uses its native plugin (macOS notification center); browser uses the
-// Notification API. Both are best-effort — silently no-op if perms are
-// denied or the plugin isn't loaded.
+// Fire a browser notification for working→idle transitions. The native app
+// intentionally leaves notifications to the daemon-hosted web push path.
 export async function notify(title: string, body: string): Promise<void> {
-  if (isTauri()) {
-    try {
-      const mod = await import('@tauri-apps/plugin-notification');
-      const granted = await mod.isPermissionGranted();
-      const ok = granted || (await mod.requestPermission()) === 'granted';
-      if (ok) mod.sendNotification({ title, body });
-    } catch {
-      // plugin not installed yet (dev) — silently skip
-    }
-    return;
-  }
+  // v1 deliberately does not forward web activity into native
+  // notifications. The daemon-hosted web push path remains authoritative,
+  // which avoids duplicate alerts when the desktop shell is also open.
+  if (isTauri()) return;
   if (typeof Notification === 'undefined') return;
   if (Notification.permission === 'granted') {
     new Notification(title, { body });
@@ -68,25 +60,14 @@ export async function notify(title: string, body: string): Promise<void> {
   }
 }
 
-// Read/write the "launch at login" preference. Tauri-only — in browser
-// it's a no-op + reports false.
-export async function getAutostartEnabled(): Promise<boolean> {
-  if (!isTauri()) return false;
-  try {
-    const mod = await import('@tauri-apps/plugin-autostart');
-    return mod.isEnabled();
-  } catch {
-    return false;
-  }
+export interface TrayServer {
+  id: string;
+  name: string;
 }
 
-export async function setAutostartEnabled(enabled: boolean): Promise<void> {
+export async function syncTrayServers(servers: TrayServer[]): Promise<void> {
   if (!isTauri()) return;
-  try {
-    const mod = await import('@tauri-apps/plugin-autostart');
-    if (enabled) await mod.enable();
-    else await mod.disable();
-  } catch {
-    // best effort
-  }
+  await invoke<void>('set_tray_servers', {
+    servers: servers.map(({ id, name }) => ({ id, name }))
+  });
 }

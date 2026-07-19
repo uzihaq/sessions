@@ -17,7 +17,7 @@ import { ConnectScreen } from './components/ConnectScreen';
 import { formatServerEndpoint } from './lib/serverEndpoint';
 import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOrder';
 import { useTabLabel } from './lib/tabLabels';
-import { notify } from './lib/tauriBridge';
+import { isTauri, notify, syncTrayServers } from './lib/tauriBridge';
 import { readTextSize } from './lib/textSize';
 import type { SessionTool } from './types';
 
@@ -77,6 +77,10 @@ function isMessageObject(value: unknown): value is Record<string, unknown> {
 
 export function App(): JSX.Element {
   const activeServerId = useServers((state) => state.activeId);
+  const servers = useServers((state) => state.servers);
+  useEffect(() => {
+    void syncTrayServers(servers);
+  }, [servers]);
   return activeServerId ? <ConnectedApp /> : <ConnectScreen />;
 }
 
@@ -249,6 +253,16 @@ function ConnectedApp(): JSX.Element {
         sessionId={single.sessionId}
         sessions={sessions}
         textSize={textSize}
+      />
+    );
+  }
+
+  if (isTauri() && sessionsError && !sessionsHydrated) {
+    return (
+      <ConnectScreen
+        localDaemonUnavailable
+        detail={sessionsError}
+        onRetry={() => void refresh()}
       />
     );
   }
