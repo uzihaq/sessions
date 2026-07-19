@@ -42,7 +42,7 @@ Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/la
 
 ## Competitive-gap roadmap (promoted by user 2026-07-18; research: board task "Feature gaps vs the field")
 - **Mobile push on blocked/done** — 6 competitors converged on it; most-wanted feature in the space, and most on-thesis for us (the ledger means you can walk away; push closes the loop). E2E-encrypted push machinery ALREADY in the daemon — remaining work is notify-event wiring + FCM delivery with the Android app. — roadmap — PROMOTE: **yes**
-- **`pretty new --worktree` (worktree-per-task)** — 5/5 orchestrators auto-create worktree+branch per session; we do it by hand for every codex lane. Ship our own workflow. — roadmap — PROMOTE: yes
+- **`pretty new --worktree` (worktree-per-task)** — 5/5 orchestrators auto-create worktree+branch per session; we do it by hand for every codex lane. Pretty now creates and records isolated worktrees, while cleanup remains opt-in and refuses live, dirty, or unmerged work ([daemon implementation](../prettygo/internal/session/worktrees.go), [CLI](../prettygo/cmd/pretty/worktrees.go)). — shipped 2026-07-19 — PROMOTE: **yes**
 - **Diff viewer** — "agent done → what changed" shouldn't require leaving pretty. Cheap unified tier first; inline-comments-to-agent tier later. — roadmap — PROMOTE: later
 - **Prompt queuing** — park input typed mid-turn, deliver on completion (fixes our own documented can't-type pain). — roadmap — PROMOTE: later
 - **Session sharing** — deferred until after the QR-pairing/per-device-key ladder (its natural foundation).

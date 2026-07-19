@@ -21,6 +21,10 @@ type session struct {
 	Cmd               string          `json:"cmd"`
 	Args              []string        `json:"args"`
 	Cwd               string          `json:"cwd"`
+	WorktreePath      string          `json:"worktree_path,omitempty"`
+	Branch            string          `json:"branch,omitempty"`
+	Base              string          `json:"base,omitempty"`
+	SourceRepo        string          `json:"source_repo,omitempty"`
 	Cols              int             `json:"cols"`
 	Rows              int             `json:"rows"`
 	CreatedAt         int64           `json:"createdAt"`

@@ -72,6 +72,10 @@ fields. Optional fields are omitted when their value is `undefined`.
 | `cmd` | string | launched command |
 | `args` | string[] | effective arguments, including daemon-injected tool defaults |
 | `cwd` | string | working directory |
+| `worktree_path` | string, optional | Pretty-created worktree path recorded in the ledger |
+| `branch` | string, optional | Pretty-created branch checked out in `worktree_path` |
+| `base` | string, optional | ref the Pretty-created branch started from and must merge into before cleanup |
+| `source_repo` | string, optional | source checkout from which Pretty created the worktree |
 | `cols` | number | current PTY columns |
 | `rows` | number | current PTY rows |
 | `createdAt` | number | Unix epoch milliseconds reported by the runner |
@@ -211,6 +215,8 @@ Auth required. Every request field is optional:
 | `rows` | number | 50 |
 | `env` | object of string values | caller environment after filtering reserved/injection keys |
 | `name` | string | trimmed; empty becomes absent |
+| `worktree` | boolean | when true, create an isolated Git worktree and use it as `cwd` |
+| `base` | string | optional worktree base ref; requires `worktree`; defaults to the source checkout's current branch |
 | `onIdle` | string | trimmed; empty becomes absent |
 | `waitReady` | boolean | only literal `true` waits for readiness, capped at 30 seconds |
 
@@ -220,6 +226,44 @@ default full-access arguments unless any explicit mode flag is already present.
 Success is 201 with a bare `SessionInfo` object, not an envelope. Any caught
 failure is `400 {"error":"<message>"}`. Creating a session invokes launchd;
 there is no non-launchd create path in the normative implementation.
+
+The optional worktree request and response fields are a backward-compatible Go
+extension implemented by [`internal/state/types.go`](../internal/state/types.go)
+and [`internal/session/worktrees.go`](../internal/session/worktrees.go).
+
+### `GET /api/worktrees`
+
+Auth required. Returns worktrees created by Pretty according to ledger
+provenance, never arbitrary Git worktrees. Each result includes `session`,
+`session_name`, `worktree_path`, `branch`, `base`, `source_repo`, `tree_state`,
+`dirty`, `merged_into_base`, `session_state`, `exists`, and an optional
+`inspection_error`:
+
+```json
+{"worktrees":[]}
+```
+
+The route is implemented in
+[`internal/api/worktrees_handlers.go`](../internal/api/worktrees_handlers.go);
+Git inspection and ledger filtering live in
+[`internal/session/worktrees.go`](../internal/session/worktrees.go).
+
+### `POST /api/worktrees/clean`
+
+Auth required. Body is `{"dry_run":true|false}`. Cleanup considers only
+Pretty-created worktrees and removes one only when its session is durably
+exited, its tree is clean, and its branch is fully merged into its recorded
+base. It uses non-forced Git removal and branch deletion; all ineligible or
+refused operations return `action:"skipped"` with a `reason`. Dry-run returns
+`action:"would-remove"` without changing the repository. Success is:
+
+```json
+{"results":[],"dry_run":true}
+```
+
+There is no force option, and session kill does not call this route
+([`internal/session/worktrees.go`](../internal/session/worktrees.go),
+[`internal/session/manager.go`](../internal/session/manager.go)).
 
 ### `DELETE /api/sessions/:id`
 
@@ -386,4 +430,3 @@ common CORS headers. Recognized extensions are HTML, JS, CSS, JSON, SVG, PNG,
 JPEG, WebP, ICO, webmanifest, WOFF/WOFF2, TTF, OTF, and WASM; everything else is
 `application/octet-stream`. A stream error is a JSON `{"error":"<message>"}`
 body with 500 only if headers have not already been sent.
-

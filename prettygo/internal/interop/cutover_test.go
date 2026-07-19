@@ -409,7 +409,17 @@ func (s scratchState) env(overrides map[string]string) []string {
 	for key, value := range overrides {
 		base[key] = value
 	}
-	return envWith(os.Environ(), base)
+	// Interop tests commonly run inside a Pretty-owned session. Never let the
+	// parent runner's control plane (especially RUNNER_KIND) change the scratch
+	// runner under test; only the explicit overrides above are authoritative.
+	inherited := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, found := strings.Cut(entry, "=")
+		if found && !strings.HasPrefix(key, "RUNNER_") {
+			inherited = append(inherited, entry)
+		}
+	}
+	return envWith(inherited, base)
 }
 
 type scratchSocketLauncher struct {

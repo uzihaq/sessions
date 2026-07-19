@@ -12,6 +12,8 @@ type runLaneRequest struct {
 	Cwd         string   `json:"cwd"`
 	Name        string   `json:"name,omitempty"`
 	Description string   `json:"description,omitempty"`
+	Worktree    bool     `json:"worktree,omitempty"`
+	Base        string   `json:"base,omitempty"`
 	Kind        string   `json:"kind"`
 	SpecPath    string   `json:"specPath,omitempty"`
 }
@@ -25,7 +27,7 @@ func (a *app) cmdRun(args []string) error {
 		}
 	}
 	if separator < 0 || separator+1 >= len(args) || args[separator+1] == "" {
-		return fail(1, "usage: pretty run [--name N] [--cwd D] [--spec FILE] [--wait [--output]] -- <cmd args...>")
+		return fail(1, "usage: pretty run [--name N] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>")
 	}
 	options := append([]string(nil), args[:separator]...)
 	if err := a.configureCreateOwner(&options); err != nil {
@@ -33,6 +35,10 @@ func (a *app) cmdRun(args []string) error {
 	}
 	command := append([]string(nil), args[separator+1:]...)
 	description, err := pluckDescription(&options)
+	if err != nil {
+		return err
+	}
+	worktree, base, err := pluckWorktreeOptions(&options)
 	if err != nil {
 		return err
 	}
@@ -81,7 +87,7 @@ func (a *app) cmdRun(args []string) error {
 	}
 	body := runLaneRequest{
 		Cmd: command[0], Args: command[1:], Cwd: cwd, Name: strings.TrimSpace(name), Description: description,
-		Kind: "lane", SpecPath: specPath,
+		Worktree: worktree, Base: base, Kind: "lane", SpecPath: specPath,
 	}
 	var created map[string]any
 	if err := a.postJSON("/api/lanes", body, &created, 2); err != nil {

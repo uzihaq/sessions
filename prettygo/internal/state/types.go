@@ -26,6 +26,10 @@ type SessionInfo struct {
 	Cmd               string      `json:"cmd"`
 	Args              []string    `json:"args"`
 	Cwd               string      `json:"cwd"`
+	WorktreePath      string      `json:"worktree_path,omitempty"`
+	Branch            string      `json:"branch,omitempty"`
+	Base              string      `json:"base,omitempty"`
+	SourceRepo        string      `json:"source_repo,omitempty"`
 	Cols              int         `json:"cols"`
 	Rows              int         `json:"rows"`
 	CreatedAt         int64       `json:"createdAt"`
@@ -65,6 +69,8 @@ type CreateSessionRequest struct {
 	Env         map[string]string `json:"env,omitempty"`
 	Name        string            `json:"name,omitempty"`
 	Description string            `json:"description,omitempty"`
+	Worktree    bool              `json:"worktree,omitempty"`
+	Base        string            `json:"base,omitempty"`
 	Kind        string            `json:"kind,omitempty"`
 	SpecPath    string            `json:"specPath,omitempty"`
 	OnIdle      string            `json:"onIdle,omitempty"`
@@ -74,6 +80,10 @@ type CreateSessionRequest struct {
 	// headers at the daemon boundary. They are deliberately not JSON fields.
 	CreatorSessionID string `json:"-"`
 	CreatorOwnerID   string `json:"-"`
+	WorktreePath     string `json:"-"`
+	WorktreeBranch   string `json:"-"`
+	WorktreeBase     string `json:"-"`
+	SourceRepo       string `json:"-"`
 }
 
 type ClaudeEventsWindow struct {

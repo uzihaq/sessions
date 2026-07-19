@@ -242,9 +242,22 @@ func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error 
 	} else if value.DescriptionSource != DescriptionExplicit {
 		return fmt.Errorf("record created: invalid description source %q", value.DescriptionSource)
 	}
+	worktreeFields := 0
+	for _, field := range []string{value.WorktreePath, value.Branch, value.Base, value.SourceRepo} {
+		if strings.TrimSpace(field) != "" {
+			worktreeFields++
+		}
+	}
+	if worktreeFields != 0 && worktreeFields != 4 {
+		return errors.New("record created: worktree provenance requires worktree path, branch, base, and source repo")
+	}
+	if value.WorktreePath != "" && filepath.Clean(value.WorktreePath) != filepath.Clean(value.Cwd) {
+		return fmt.Errorf("record created: worktree path %q does not match cwd %q", value.WorktreePath, value.Cwd)
+	}
 	payload := createdPayload{
 		Name: value.Name, Description: value.Description, DescriptionSource: value.DescriptionSource,
 		Tool: value.Tool, Cwd: value.Cwd,
+		WorktreePath: value.WorktreePath, Branch: value.Branch, Base: value.Base, SourceRepo: value.SourceRepo,
 		ResumeArgv: append([]string{}, value.ResumeArgv...),
 		LaneUUID:   value.LaneUUID, ProviderUUID: value.ProviderUUID,
 		CreatorKind: value.CreatorKind, CreatorID: value.CreatorID,
@@ -495,6 +508,10 @@ type createdPayload struct {
 	DescriptionSource DescriptionSource `json:"description_source,omitempty"`
 	Tool              string            `json:"tool"`
 	Cwd               string            `json:"cwd"`
+	WorktreePath      string            `json:"worktree_path,omitempty"`
+	Branch            string            `json:"branch,omitempty"`
+	Base              string            `json:"base,omitempty"`
+	SourceRepo        string            `json:"source_repo,omitempty"`
 	ResumeArgv        []string          `json:"argv"`
 	LaneUUID          string            `json:"lane_uuid"`
 	ProviderUUID      string            `json:"provider_uuid,omitempty"`

@@ -61,6 +61,8 @@ type createSessionRequest struct {
 	Cwd         string   `json:"cwd,omitempty"`
 	Name        string   `json:"name,omitempty"`
 	Description string   `json:"description,omitempty"`
+	Worktree    bool     `json:"worktree,omitempty"`
+	Base        string   `json:"base,omitempty"`
 	OnIdle      string   `json:"onIdle,omitempty"`
 	WaitReady   bool     `json:"waitReady,omitempty"`
 	Kind        string   `json:"kind,omitempty"`
@@ -194,6 +196,19 @@ func pluckDescription(args *[]string) (string, error) {
 	return strings.TrimSpace(description), nil
 }
 
+func pluckWorktreeOptions(args *[]string) (bool, string, error) {
+	worktree := removeFirst(args, "--worktree")
+	base, hasBase := pluck(args, "--base")
+	base = strings.TrimSpace(base)
+	if hasBase && (base == "" || strings.HasPrefix(base, "-")) {
+		return false, "", fail(1, "--base needs a branch or ref")
+	}
+	if hasBase && !worktree {
+		return false, "", fail(1, "--base requires --worktree")
+	}
+	return worktree, base, nil
+}
+
 func (a *app) cmdNew(args []string) error {
 	if err := a.configureCreateOwner(&args); err != nil {
 		return err
@@ -204,6 +219,10 @@ func (a *app) cmdNew(args []string) error {
 		return err
 	}
 	body.Description = description
+	body.Worktree, body.Base, err = pluckWorktreeOptions(&args)
+	if err != nil {
+		return err
+	}
 	body.Force = removeFirst(&args, "--force")
 	forceStructuredClaude := removeFirst(&args, "--structured")
 	forceAppServer := removeFirst(&args, "--codex-appserver")
@@ -299,6 +318,16 @@ func (a *app) cmdNew(args []string) error {
 	}
 	if err := applyAgentControls(&body, agentControls{model: model, effort: effort, fast: fast}); err != nil {
 		return err
+	}
+	if body.Worktree {
+		if body.Cwd == "" {
+			body.Cwd, err = os.Getwd()
+		} else {
+			body.Cwd, err = filepath.Abs(body.Cwd)
+		}
+		if err != nil {
+			return fail(1, "resolve worktree source cwd: %s", err)
+		}
 	}
 	var info map[string]any
 	if err := a.postJSON("/api/sessions", body, &info, 2); err != nil {
