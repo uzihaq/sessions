@@ -26,7 +26,10 @@ func (a *app) cmdSearch(args []string) error {
 	tool, hasTool := pluck(&args, "--tool")
 	limitText, hasLimit := pluck(&args, "-n")
 	if len(args) != 0 {
-		return fail(1, "unknown search option: %s", args[0])
+		if strings.HasPrefix(queryText, "-") {
+			return fail(1, "the query must come before flags, but %q looks like a flag used as the query.\ntry: pretty search %q %s ...\n%s", queryText, args[0], queryText, searchUsageText)
+		}
+		return fail(1, "unknown search option: %s\n%s", args[0], searchUsageText)
 	}
 	if hasSession && strings.TrimSpace(sessionID) == "" {
 		return fail(1, "--session needs a session id")
@@ -100,6 +103,8 @@ func (a *app) cmdSearch(args []string) error {
 	return nil
 }
 
+const searchUsageText = "usage: pretty search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex | --ranked] [--json]\nthe query comes FIRST, before any flags"
+
 func searchUsage() error {
-	return fail(1, "usage: pretty search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex | --ranked] [--json]")
+	return fail(1, searchUsageText)
 }
