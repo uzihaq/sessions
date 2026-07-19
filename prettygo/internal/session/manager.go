@@ -26,15 +26,17 @@ import (
 )
 
 const (
-	workingBytesThreshold    = 80
-	workingDecay             = 800 * time.Millisecond
-	discoveryAttempts        = 3
-	discoveryRetryDelay      = 800 * time.Millisecond
-	orphanStartingGrace      = 30 * time.Second
-	readySettle              = 800 * time.Millisecond
-	DefaultMassKillLimit     = 3
-	DefaultDiscoveryInterval = 30 * time.Second
-	discoveryIntervalEnv     = "PRETTYD_DISCOVERY_INTERVAL"
+	workingBytesThreshold     = 80
+	workingDecay              = 800 * time.Millisecond
+	discoveryAttempts         = 3
+	discoveryRetryDelay       = 800 * time.Millisecond
+	orphanStartingGrace       = 30 * time.Second
+	readySettle               = 800 * time.Millisecond
+	defaultNotifyWaitingDelay = 30 * time.Second
+	defaultNotifyCooldown     = 60 * time.Second
+	DefaultMassKillLimit      = 3
+	DefaultDiscoveryInterval  = 30 * time.Second
+	discoveryIntervalEnv      = "PRETTYD_DISCOVERY_INTERVAL"
 )
 
 type MassKillGuard struct{ Limit int }
@@ -60,18 +62,20 @@ func (g MassKillGuard) Check(count int, force bool) error {
 }
 
 type ManagerOptions struct {
-	MassKillLimit    int
-	ActivityInterval time.Duration
-	DiscoveryRetries int
-	DiscoveryDelay   time.Duration
-	DisableWatchers  bool
-	ProcessAlive     func(int) bool
-	ProcessCommand   func(int) string
-	Boundaries       ledger.BoundaryWriter
-	Observations     ledger.ObservationWriter
-	LedgerReader     LedgerReader
-	Notify           func(PushPayload)
-	ListCodexModels  func(context.Context, string) ([]codexapp.Model, error)
+	MassKillLimit      int
+	ActivityInterval   time.Duration
+	DiscoveryRetries   int
+	DiscoveryDelay     time.Duration
+	DisableWatchers    bool
+	ProcessAlive       func(int) bool
+	ProcessCommand     func(int) string
+	Boundaries         ledger.BoundaryWriter
+	Observations       ledger.ObservationWriter
+	LedgerReader       LedgerReader
+	Notify             func(PushPayload)
+	NotifyWaitingDelay time.Duration
+	NotifyCooldown     time.Duration
+	ListCodexModels    func(context.Context, string) ([]codexapp.Model, error)
 }
 
 type DiscoverOptions struct{ Force bool }
@@ -116,10 +120,13 @@ type Manager struct {
 	notify       func(PushPayload)
 	listModels   func(context.Context, string) ([]codexapp.Model, error)
 
-	deathMu     sync.Mutex
-	laneDeaths  map[string]laneDeathBurst
-	discoveryMu sync.Mutex
-	bindMu      sync.Mutex
+	deathMu             sync.Mutex
+	laneDeaths          map[string]laneDeathBurst
+	notificationMu      sync.Mutex
+	notifications       map[string]*sessionNotificationState
+	notificationsClosed bool
+	discoveryMu         sync.Mutex
+	bindMu              sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -150,6 +157,10 @@ type runtimeSession struct {
 	structuredLifecycleWorking *bool
 	pushWorkingObserved        bool
 	workingStartedAt           time.Time
+	structuredDone             bool
+	waitingTimer               *time.Timer
+	waitingGeneration          uint64
+	stopped                    bool
 	watcher                    *watch.FileWatcher
 	stopOnce                   sync.Once
 	outputObserved             chan struct{}
@@ -165,6 +176,12 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 	}
 	if selected.ActivityInterval <= 0 {
 		selected.ActivityInterval = workingDecay
+	}
+	if selected.NotifyWaitingDelay <= 0 {
+		selected.NotifyWaitingDelay = defaultNotifyWaitingDelay
+	}
+	if selected.NotifyCooldown <= 0 {
+		selected.NotifyCooldown = defaultNotifyCooldown
 	}
 	if selected.DiscoveryRetries <= 0 {
 		selected.DiscoveryRetries = discoveryAttempts
@@ -189,7 +206,7 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 		options: selected, started: time.Now(), ctx: ctx, cancel: cancel,
 		boundaries: selected.Boundaries, observations: selected.Observations, ledgerReader: selected.LedgerReader,
 		runtimes: make(map[string]*runtimeSession), hooks: loadGlobalHooks(config.GlobalHooksPath),
-		laneDeaths: make(map[string]laneDeathBurst),
+		laneDeaths: make(map[string]laneDeathBurst), notifications: make(map[string]*sessionNotificationState),
 	}
 	manager.listModels = selected.ListCodexModels
 	if manager.listModels == nil {
@@ -589,6 +606,14 @@ func (m *Manager) reconcileLedger(ctx context.Context) {
 		m.observe(ctx, "runner lost during discovery reconciliation", func(writer ledger.ObservationWriter) error {
 			return writer.RecordRunnerLost(ctx, ledger.Observation{Meta: ledger.Meta{LaneID: laneID}})
 		})
+		info := state.SessionInfo{ID: lane.LaneID, Name: lane.Name, Cwd: lane.Cwd, Tool: state.SessionTool(lane.Tool)}
+		if lane.Tool == string(state.ToolLane) {
+			info.Kind = state.KindLane
+		}
+		if len(lane.ResumeArgv) > 0 {
+			info.Cmd = lane.ResumeArgv[0]
+		}
+		m.notifyLost(info)
 	}
 }
 
@@ -824,6 +849,7 @@ func firstMessageDescription(value string) string {
 func (m *Manager) Close() {
 	m.cancel()
 	m.ticker.Stop()
+	m.closeNotifications()
 	m.mu.Lock()
 	runtimes := make([]*runtimeSession, 0, len(m.runtimes))
 	for _, runtime := range m.runtimes {
@@ -946,7 +972,11 @@ func (r *runtimeSession) observe() {
 					})
 				})
 			}
-			if working, ok := structuredHistoryLifecycle(r.session.Info().Kind, event.CodexEvent); ok {
+			kind := r.session.Info().Kind
+			if structuredTurnCompleted(kind, event.CodexEvent) {
+				r.markStructuredDone()
+			}
+			if working, ok := structuredHistoryLifecycle(kind, event.CodexEvent); ok {
 				r.mu.Lock()
 				value := working
 				r.structuredLifecycleWorking = &value
@@ -958,6 +988,8 @@ func (r *runtimeSession) observe() {
 			default:
 			}
 		case proto.EventRunnerLost:
+			r.cancelWaiting()
+			r.manager.notifyLost(r.session.Info())
 			r.manager.observe(context.Background(), "runner lost", func(writer ledger.ObservationWriter) error {
 				return writer.RecordRunnerLost(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: id}})
 			})
@@ -975,6 +1007,12 @@ func (r *runtimeSession) stop() {
 	r.stopOnce.Do(func() {
 		r.attachment.Cancel()
 		r.mu.Lock()
+		r.stopped = true
+		r.waitingGeneration++
+		if r.waitingTimer != nil {
+			r.waitingTimer.Stop()
+			r.waitingTimer = nil
+		}
 		watcher := r.watcher
 		r.watcher = nil
 		r.mu.Unlock()
@@ -1019,6 +1057,8 @@ func (r *runtimeSession) setWorking(next bool) {
 	r.mu.Lock()
 	if !previous && next {
 		r.workingStartedAt = now
+		r.structuredDone = false
+		r.cancelWaitingLocked()
 		r.manager.removeIdleSentinel(r.session.Info().ID)
 	}
 	if !r.pushWorkingObserved {
@@ -1032,6 +1072,9 @@ func (r *runtimeSession) setWorking(next bool) {
 	}
 	started := r.workingStartedAt
 	r.workingStartedAt = time.Time{}
+	suppressWaiting := r.structuredDone
+	r.structuredDone = false
+	r.cancelWaitingLocked()
 	r.mu.Unlock()
 	if exited {
 		return
@@ -1044,6 +1087,9 @@ func (r *runtimeSession) setWorking(next bool) {
 		}
 	}
 	r.manager.handleIdle(r.session, duration)
+	if !suppressWaiting {
+		r.scheduleWaiting()
+	}
 }
 
 func (r *runtimeSession) startWatcher(info state.SessionInfo) {

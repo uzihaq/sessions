@@ -222,6 +222,12 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty lan enable", "pretty lan status", "pretty lan disable"}, run: (*app).cmdLan,
 	},
 	{
+		name: "notify", usage: "notify <status|on|off> [done|waiting|lost]",
+		summary: "configure session push notifications", group: adminCommandGroup, localJSON: true,
+		longHelp: "Inspect or toggle encrypted push notifications for structured turn completion, sustained waiting, and unexpectedly lost sessions. Omitting the kind from on or off changes all three kinds; delivery begins only after subscribing in the web UI.",
+		examples: []string{"pretty notify status", "pretty notify off waiting", "pretty notify on done", "pretty --json notify status"}, run: (*app).cmdNotify,
+	},
+	{
 		name: "remote", usage: "remote <enable|disable|status>",
 		summary: "manage tailnet-only remote access", group: adminCommandGroup, localJSON: true,
 		longHelp: "Enable, disable, or inspect the Tailscale Serve HTTPS endpoint used for Pretty remote access.",

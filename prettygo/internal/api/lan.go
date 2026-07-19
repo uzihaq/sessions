@@ -78,7 +78,7 @@ func (l *lanListener) enable(persist bool) (LANState, error) {
 	host := ip.String()
 	if l.server != nil && l.host == host {
 		if persist {
-			if err := state.SaveSettings(l.settingsPath, state.Settings{LAN: true}); err != nil {
+			if err := l.persistEnabled(true); err != nil {
 				return l.stateLocked(), err
 			}
 		}
@@ -96,7 +96,7 @@ func (l *lanListener) enable(persist bool) (LANState, error) {
 	}
 	url := "http://" + address
 	if persist {
-		if err := state.SaveSettings(l.settingsPath, state.Settings{LAN: true}); err != nil {
+		if err := l.persistEnabled(true); err != nil {
 			_ = listener.Close()
 			return l.stateLocked(), err
 		}
@@ -130,7 +130,7 @@ func (l *lanListener) enable(persist bool) (LANState, error) {
 func (l *lanListener) disable(persist bool) (LANState, error) {
 	l.mu.Lock()
 	if persist {
-		if err := state.SaveSettings(l.settingsPath, state.Settings{}); err != nil {
+		if err := l.persistEnabled(false); err != nil {
 			state := l.stateLocked()
 			l.mu.Unlock()
 			return state, err
@@ -147,6 +147,13 @@ func (l *lanListener) disable(persist bool) (LANState, error) {
 		}
 	}
 	return LANState{}, nil
+}
+
+func (l *lanListener) persistEnabled(enabled bool) error {
+	return state.UpdateSettings(l.settingsPath, func(settings *state.Settings) error {
+		settings.LAN = enabled
+		return nil
+	})
 }
 
 func (s *Server) RestoreLAN(logf func(string, ...any)) {
