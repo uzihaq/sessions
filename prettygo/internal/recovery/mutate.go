@@ -110,7 +110,7 @@ func Reopen(ctx context.Context, report Report, creator SessionCreator, observat
 		}
 		created, err := creator.Create(ctx, state.CreateSessionRequest{
 			Cmd: recipe.Cmd, Args: append([]string(nil), recipe.Args...),
-			Cwd: recipe.Cwd, Name: recipe.Name, Force: selected.Force,
+			Cwd: recipe.Cwd, Name: recipe.Name, Profile: lane.Profile, Force: selected.Force,
 		})
 		if err != nil {
 			outcome.Status = ReopenFailed

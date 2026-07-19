@@ -17,6 +17,7 @@ Session ids may be full ids or unique prefixes from `pretty ls`.
 
 Daily workflows:
   new                      create an interactive session
+  profiles                 list Claude and Codex login profiles
   run                      run a command in a headless lane
   worktrees                list or safely clean Pretty-created worktrees
   ls                       list sessions
@@ -73,17 +74,34 @@ Run `pretty help <command>` for usage, options, and examples.
 
 ```text
 Usage:
-  pretty new [--tool claude|codex|shell] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]
+  pretty new [--tool claude|codex|shell] [--profile NAME] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]
 
 create an interactive session
 
-Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.
+Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --profile selects a private Claude or Codex login under Pretty's user state; first use opens the tool's own login flow. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.
 
 Examples:
-  pretty new --tool claude --cwd ~/work
+  pretty new --tool claude --profile work --cwd ~/work
   pretty new --tool codex --name parser-fix --worktree
   pretty new --tool codex --name release-fix --worktree --base release
   pretty new --cmd /bin/zsh
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty profiles`
+
+```text
+Usage:
+  pretty profiles
+
+list Claude and Codex login profiles
+
+List profile names, private config paths, active sessions, and last-use times. Pretty never reads or copies credentials and has no profile delete command; remove a profile manually only after reviewing the printed path.
+
+Examples:
+  pretty profiles
+  pretty --json profiles
 
 Global flags --json, --host, and --port must appear before the command.
 ```

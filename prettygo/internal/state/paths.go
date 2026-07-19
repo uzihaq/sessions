@@ -60,6 +60,8 @@ type Metadata struct {
 	DescriptionSource string   `json:"description_source,omitempty"`
 	Kind              string   `json:"kind,omitempty"`
 	SpecPath          string   `json:"specPath,omitempty"`
+	Profile           string   `json:"profile,omitempty"`
+	ConfigDir         string   `json:"config_dir,omitempty"`
 	Cmd               string   `json:"cmd"`
 	Args              []string `json:"args"`
 	Cwd               string   `json:"cwd"`

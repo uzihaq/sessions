@@ -219,6 +219,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if s.handleSearchRoute(response, request, corsOrigin) {
 		return
 	}
+	if s.handleProfilesRoute(response, request, corsOrigin) {
+		return
+	}
 	if s.handleWorktreesRoute(response, request, corsOrigin) {
 		return
 	}

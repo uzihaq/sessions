@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
 
 var keyBytes = map[string]string{
@@ -61,6 +63,7 @@ type createSessionRequest struct {
 	Cwd         string   `json:"cwd,omitempty"`
 	Name        string   `json:"name,omitempty"`
 	Description string   `json:"description,omitempty"`
+	Profile     string   `json:"profile,omitempty"`
 	Worktree    bool     `json:"worktree,omitempty"`
 	Base        string   `json:"base,omitempty"`
 	OnIdle      string   `json:"onIdle,omitempty"`
@@ -219,6 +222,15 @@ func (a *app) cmdNew(args []string) error {
 		return err
 	}
 	body.Description = description
+	if value, present := pluck(&args, "--profile"); present {
+		if strings.HasPrefix(value, "-") || value == "" {
+			return fail(1, "--profile needs a name")
+		}
+		if err := state.ValidateProfileName(value); err != nil {
+			return fail(1, "%s", err)
+		}
+		body.Profile = value
+	}
 	body.Worktree, body.Base, err = pluckWorktreeOptions(&args)
 	if err != nil {
 		return err
@@ -318,6 +330,12 @@ func (a *app) cmdNew(args []string) error {
 	}
 	if err := applyAgentControls(&body, agentControls{model: model, effort: effort, fast: fast}); err != nil {
 		return err
+	}
+	if body.Profile != "" {
+		tool := state.CommandTool(body.Cmd)
+		if _, supported := state.ProfileToolName(tool); !supported {
+			return fail(1, "--profile is only for Claude or Codex sessions; remove it for shell sessions")
+		}
 	}
 	if body.Worktree {
 		if body.Cwd == "" {

@@ -254,9 +254,15 @@ func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error 
 	if value.WorktreePath != "" && filepath.Clean(value.WorktreePath) != filepath.Clean(value.Cwd) {
 		return fmt.Errorf("record created: worktree path %q does not match cwd %q", value.WorktreePath, value.Cwd)
 	}
+	if (value.Profile == "") != (value.ConfigDir == "") {
+		return errors.New("record created: profile provenance requires both profile and config dir")
+	}
+	if value.ConfigDir != "" && !filepath.IsAbs(value.ConfigDir) {
+		return errors.New("record created: profile config dir must be absolute")
+	}
 	payload := createdPayload{
 		Name: value.Name, Description: value.Description, DescriptionSource: value.DescriptionSource,
-		Tool: value.Tool, Cwd: value.Cwd,
+		Tool: value.Tool, Cwd: value.Cwd, Profile: value.Profile, ConfigDir: value.ConfigDir,
 		WorktreePath: value.WorktreePath, Branch: value.Branch, Base: value.Base, SourceRepo: value.SourceRepo,
 		ResumeArgv: append([]string{}, value.ResumeArgv...),
 		LaneUUID:   value.LaneUUID, ProviderUUID: value.ProviderUUID,
@@ -508,6 +514,8 @@ type createdPayload struct {
 	DescriptionSource DescriptionSource `json:"description_source,omitempty"`
 	Tool              string            `json:"tool"`
 	Cwd               string            `json:"cwd"`
+	Profile           string            `json:"profile,omitempty"`
+	ConfigDir         string            `json:"config_dir,omitempty"`
 	WorktreePath      string            `json:"worktree_path,omitempty"`
 	Branch            string            `json:"branch,omitempty"`
 	Base              string            `json:"base,omitempty"`

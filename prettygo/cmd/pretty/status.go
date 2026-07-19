@@ -29,6 +29,8 @@ type statusOutput struct {
 	State             string                   `json:"state"`
 	ExitCode          *int                     `json:"exit_code,omitempty"`
 	Cwd               string                   `json:"cwd"`
+	Profile           string                   `json:"profile,omitempty"`
+	ConfigDir         string                   `json:"config_dir,omitempty"`
 	WorktreePath      string                   `json:"worktree_path,omitempty"`
 	Branch            string                   `json:"branch,omitempty"`
 	Base              string                   `json:"base,omitempty"`
@@ -87,7 +89,7 @@ func (a *app) cmdStatus(args []string) error {
 	output := statusOutput{
 		ID: id, Name: current.Name, Description: current.Description,
 		DescriptionSource: current.DescriptionSource, Kind: "session", Tool: toolOfSession(*current),
-		State: state, Cwd: current.Cwd,
+		State: state, Cwd: current.Cwd, Profile: current.Profile, ConfigDir: current.ConfigDir,
 		WorktreePath: current.WorktreePath, Branch: current.Branch, Base: current.Base, SourceRepo: current.SourceRepo,
 		Git: git, LastVerdict: summary,
 		LastActivityAt: lastActivityTime.Format(time.RFC3339Nano),
@@ -211,6 +213,12 @@ func (a *app) writeStatusCard(output statusOutput, lastActivityAt int64) error {
 	}
 	if _, err := fmt.Fprintf(a.stdout, "  desc     %s\n", description); err != nil {
 		return err
+	}
+	if output.Profile != "" {
+		if _, err := fmt.Fprintf(a.stdout, "  profile  %s\n  config   %s\n", output.Profile,
+			strings.Replace(output.ConfigDir, a.home, "~", 1)); err != nil {
+			return err
+		}
 	}
 	if output.WorktreePath != "" {
 		if _, err := fmt.Fprintf(a.stdout, "  worktree %s\n  branch   %s\n  base     %s\n  source   %s\n",

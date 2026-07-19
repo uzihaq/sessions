@@ -16,6 +16,7 @@ type Session struct {
 	ID             string
 	Name           string
 	CWD            string
+	ConfigDir      string
 	Tool           state.SessionTool
 	Command        string
 	Args           []string
@@ -41,7 +42,7 @@ func CollectSessions(live []state.SessionInfo, runnerStateDir string) []Session 
 			lastActivity = max(lastActivity, *info.LastUserMessageAt)
 		}
 		collected[info.ID] = Session{
-			ID: info.ID, Name: info.Name, CWD: info.Cwd, Tool: info.Tool,
+			ID: info.ID, Name: info.Name, CWD: info.Cwd, ConfigDir: info.ConfigDir, Tool: info.Tool,
 			Command: info.Cmd, Args: append([]string(nil), info.Args...),
 			CreatedAt: info.CreatedAt, LastActivityAt: lastActivity,
 			OptOut: sessionOptedOut(runnerStateDir, info.ID),
@@ -68,7 +69,7 @@ func CollectSessions(live []state.SessionInfo, runnerStateDir string) []Session 
 			lastActivity = max(lastActivity, info.ModTime().UnixMilli())
 		}
 		collected[id] = Session{
-			ID: id, Name: metadata.Name, CWD: metadata.Info.Cwd, Tool: tool,
+			ID: id, Name: metadata.Name, CWD: metadata.Info.Cwd, ConfigDir: metadata.ConfigDir, Tool: tool,
 			Command: metadata.Info.Cmd, Args: append([]string(nil), metadata.Info.Args...),
 			CreatedAt: metadata.Info.CreatedAt, LastActivityAt: lastActivity,
 			OptOut: sessionOptedOut(runnerStateDir, id),
@@ -89,7 +90,9 @@ func (r Resolver) Resolve(session Session) (path, tool string) {
 	switch normalizedTool(session.Tool, session.Command) {
 	case "claude":
 		projects := r.ClaudeProjectsDir
-		if projects == "" {
+		if session.ConfigDir != "" {
+			projects = filepath.Join(session.ConfigDir, "projects")
+		} else if projects == "" {
 			resolved, err := watch.ClaudeProjectsDir()
 			if err != nil {
 				return "", ""
@@ -107,10 +110,14 @@ func (r Resolver) Resolve(session Session) (path, tool string) {
 		if r.Now != nil {
 			now = r.Now()
 		}
+		sessionsDir := r.CodexSessionsDir
+		if session.ConfigDir != "" {
+			sessionsDir = filepath.Join(session.ConfigDir, "sessions")
+		}
 		resolution := watch.ResolveCodexRolloutPath(watch.CodexResolveOptions{
 			CWD: session.CWD, Args: session.Args,
 			CreatedAt:   time.UnixMilli(session.CreatedAt),
-			SessionsDir: r.CodexSessionsDir, Now: now,
+			SessionsDir: sessionsDir, Now: now,
 		})
 		return resolution.Path, "codex"
 	default:

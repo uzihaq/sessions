@@ -255,6 +255,7 @@ func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSess
 		Name: prepared.Name, Description: prepared.Description,
 		DescriptionSource: ledger.DescriptionSource(prepared.DescriptionSource),
 		Tool:              string(prepared.Tool), Cwd: info.Cwd,
+		Profile: prepared.Profile, ConfigDir: prepared.ConfigDir,
 		WorktreePath: prepared.WorktreePath, Branch: prepared.WorktreeBranch,
 		Base: prepared.WorktreeBase, SourceRepo: prepared.SourceRepo,
 		ResumeArgv: resumeArgv, LaneUUID: info.ID, ProviderUUID: providerUUID,
@@ -482,6 +483,7 @@ func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionIn
 		info := state.SessionInfo{
 			ID: lane.LaneID, Name: lane.Name, Description: lane.Description,
 			DescriptionSource: string(lane.DescriptionSource), Cwd: lane.Cwd,
+			Profile: lane.Profile, ConfigDir: lane.ConfigDir,
 			WorktreePath: lane.WorktreePath, Branch: lane.Branch, Base: lane.Base, SourceRepo: lane.SourceRepo,
 			CreatedAt: lane.CreatedAtMS, LastDataAt: lane.LastEventAtMS,
 			Tool: state.SessionTool(lane.Tool), Exited: true, ExitedAt: &exitedAt,
@@ -528,6 +530,8 @@ func (m *Manager) withProvenance(ctx context.Context, infos []state.SessionInfo)
 		}
 		infos[index].CreatorKind = string(current.CreatorKind)
 		infos[index].CreatorID = current.CreatorID
+		infos[index].Profile = current.Profile
+		infos[index].ConfigDir = current.ConfigDir
 		infos[index].WorktreePath = current.WorktreePath
 		infos[index].Branch = current.Branch
 		infos[index].Base = current.Base
@@ -625,6 +629,13 @@ func (m *Manager) reconcileLedger(ctx context.Context) {
 }
 
 func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest) (state.SessionInfo, error) {
+	if request.Profile != "" {
+		configDir, err := m.prepareProfile(request.Cmd, request.Profile)
+		if err != nil {
+			return state.SessionInfo{}, err
+		}
+		request.ConfigDir = configDir
+	}
 	resolvedRequest, err := m.resolveCodexModelChoice(ctx, request)
 	if err != nil {
 		return state.SessionInfo{}, err
@@ -1137,16 +1148,24 @@ func (r *runtimeSession) startWatcher(info state.SessionInfo) {
 	var watcher *watch.FileWatcher
 	switch info.Tool {
 	case state.ToolClaude:
+		projectsDir := ""
+		if info.ConfigDir != "" {
+			projectsDir = filepath.Join(info.ConfigDir, "projects")
+		}
 		created, err := watch.WatchSessionFile(watch.ClaudeWatcherOptions{
-			CWD: info.Cwd, ClaudeSessionID: extractClaudeSessionID(info.Args),
+			CWD: info.Cwd, ClaudeSessionID: extractClaudeSessionID(info.Args), ProjectsDir: projectsDir,
 		})
 		if err != nil {
 			return
 		}
 		watcher = created
 	case state.ToolCodex:
+		sessionsDir := ""
+		if info.ConfigDir != "" {
+			sessionsDir = filepath.Join(info.ConfigDir, "sessions")
+		}
 		watcher = watch.WatchCodexRollout(watch.CodexWatcherOptions{
-			CWD: info.Cwd, Args: info.Args, CreatedAt: time.UnixMilli(info.CreatedAt),
+			CWD: info.Cwd, Args: info.Args, CreatedAt: time.UnixMilli(info.CreatedAt), SessionsDir: sessionsDir,
 		})
 	default:
 		return

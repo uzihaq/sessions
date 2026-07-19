@@ -247,6 +247,34 @@ func TestResolverFindsCodexRollout(t *testing.T) {
 	}
 }
 
+func TestResolverUsesSessionProfileConfigDirBeforeGlobalRoots(t *testing.T) {
+	root := t.TempDir()
+	cwd := t.TempDir()
+	now := time.Date(2026, time.July, 19, 12, 0, 0, 0, time.UTC)
+	configDir := filepath.Join(root, "profiles", "codex", "work")
+	rollout := filepath.Join(configDir, "sessions", "2026", "07", "19", "rollout-profile.jsonl")
+	if err := os.MkdirAll(filepath.Dir(rollout), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record := map[string]any{
+		"timestamp": now.Format(time.RFC3339Nano), "type": "session_meta",
+		"payload": map[string]any{"cwd": cwd, "timestamp": now.Format(time.RFC3339Nano)},
+	}
+	encoded, _ := json.Marshal(record)
+	if err := os.WriteFile(rollout, append(encoded, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, tool := (Resolver{
+		CodexSessionsDir: filepath.Join(root, "wrong-default"), Now: func() time.Time { return now },
+	}).Resolve(Session{
+		ID: "profile-codex", CWD: cwd, ConfigDir: configDir, Tool: state.ToolCodex,
+		CreatedAt: now.Add(-time.Minute).UnixMilli(),
+	})
+	if resolved != rollout || tool != "codex" {
+		t.Fatalf("profile resolved=%q tool=%q, want %q codex", resolved, tool, rollout)
+	}
+}
+
 func TestPeriodicServiceRunsOnlyWhenEnabled(t *testing.T) {
 	root := t.TempDir()
 	tokenPath := filepath.Join(root, "somewhere.json")
