@@ -120,14 +120,23 @@ func (a *app) cmdSessions(args []string) error {
 		_, err := io.WriteString(a.stdout, "(no sessions or lanes)\n")
 		return err
 	}
-	rows := [][]string{{"ID", "TYPE", "NAME", "DESC", "TOOL", "CWD", "STATE", "AGE", "OWNER"}}
+	showProfile := recordsHaveProfiles(records)
+	header := []string{"ID", "TYPE", "NAME", "DESC", "TOOL"}
+	if showProfile {
+		header = append(header, "PROFILE")
+	}
+	header = append(header, "CWD", "STATE", "AGE", "OWNER")
+	rows := [][]string{header}
 	for _, record := range records {
 		value := record.value
-		rows = append(rows, []string{
+		row := []string{
 			prefixString(value.ID, 8), sessionType(value), compactSessionName(value.Name), compactDescription(value.Description), toolOfSession(value),
-			strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value), a.ageOf(value.CreatedAt),
-			ownershipLabel(value),
-		})
+		}
+		if showProfile {
+			row = append(row, compactProfile(value.Profile))
+		}
+		row = append(row, strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value), a.ageOf(value.CreatedAt), ownershipLabel(value))
+		rows = append(rows, row)
 	}
 	return writePaddedRows(a.stdout, rows)
 }
@@ -267,6 +276,22 @@ func compactSessionName(name string) string {
 		return "-"
 	}
 	return strings.Join(strings.Fields(name), " ")
+}
+
+func recordsHaveProfiles(records []sessionRecord) bool {
+	for _, record := range records {
+		if record.value.Profile != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func compactProfile(profile string) string {
+	if profile == "" {
+		return "-"
+	}
+	return profile
 }
 
 func compactDescription(description string) string {

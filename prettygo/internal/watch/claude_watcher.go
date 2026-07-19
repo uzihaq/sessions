@@ -17,12 +17,13 @@ const (
 )
 
 // ClaudeWatcherOptions configures a Claude Code JSONL watcher. ProjectDir is
-// an explicit override for synthetic fixtures; when empty it is derived from
-// CWD under ~/.claude/projects.
+// an explicit project-directory override for synthetic fixtures. ProjectsDir
+// overrides the config root while preserving resolved and legacy CWD probes.
 type ClaudeWatcherOptions struct {
 	CWD             string
 	ClaudeSessionID string
 	ProjectDir      string
+	ProjectsDir     string
 	InitialDelay    time.Duration
 	PollInterval    time.Duration
 }
@@ -47,7 +48,9 @@ type claudeTail struct {
 // WatchClaudeSession starts resolving and tailing a Claude session file.
 func WatchClaudeSession(options ClaudeWatcherOptions) (*FileWatcher, error) {
 	projectDirs := []string{options.ProjectDir}
-	if options.ProjectDir == "" {
+	if options.ProjectDir == "" && options.ProjectsDir != "" {
+		projectDirs = ClaudeProjectDirsUnder(options.ProjectsDir, options.CWD)
+	} else if options.ProjectDir == "" {
 		var err error
 		projectDirs, err = ClaudeProjectDirs(options.CWD)
 		if err != nil {

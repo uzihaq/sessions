@@ -37,6 +37,8 @@ type config struct {
 	descriptionSource string
 	kind              string
 	specPath          string
+	profile           string
+	configDir         string
 	stateDir          string
 	cmd               string
 	args              []string
@@ -243,6 +245,7 @@ func run() int {
 	meta := state.Metadata{
 		ID: cfg.id, Name: cfg.name, Description: cfg.description,
 		DescriptionSource: cfg.descriptionSource, Kind: cfg.kind, SpecPath: cfg.specPath,
+		Profile: cfg.profile, ConfigDir: cfg.configDir,
 		Cmd: cfg.cmd, Args: cfg.args, Cwd: cfg.cwd,
 		Cols: cfg.cols, Rows: cfg.rows, CreatedAt: r.createdAt,
 		PID: command.Process.Pid, SockPath: paths.Socket,
@@ -296,6 +299,8 @@ func configFromEnv() (config, string, error) {
 		return config{}, "", fmt.Errorf("unsupported RUNNER_KIND=%q", kind)
 	}
 	specPath := strings.TrimSpace(os.Getenv("RUNNER_SPEC_PATH"))
+	profile := strings.TrimSpace(os.Getenv("RUNNER_PROFILE"))
+	configDir := strings.TrimSpace(os.Getenv("RUNNER_CONFIG_DIR"))
 	stateDir := os.Getenv("RUNNER_STATE_DIR")
 	if stateDir == "" {
 		var err error
@@ -336,7 +341,8 @@ func configFromEnv() (config, string, error) {
 	}
 	return config{
 		id: id, name: name, description: description, descriptionSource: descriptionSource,
-		kind: kind, specPath: specPath, stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows,
+		kind: kind, specPath: specPath, profile: profile, configDir: configDir,
+		stateDir: stateDir, cmd: cmd, args: args, cwd: cwd, cols: cols, rows: rows,
 	}, "", nil
 }
 
@@ -366,6 +372,7 @@ func childEnv() []string {
 		"RUNNER_CWD": {}, "RUNNER_COLS": {}, "RUNNER_ROWS": {},
 		"RUNNER_STATE_DIR": {}, "RUNNER_NAME": {}, "RUNNER_KIND": {},
 		"RUNNER_SPEC_PATH": {}, "RUNNER_DESCRIPTION": {}, "RUNNER_DESCRIPTION_SOURCE": {},
+		"RUNNER_PROFILE": {}, "RUNNER_CONFIG_DIR": {},
 		"TERM": {}, "COLORTERM": {},
 		"PRETTY_CODEX_APP_SERVER_SOCKET": {},
 	}

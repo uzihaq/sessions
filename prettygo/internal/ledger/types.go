@@ -98,6 +98,8 @@ type Created struct {
 	DescriptionSource DescriptionSource
 	Tool              string
 	Cwd               string
+	Profile           string
+	ConfigDir         string
 	WorktreePath      string
 	Branch            string
 	Base              string

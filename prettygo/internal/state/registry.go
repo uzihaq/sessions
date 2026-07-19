@@ -46,6 +46,8 @@ type PreparedSession struct {
 	Kind              string
 	SpecPath          string
 	Tool              SessionTool
+	Profile           string
+	ConfigDir         string
 	WorktreePath      string
 	WorktreeBranch    string
 	WorktreeBase      string
@@ -59,6 +61,8 @@ type SessionMetadata struct {
 	OnIdle            string
 	Kind              string
 	SpecPath          string
+	Profile           string
+	ConfigDir         string
 }
 
 // CreateLifecycle lets the session manager place durable boundaries around
@@ -159,6 +163,21 @@ func (r *Registry) CreateWithLifecycle(
 		args = appendClaudeSessionID(cmd, args, id)
 		args = withToolDefaultArgs(cmd, args)
 	}
+	profile := request.Profile
+	configDir := request.ConfigDir
+	if profile != "" {
+		if err := ValidateProfileName(profile); err != nil {
+			return SessionInfo{}, err
+		}
+		if _, supported := ProfileToolName(tool); !supported {
+			return SessionInfo{}, errors.New("--profile is only for Claude or Codex sessions; remove it for shell sessions")
+		}
+		if configDir == "" || !filepath.IsAbs(configDir) {
+			return SessionInfo{}, errors.New("profile config directory must be an absolute path")
+		}
+	} else if configDir != "" {
+		return SessionInfo{}, errors.New("profile config directory requires a profile name")
+	}
 	specPath := strings.TrimSpace(request.SpecPath)
 	if specPath != "" {
 		if !filepath.IsAbs(specPath) {
@@ -185,6 +204,15 @@ func (r *Registry) CreateWithLifecycle(
 		Info: runnerInfo,
 		Env:  r.runnerEnvironment(runnerInfo, request.Env),
 	}
+	if profile != "" {
+		envKey := "CODEX_HOME"
+		if tool == ToolClaude {
+			envKey = "CLAUDE_CONFIG_DIR"
+		}
+		launchRequest.Env[envKey] = configDir
+		launchRequest.Env["RUNNER_PROFILE"] = profile
+		launchRequest.Env["RUNNER_CONFIG_DIR"] = configDir
+	}
 	if kind == KindClaudeStructured {
 		// Structured Claude is intentionally subscription-authenticated. Never
 		// place a metered API key in its launchd environment.
@@ -198,6 +226,7 @@ func (r *Registry) CreateWithLifecycle(
 	prepared := PreparedSession{
 		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Description: description,
 		DescriptionSource: descriptionSource, Kind: kind, SpecPath: specPath, Tool: tool,
+		Profile: profile, ConfigDir: configDir,
 		WorktreePath: request.WorktreePath, WorktreeBranch: request.WorktreeBranch,
 		WorktreeBase: request.WorktreeBase, SourceRepo: request.SourceRepo,
 	}
@@ -229,6 +258,7 @@ func (r *Registry) CreateWithLifecycle(
 	metadata := SessionMetadata{
 		Name: prepared.Name, Description: prepared.Description, DescriptionSource: prepared.DescriptionSource,
 		OnIdle: strings.TrimSpace(request.OnIdle), Kind: prepared.Kind, SpecPath: prepared.SpecPath,
+		Profile: prepared.Profile, ConfigDir: prepared.ConfigDir,
 	}
 	if err := writeMetadata(r.config.RunnerStateDir, runnerInfo, metadata); err != nil {
 		return SessionInfo{}, err
@@ -343,6 +373,7 @@ func (r *Registry) RegisterMetadata(ctx context.Context, runner proto.Runner, me
 	return r.register(ctx, runner, SessionMetadata{
 		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
 		OnIdle: onIdle, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+		Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 	})
 }
 
@@ -525,7 +556,7 @@ func (r *Registry) runnerEnvironment(info proto.RunnerInfo, caller map[string]st
 		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
 		"http_proxy", "https_proxy", "no_proxy", "all_proxy",
 		"NODE_EXTRA_CA_CERTS", "GIT_SSH_COMMAND",
-		"CODEX_HOME", "OPENAI_API_KEY", "PRETTY_CODEX_APP_SERVER_SOCKET",
+		"OPENAI_API_KEY", "PRETTY_CODEX_APP_SERVER_SOCKET",
 	}
 	environment := make(map[string]string)
 	for _, key := range passthroughKeys {
@@ -540,6 +571,7 @@ func (r *Registry) runnerEnvironment(info proto.RunnerInfo, caller map[string]st
 	environment["SHELL"] = getenv("SHELL", "/bin/bash")
 	blocked := map[string]struct{}{
 		"NODE_OPTIONS": {}, "DYLD_INSERT_LIBRARIES": {}, "DYLD_LIBRARY_PATH": {}, "LD_PRELOAD": {},
+		"CLAUDE_CONFIG_DIR": {}, "CODEX_HOME": {},
 	}
 	for key, value := range caller {
 		if strings.HasPrefix(strings.ToUpper(key), "RUNNER_") {
@@ -591,6 +623,7 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 	metadata := Metadata{
 		ID: info.ID, Name: sessionMetadata.Name, Description: sessionMetadata.Description,
 		DescriptionSource: sessionMetadata.DescriptionSource, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
+		Profile: sessionMetadata.Profile, ConfigDir: sessionMetadata.ConfigDir,
 		Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
 		SockPath:       info.SocketPath,
@@ -611,6 +644,8 @@ type RunnerMetadata struct {
 	DescriptionSource string
 	Kind              string
 	SpecPath          string
+	Profile           string
+	ConfigDir         string
 }
 
 func readRunnerMetadata(path string) (RunnerMetadata, error) {
@@ -638,7 +673,7 @@ func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 			ClaudeSessionID: metadata.ClaudeSessionID,
 		},
 		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
-		Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+		Kind: metadata.Kind, SpecPath: metadata.SpecPath, Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 	}, nil
 }
 

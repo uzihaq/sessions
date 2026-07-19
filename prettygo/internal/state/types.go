@@ -26,6 +26,8 @@ type SessionInfo struct {
 	Cmd               string      `json:"cmd"`
 	Args              []string    `json:"args"`
 	Cwd               string      `json:"cwd"`
+	Profile           string      `json:"profile,omitempty"`
+	ConfigDir         string      `json:"config_dir,omitempty"`
 	WorktreePath      string      `json:"worktree_path,omitempty"`
 	Branch            string      `json:"branch,omitempty"`
 	Base              string      `json:"base,omitempty"`
@@ -69,6 +71,7 @@ type CreateSessionRequest struct {
 	Env         map[string]string `json:"env,omitempty"`
 	Name        string            `json:"name,omitempty"`
 	Description string            `json:"description,omitempty"`
+	Profile     string            `json:"profile,omitempty"`
 	Worktree    bool              `json:"worktree,omitempty"`
 	Base        string            `json:"base,omitempty"`
 	Kind        string            `json:"kind,omitempty"`
@@ -80,6 +83,7 @@ type CreateSessionRequest struct {
 	// headers at the daemon boundary. They are deliberately not JSON fields.
 	CreatorSessionID string `json:"-"`
 	CreatorOwnerID   string `json:"-"`
+	ConfigDir        string `json:"-"`
 	WorktreePath     string `json:"-"`
 	WorktreeBranch   string `json:"-"`
 	WorktreeBase     string `json:"-"`

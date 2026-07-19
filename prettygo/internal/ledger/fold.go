@@ -12,6 +12,8 @@ type LaneState struct {
 	DescriptionSource        DescriptionSource
 	Tool                     string
 	Cwd                      string
+	Profile                  string
+	ConfigDir                string
 	WorktreePath             string
 	Branch                   string
 	Base                     string
@@ -87,6 +89,8 @@ func Fold(events []Event) []LaneState {
 			state.DescriptionSource = payload.DescriptionSource
 			state.Tool = payload.Tool
 			state.Cwd = payload.Cwd
+			state.Profile = payload.Profile
+			state.ConfigDir = payload.ConfigDir
 			state.WorktreePath = payload.WorktreePath
 			state.Branch = payload.Branch
 			state.Base = payload.Base

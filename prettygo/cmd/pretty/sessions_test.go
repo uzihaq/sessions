@@ -113,6 +113,39 @@ func TestSessionsMineLabelsOSUserFallbackAsUserWide(t *testing.T) {
 	}
 }
 
+func TestSessionTablesAddProfileColumnOnlyWhenNeeded(t *testing.T) {
+	profiled := true
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		if request.URL.Path != "/api/sessions" {
+			http.NotFound(response, request)
+			return
+		}
+		profileFields := ""
+		if profiled {
+			profileFields = `,"profile":"work","config_dir":"/profiles/claude/work"`
+		}
+		_, _ = response.Write([]byte(`{"sessions":[{"id":"22000000-0000-4000-8000-000000000001","name":"agent","description":"","cmd":"claude","cwd":"/tmp","createdAt":1,"pid":1,"tool":"claude-code"` + profileFields + `}]}`))
+	}))
+	defer server.Close()
+	t.Setenv("HOME", t.TempDir())
+	for _, command := range []string{"sessions", "ls"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"--host", server.URL, command}, strings.NewReader(""), &stdout, &stderr); code != 0 ||
+			!strings.Contains(stdout.String(), "PROFILE") || !strings.Contains(stdout.String(), "work") {
+			t.Fatalf("%s profile table exit=%d stdout=%q stderr=%q", command, code, stdout.String(), stderr.String())
+		}
+	}
+	profiled = false
+	for _, command := range []string{"sessions", "ls"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"--host", server.URL, command}, strings.NewReader(""), &stdout, &stderr); code != 0 ||
+			strings.Contains(stdout.String(), "PROFILE") {
+			t.Fatalf("%s default table exit=%d stdout=%q stderr=%q", command, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestKillExitedLaneUsesDurableManifestAsCleanNoop(t *testing.T) {
 	id := "21000000-0000-4000-8000-000000000001"
 	deleteRequests := 0

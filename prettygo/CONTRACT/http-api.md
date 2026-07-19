@@ -72,6 +72,8 @@ fields. Optional fields are omitted when their value is `undefined`.
 | `cmd` | string | launched command |
 | `args` | string[] | effective arguments, including daemon-injected tool defaults |
 | `cwd` | string | working directory |
+| `profile` | string, optional | Claude or Codex login profile name |
+| `config_dir` | string, optional | private profile root used for conversation resolution |
 | `worktree_path` | string, optional | Pretty-created worktree path recorded in the ledger |
 | `branch` | string, optional | Pretty-created branch checked out in `worktree_path` |
 | `base` | string, optional | ref the Pretty-created branch started from and must merge into before cleanup |
@@ -215,6 +217,7 @@ Auth required. Every request field is optional:
 | `rows` | number | 50 |
 | `env` | object of string values | caller environment after filtering reserved/injection keys |
 | `name` | string | trimmed; empty becomes absent |
+| `profile` | string | optional `[a-z0-9-]{1,32}` Claude/Codex login profile; rejected for shell sessions |
 | `worktree` | boolean | when true, create an isolated Git worktree and use it as `cwd` |
 | `base` | string | optional worktree base ref; requires `worktree`; defaults to the source checkout's current branch |
 | `onIdle` | string | trimmed; empty becomes absent |
@@ -226,6 +229,30 @@ default full-access arguments unless any explicit mode flag is already present.
 Success is 201 with a bare `SessionInfo` object, not an envelope. Any caught
 failure is `400 {"error":"<message>"}`. Creating a session invokes launchd;
 there is no non-launchd create path in the normative implementation.
+
+Profile directories are created mode `0700` below
+`<UserStateRoot>/profiles/<tool>/<name>`. A profiled Claude launch receives
+`CLAUDE_CONFIG_DIR`; a profiled Codex launch receives `CODEX_HOME`. Unprofiled
+launches receive neither variable. The daemon records `profile` and
+`config_dir` in runner metadata and the created ledger payload, then uses the
+same root for watcher, transcript, search, backup, and recovery resolution
+([`internal/session/profiles.go`](../internal/session/profiles.go),
+[`internal/state/registry.go`](../internal/state/registry.go),
+[`internal/backup/sessions.go`](../internal/backup/sessions.go)).
+
+### `GET /api/profiles`
+
+Auth required. Returns profile directories by tool and name, including their
+path, currently active sessions, and last-used Unix milliseconds:
+
+```json
+{"profiles":[{"tool":"claude","name":"work","path":"/Users/me/.local/state/pretty-PTY/profiles/claude/work","sessions":[],"last_used":1784491200000}]}
+```
+
+Pretty exposes no profile deletion route because these directories contain
+provider credentials. Listing is implemented by
+[`internal/api/profiles_handlers.go`](../internal/api/profiles_handlers.go) and
+[`internal/session/profiles.go`](../internal/session/profiles.go).
 
 The optional worktree request and response fields are a backward-compatible Go
 extension implemented by [`internal/state/types.go`](../internal/state/types.go)

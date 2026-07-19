@@ -144,6 +144,7 @@ func (r *claudeStructuredRunner) writeMetadata() error {
 	return state.WriteMetadata(r.paths.Meta, state.Metadata{
 		ID: r.cfg.id, Name: r.cfg.name, Description: r.cfg.description,
 		DescriptionSource: r.cfg.descriptionSource, Kind: r.cfg.kind, SpecPath: r.cfg.specPath,
+		Profile: r.cfg.profile, ConfigDir: r.cfg.configDir,
 		Cmd: r.cfg.cmd, Args: r.cfg.args, Cwd: r.cfg.cwd,
 		Cols: r.cfg.cols, Rows: r.cfg.rows, CreatedAt: r.createdAt,
 		PID: os.Getpid(), SockPath: r.paths.Socket, ClaudeSessionID: r.sessionID,
@@ -321,7 +322,7 @@ func (r *claudeStructuredRunner) runTurn(text string) {
 		Model: codexArgValue(r.cfg.args, "--model", "-m"), ExtraArgs: r.cfg.args,
 	})
 	if err != nil {
-		r.recordTurnFailure(err)
+		r.recordTurnFailure(structuredProfileLoginHint(err, r.cfg.profile))
 		return
 	}
 	completed := false
@@ -337,9 +338,16 @@ func (r *claudeStructuredRunner) runTurn(text string) {
 		r.appendStructured(event.Raw)
 	}
 	_, err = stream.Result(r.ctx)
-	if err != nil && !errors.Is(err, context.Canceled) && !completed {
-		r.recordTurnFailure(err)
+	if err != nil && !errors.Is(err, context.Canceled) && (!completed || r.cfg.profile != "") {
+		r.recordTurnFailure(structuredProfileLoginHint(err, r.cfg.profile))
 	}
+}
+
+func structuredProfileLoginHint(err error, profile string) error {
+	if err == nil || profile == "" {
+		return err
+	}
+	return fmt.Errorf("%w; new profile: open a regular PTY session with --profile %s once to log in", err, profile)
 }
 
 func (r *claudeStructuredRunner) recordTurnFailure(err error) {

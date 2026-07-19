@@ -28,11 +28,17 @@ const (
 // top-level help, and per-command help. Keep the daily path first.
 var commandTable = []commandSpec{
 	{
-		name: "new", usage: "new [--tool claude|codex|shell] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]",
+		name: "new", usage: "new [--tool claude|codex|shell] [--profile NAME] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]",
 		summary: "create an interactive session", group: dailyCommandGroup,
-		longHelp: "Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.",
-		examples: []string{"pretty new --tool claude --cwd ~/work", "pretty new --tool codex --name parser-fix --worktree", "pretty new --tool codex --name release-fix --worktree --base release", "pretty new --cmd /bin/zsh"},
+		longHelp: "Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --profile selects a private Claude or Codex login under Pretty's user state; first use opens the tool's own login flow. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.",
+		examples: []string{"pretty new --tool claude --profile work --cwd ~/work", "pretty new --tool codex --name parser-fix --worktree", "pretty new --tool codex --name release-fix --worktree --base release", "pretty new --cmd /bin/zsh"},
 		run:      (*app).cmdNew,
+	},
+	{
+		name: "profiles", usage: "profiles",
+		summary: "list Claude and Codex login profiles", group: dailyCommandGroup, localJSON: true,
+		longHelp: "List profile names, private config paths, active sessions, and last-use times. Pretty never reads or copies credentials and has no profile delete command; remove a profile manually only after reviewing the printed path.",
+		examples: []string{"pretty profiles", "pretty --json profiles"}, run: (*app).cmdProfiles,
 	},
 	{
 		name: "run", usage: "run [--name N] [--description PURPOSE] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>",

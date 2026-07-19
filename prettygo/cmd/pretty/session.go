@@ -21,6 +21,8 @@ type session struct {
 	Cmd               string          `json:"cmd"`
 	Args              []string        `json:"args"`
 	Cwd               string          `json:"cwd"`
+	Profile           string          `json:"profile,omitempty"`
+	ConfigDir         string          `json:"config_dir,omitempty"`
 	WorktreePath      string          `json:"worktree_path,omitempty"`
 	Branch            string          `json:"branch,omitempty"`
 	Base              string          `json:"base,omitempty"`
@@ -207,18 +209,26 @@ func (a *app) cmdLS(args []string) error {
 		_, err := io.WriteString(a.stdout, "(no sessions)\n")
 		return err
 	}
-	rows := [][]string{{"ID", "NAME", "DESC", "TOOL", "CWD", "STATE", "AGE", "LAST-USER", "PID"}}
+	showProfile := recordsHaveProfiles(records)
+	header := []string{"ID", "NAME", "DESC", "TOOL"}
+	if showProfile {
+		header = append(header, "PROFILE")
+	}
+	header = append(header, "CWD", "STATE", "AGE", "LAST-USER", "PID")
+	rows := [][]string{header}
 	for _, record := range records {
 		value := record.value
 		lastUser := "-"
 		if value.LastUserMessageAt != nil && *value.LastUserMessageAt != 0 {
 			lastUser = a.ageOf(*value.LastUserMessageAt)
 		}
-		rows = append(rows, []string{
-			prefixString(value.ID, 8), compactSessionName(value.Name), compactDescription(value.Description), toolOfSession(value),
-			strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value),
-			a.ageOf(value.CreatedAt), lastUser, strconv.Itoa(value.PID),
-		})
+		row := []string{prefixString(value.ID, 8), compactSessionName(value.Name), compactDescription(value.Description), toolOfSession(value)}
+		if showProfile {
+			row = append(row, compactProfile(value.Profile))
+		}
+		row = append(row, strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value),
+			a.ageOf(value.CreatedAt), lastUser, strconv.Itoa(value.PID))
+		rows = append(rows, row)
 	}
 	return writePaddedRows(a.stdout, rows)
 }

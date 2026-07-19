@@ -81,6 +81,8 @@ type Lane struct {
 	Name                     string                `json:"name,omitempty"`
 	Tool                     string                `json:"tool,omitempty"`
 	Cwd                      string                `json:"cwd,omitempty"`
+	Profile                  string                `json:"profile,omitempty"`
+	ConfigDir                string                `json:"config_dir,omitempty"`
 	ProviderUUID             string                `json:"providerUuid,omitempty"`
 	Class                    ledger.Class          `json:"class"`
 	Anomalies                []ledger.Anomaly      `json:"anomalies"`
@@ -216,6 +218,7 @@ func (e *Engine) Report(ctx context.Context) (Report, error) {
 		lane := classification.Lane
 		lanes = append(lanes, Lane{
 			ID: lane.LaneID, Name: lane.Name, Tool: lane.Tool, Cwd: lane.Cwd,
+			Profile: lane.Profile, ConfigDir: lane.ConfigDir,
 			ProviderUUID: lane.ProviderUUID, Class: classification.Class,
 			Anomalies:   append([]ledger.Anomaly{}, classification.Anomalies...),
 			CreatedAtMS: lane.CreatedAtMS, LastEventAtMS: lane.LastEventAtMS,
@@ -288,6 +291,7 @@ func externalSessionLane(info state.SessionInfo) ledger.LaneState {
 	provider, argv := ledger.SafeResumeRecipe(string(info.Tool), info.Cmd, info.Args)
 	return ledger.LaneState{
 		LaneID: info.ID, Name: info.Name, Tool: string(info.Tool), Cwd: info.Cwd,
+		Profile: info.Profile, ConfigDir: info.ConfigDir,
 		ProviderUUID: provider, ResumeArgv: argv, CreatedAtMS: info.CreatedAt,
 	}
 }
@@ -310,7 +314,9 @@ func (e *Engine) resumeSource(lane ledger.LaneState) (known, exists bool, path s
 	switch lane.Tool {
 	case string(state.ToolClaude):
 		root := e.options.ClaudeProjectsDir
-		if root == "" {
+		if lane.ConfigDir != "" {
+			root = filepath.Join(lane.ConfigDir, "projects")
+		} else if root == "" {
 			var err error
 			root, err = watch.ClaudeProjectsDir()
 			if err != nil {
@@ -324,9 +330,13 @@ func (e *Engine) resumeSource(lane ledger.LaneState) (known, exists bool, path s
 		info, err := os.Stat(resolution.Path)
 		return true, err == nil && info.Mode().IsRegular(), resolution.Path
 	case string(state.ToolCodex):
+		sessionsDir := e.options.CodexSessionsDir
+		if lane.ConfigDir != "" {
+			sessionsDir = filepath.Join(lane.ConfigDir, "sessions")
+		}
 		resolution := watch.ResolveCodexRolloutPath(watch.CodexResolveOptions{
 			CWD: lane.Cwd, Args: lane.ResumeArgv[1:],
-			CreatedAt: time.UnixMilli(lane.CreatedAtMS), SessionsDir: e.options.CodexSessionsDir,
+			CreatedAt: time.UnixMilli(lane.CreatedAtMS), SessionsDir: sessionsDir,
 		})
 		if resolution.Path == "" {
 			return true, false, ""

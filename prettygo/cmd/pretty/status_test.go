@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -20,6 +21,36 @@ import (
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
+
+func TestStatusJSONCarriesProfileAndConfigDir(t *testing.T) {
+	root := t.TempDir()
+	const id = "23000000-0000-4000-8000-000000000001"
+	configDir := filepath.Join(root, "profiles", "claude", "work")
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/sessions":
+			_ = json.NewEncoder(response).Encode(map[string]any{"sessions": []any{map[string]any{
+				"id": id, "name": "profile status", "description": "", "cmd": "claude", "args": []string{},
+				"cwd": root, "profile": "work", "config_dir": configDir, "createdAt": int64(1), "lastDataAt": int64(1), "tool": "claude-code",
+			}}})
+		case "/api/sessions/" + id + "/verdict":
+			response.WriteHeader(http.StatusNotFound)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("HOME", root)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--host", server.URL, "--json", "status", id[:8]}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("status exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	var output map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil || output["profile"] != "work" || output["config_dir"] != configDir {
+		t.Fatalf("status profile output=%#v err=%v", output, err)
+	}
+}
 
 func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 	root := t.TempDir()
