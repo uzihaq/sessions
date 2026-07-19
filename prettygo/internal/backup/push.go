@@ -22,6 +22,7 @@ const defaultAPIBase = "https://api.somewhere.tech"
 
 type Options struct {
 	ConfigPath        string
+	KeyPath           string
 	RunnerStateDir    string
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
@@ -59,6 +60,9 @@ type ManifestEntry struct {
 }
 
 func NewPusher(options Options) *Pusher {
+	if options.KeyPath == "" {
+		options.KeyPath = keyPathForConfig(options.ConfigPath)
+	}
 	if options.APIBase == "" {
 		options.APIBase = defaultAPIBase
 	}
@@ -82,6 +86,13 @@ func (p *Pusher) Push(ctx context.Context, live []state.SessionInfo) (Result, er
 	token, err := ReadSomewhereToken(config.TokenPath)
 	if err != nil {
 		return Result{}, err
+	}
+	var encryptionKey []byte
+	if config.Encrypt {
+		encryptionKey, err = ReadKey(p.options.KeyPath)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	machine := sanitizeSegment(p.options.Machine)
 	if p.options.Machine == "" {
@@ -122,6 +133,9 @@ func (p *Pusher) Push(ctx context.Context, live []state.SessionInfo) (Result, er
 		remotePath := strings.Join([]string{
 			"pretty-sessions", machine, tool, sanitizeSegment(session.ID) + ".jsonl",
 		}, "/")
+		if config.Encrypt {
+			remotePath += ".enc"
+		}
 		manifest.Sessions[session.ID] = ManifestEntry{
 			Name: session.Name, CWD: session.CWD, Tool: tool,
 			LastActivityAt: lastActivity, Path: remotePath,
@@ -137,6 +151,12 @@ func (p *Pusher) Push(ctx context.Context, live []state.SessionInfo) (Result, er
 		if err != nil {
 			return result, p.saveProgress(config, err)
 		}
+		if config.Encrypt {
+			contents, err = Encrypt(encryptionKey, contents)
+			if err != nil {
+				return result, p.saveProgress(config, err)
+			}
+		}
 		if err := p.put(ctx, token, config.Project, remotePath, "application/octet-stream", contents); err != nil {
 			return result, p.saveProgress(config, err)
 		}
@@ -148,7 +168,16 @@ func (p *Pusher) Push(ctx context.Context, live []state.SessionInfo) (Result, er
 		return result, p.saveProgress(config, err)
 	}
 	result.ManifestPath = strings.Join([]string{"pretty-sessions", machine, "manifest.json"}, "/")
-	if err := p.put(ctx, token, config.Project, result.ManifestPath, "application/json", manifestBytes); err != nil {
+	manifestContentType := "application/json"
+	if config.Encrypt {
+		result.ManifestPath += ".enc"
+		manifestBytes, err = Encrypt(encryptionKey, manifestBytes)
+		if err != nil {
+			return result, p.saveProgress(config, err)
+		}
+		manifestContentType = "application/octet-stream"
+	}
+	if err := p.put(ctx, token, config.Project, result.ManifestPath, manifestContentType, manifestBytes); err != nil {
 		return result, p.saveProgress(config, err)
 	}
 	config.LastPushAt = result.PushedAt

@@ -222,10 +222,10 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty token"}, run: func(a *app, _ []string) error { return a.cmdToken() },
 	},
 	{
-		name: "backup", usage: "backup <enable|now|status> [options]",
+		name: "backup", usage: "backup <enable|now|status|decrypt> [options]",
 		summary: "configure and run session backups", group: adminCommandGroup, localJSON: true,
-		longHelp: "Enable scheduled backup storage, push a backup immediately, or show backup status. Enable requires --project and accepts --interval.",
-		examples: []string{"pretty backup enable --project my-project --interval 15m", "pretty backup now", "pretty --json backup status"}, run: (*app).cmdBackup,
+		longHelp: "Enable scheduled backup storage, push a backup immediately, show backup status, or decrypt an encrypted backup. Enable requires --project and accepts --interval and --encrypt.",
+		examples: []string{"pretty backup enable --project my-project --interval 15m --encrypt", "pretty backup now", "pretty backup decrypt transcript.jsonl.enc", "pretty --json backup status"}, run: (*app).cmdBackup,
 	},
 	{
 		name: "doctor", usage: "doctor",
