@@ -14,8 +14,10 @@ Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/la
 ## Orchestration / daily-use
 - **`pretty lanes/sessions --mine` (provenance)** — agents forget which lanes they spawned (context compaction) and leak them; querying the ledger instead of remembering fixes it. — shipped — PROMOTE: later (agent-builder audience)
 - **CLI fixes (`--` passthrough, complete `--help`, `run --wait`)** — real dogfood bugs: child commands lost their flags, half the commands were undiscoverable. — shipped — PROMOTE: no (table stakes)
-- **`pretty search`** — you can't find text in a chat once it scrolls off screen, though it's all on disk. Search should be a command. — BUILDING — PROMOTE: **yes** (obvious, universally-wanted)
-- **Lane `--description` (+ first-message fallback)** — at cleanup you can't tell WHY a lane exists → hard to know what's safe to kill. Give each lane a purpose. — BUILDING — PROMOTE: later
+- **`pretty search`** — you can't find text in a chat once it scrolls off screen, though it's all on disk. Search should be a command. — shipped (exact substring/regex) — PROMOTE: **yes** (obvious, universally-wanted)
+- **`pretty search --ranked` (FTS5)** — exact substring is precise but dumb; ranked recall (BM25 + stemming email/emails + phrase/boolean) is what "smart search" feels like, at ~zero cost (modernc sqlite ships FTS5). Kept opt-in so the exact-substring default that finds punctuation literals like `{{first_name}}` is never lost. — shipped 2026-07-18 — PROMOTE: **yes**
+- **Lane `--description` (+ first-message fallback)** — at cleanup you can't tell WHY a lane exists → hard to know what's safe to kill. Give each lane a purpose. — shipped — PROMOTE: later
+- **Remote UX: daemon UI auto-adopts its own origin** — over Tailscale the daemon serves its own UI at a non-8787 origin; the UI used to force manual endpoint entry. Now it health-probes the origin and, if it IS prettyd, asks only for a token. Doubles as the STRONGER security posture (same-origin UI, not mutable hosted JS — see Remote security below). — shipped 2026-07-18 — PROMOTE: **yes**
 
 ## Distribution
 - **Hosted onboarding site (pretty-pty.somewhere.site)** — the "what we never do" trust contract + guided setup. — live — PROMOTE: yes
@@ -30,5 +32,13 @@ Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/la
 ## Search roadmap (added 2026-07-17, user-requested)
 - **`pretty search` (keyword, one daemon)** — you can't find text once it scrolls off. — building — PROMOTE: yes
 - **Central / fleet search (keyword, all machines)** — one search across mini + MacBook + VMs; fan `/api/search` across configured daemons + merge. The "central place to search." — roadmap — PROMOTE: yes
-- **FTS5 ranked search (NO model — recommended stop)** — SQLite full-text search (already have SQLite): BM25 relevance ranking + stemming (email/emails, personalize/personalization) + phrase/boolean. This is what "smart search" feels like for personal recall, at ~zero added cost. Do this AFTER substring; likely sufficient. — roadmap — PROMOTE: yes
+- **FTS5 ranked search (NO model — recommended stop)** — SQLite full-text search (already have SQLite): BM25 relevance ranking + stemming (email/emails, personalize/personalization) + phrase/boolean. This is what "smart search" feels like for personal recall, at ~zero added cost. Do this AFTER substring; likely sufficient. — **shipped 2026-07-18** (`--ranked`, opt-in) — PROMOTE: yes
+
+## Remote security (codex audit 2026-07-18 — decision record)
+Verdict: **keep Tailscale Serve as the only remote transport.** It's the best primitive (private reachability + E2E-encrypted transport + no Pretty data plane + tiny code), not the only one. Full analysis in scratchpad `remote-security-verdict.md`.
+- **The real trust gap is mutable hosted JS, not the network.** "No Pretty data plane" is true; "cryptographically impossible for us to see data" is NOT, while a mutable `pretty-pty.somewhere.site` build serves the UI. → Prefer the daemon-served **same-origin** UI for remote (shipped above). Signed/reproducible releases become the code-trust boundary later.
+- **Origin allowlist is NOT a second factor** — it only limits browser pages; doesn't stop curl or a leaked token. Don't market it as auth.
+- **`/api/health/deep` is unauthenticated** (leaks session IDs/PIDs/dims). Tailnet-only today = not urgent; MUST authenticate before any public ingress. — deferred (not chasing now)
+- **Token-hardening ladder (do BEFORE adding any new ingress):** one-time pairing tickets → per-device keys → short-lived session tokens → `pretty devices list/revoke` → no permanent token in WS URLs. — roadmap — PROMOTE: yes (never-a-shared-secret story)
+- **Don't build a custom relay; don't default Funnel.** If phone-VPN friction proves real, add opt-in Tailscale Funnel AFTER the token ladder — never on by default. — deferred
 - **Semantic search (LOCAL embeddings) — ONLY IF FTS proves insufficient in real use** — find by meaning with ZERO shared vocabulary. Genuinely narrower payoff than it sounds (you usually remember some words). If earned: LOCAL embedding model only (cloud embed API breaks "we never see your data"), opt-in, incremental, off critical path. Don't build speculatively (user steer: keep it simple). — deferred-until-needed — PROMOTE: yes if built (private semantic recall differentiator)
