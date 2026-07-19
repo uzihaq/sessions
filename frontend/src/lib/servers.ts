@@ -86,11 +86,15 @@ function writeActiveId(id: string | null): void {
 interface ServersStore {
   servers: ServerConfig[];
   activeId: string | null;
+  // Runtime-only auth state for an embedded same-origin daemon. This is not
+  // part of ServerConfig and is deliberately never persisted.
+  tokenRequiredServerId: string | null;
   addServer: (s: Omit<ServerConfig, 'id' | 'isDefault'>) => ServerConfig;
   removeServer: (id: string) => void;
   // Patch fields on an existing server (e.g. save a token entered after a
   // 401, or flip scheme). Persists to localStorage like the other mutators.
   updateServer: (id: string, updates: Partial<Omit<ServerConfig, 'id' | 'isDefault'>>) => void;
+  markTokenRequired: (id: string) => void;
   setActive: (id: string | null) => void;
   // Resolve the live config for the active server. Falls back to the
   // default if the saved active id no longer exists (e.g. user removed
@@ -110,6 +114,7 @@ const initial = (() => {
 export const useServers = create<ServersStore>((set, get) => ({
   servers: initial.servers,
   activeId: initial.activeId,
+  tokenRequiredServerId: null,
 
   addServer: (s) => {
     const next: ServerConfig = {
@@ -147,8 +152,16 @@ export const useServers = create<ServersStore>((set, get) => ({
         s.id === id ? { ...s, ...updates } : s
       );
       writeServers(servers);
-      return { servers };
+      const tokenRequiredServerId = state.tokenRequiredServerId === id && updates.token
+        ? null
+        : state.tokenRequiredServerId;
+      return { servers, tokenRequiredServerId };
     });
+  },
+
+  markTokenRequired: (id) => {
+    if (!get().servers.some((s) => s.id === id)) return;
+    set({ tokenRequiredServerId: id });
   },
 
   setActive: (id) => {
@@ -170,6 +183,78 @@ export const useServers = create<ServersStore>((set, get) => ({
       ?? null;
   }
 }));
+
+function currentOriginServer(): ServerConfig {
+  const scheme = window.location.protocol === 'https:' ? 'https' : 'http';
+  const port = window.location.port
+    ? Number(window.location.port)
+    : (scheme === 'https' ? 443 : 80);
+  return {
+    id: 'local',
+    name: 'This machine',
+    host: window.location.hostname,
+    port,
+    isDefault: true,
+    scheme
+  };
+}
+
+function hasStoredServerList(): boolean {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) !== null;
+  } catch {
+    // If storage cannot be inspected, preserve the existing picker behavior.
+    return true;
+  }
+}
+
+function isPrettydHealth(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const health = value as Record<string, unknown>;
+  return health.ok === true || typeof health.name === 'string';
+}
+
+// A non-8787 page may still be the UI served by prettyd itself (for example
+// its Tailscale HTTPS origin). With no saved configuration, probe that origin
+// and adopt it only when the response identifies a daemon. Static hosted
+// shells fall through unchanged when /api/health is absent or not prettyd.
+export async function bootstrapCurrentOriginServer(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (useServers.getState().servers.length > 0 || hasStoredServerList()) return;
+
+  // The existing 8787 embeddedServer() path remains the fast path and must
+  // never wait for a startup probe.
+  if (embeddedServer()) return;
+
+  let response: Response;
+  try {
+    response = await fetch(`${window.location.origin}/api/health`);
+  } catch {
+    return;
+  }
+
+  let tokenRequired = false;
+  if (response.status === 401) {
+    tokenRequired = true;
+  } else if (response.status === 200) {
+    try {
+      if (!isPrettydHealth(await response.json())) return;
+    } catch {
+      return;
+    }
+  } else {
+    return;
+  }
+
+  const server = currentOriginServer();
+  writeServers([server]);
+  writeActiveId(server.id);
+  useServers.setState({
+    servers: [server],
+    activeId: server.id,
+    tokenRequiredServerId: tokenRequired ? server.id : null
+  });
+}
 
 // Non-reactive accessor for use inside api/prettyd.ts and similar — those
 // functions are called per request, and reading the latest value out of

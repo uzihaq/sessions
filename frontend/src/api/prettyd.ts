@@ -1,5 +1,5 @@
 import type { CreateSessionRequest, SessionInfo, DirectoryCandidate } from '../types';
-import { getActiveServer, isLocalServer, type ServerConfig } from '../lib/servers';
+import { getActiveServer, isLocalServer, useServers, type ServerConfig } from '../lib/servers';
 import { isTauri } from '../lib/tauriBridge';
 
 // Thrown when the daemon returns HTTP 401 (token required / wrong token).
@@ -83,7 +83,12 @@ async function serverFetch(
     headers: { ...extra, ...(init?.headers as Record<string, string> | undefined) }
   };
   const res = await fetch(input, merged);
-  if (res.status === 401) throw new AuthError();
+  if (res.status === 401) {
+    if (server.isDefault && useSameOriginDaemon(server)) {
+      useServers.getState().markTokenRequired(server.id);
+    }
+    throw new AuthError();
+  }
   return res;
 }
 
