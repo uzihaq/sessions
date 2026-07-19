@@ -53,6 +53,12 @@ func TestSearchCLIForwardsFiltersAndGroupsHumanOutput(t *testing.T) {
 	if stdout.String() != want {
 		t.Fatalf("stdout=%q want=%q", stdout.String(), want)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"--host", server.URL, "search", "emails", "--ranked"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 0 || stderr.Len() != 0 || !mapsEqual(received, map[string]string{"q": "emails", "ranked": "1"}) {
+		t.Fatalf("ranked exit=%d query=%#v stdout=%q stderr=%q", code, received, stdout.String(), stderr.String())
+	}
 }
 
 func TestSearchCLIJSONShapeAndValidation(t *testing.T) {
@@ -75,6 +81,7 @@ func TestSearchCLIJSONShapeAndValidation(t *testing.T) {
 	for _, args := range [][]string{
 		{"search"}, {"search", "x", "--role", "tool"}, {"search", "x", "--tool", "terminal"},
 		{"search", "x", "-n", "0"}, {"search", "x", "--session"}, {"search", "x", "--unknown"},
+		{"search", "x", "--ranked", "--regex"},
 	} {
 		stdout.Reset()
 		stderr.Reset()

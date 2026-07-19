@@ -84,10 +84,10 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty last 0123abcd", "pretty last 0123abcd --role assistant -n 1", "pretty --json last 0123abcd"}, run: (*app).cmdLastDispatch,
 	},
 	{
-		name: "search", usage: "search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex] [--json]",
+		name: "search", usage: "search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex | --ranked] [--json]",
 		summary: "search normalized session chat history", group: dailyCommandGroup, localJSON: true,
-		longHelp: "Search chat history across every live and persisted session known to the daemon. Matching is a case-insensitive substring by default; --regex uses a Go regular expression. Filters are evaluated by the daemon, so --host can search a remote Pretty instance.",
-		examples: []string{"pretty search 'migration plan'", "pretty search 'failed|timed out' --regex --role assistant", "pretty search needle --session 0123abcd --json"}, run: (*app).cmdSearch,
+		longHelp: "Search chat history across every live and persisted session known to the daemon. Matching is a case-insensitive substring by default; --regex uses a Go regular expression. --ranked opts into BM25-ranked, stemmed search with quoted phrases and AND/OR/NOT boolean operators, and cannot be combined with --regex. Filters are evaluated by the daemon, so --host can search a remote Pretty instance.",
+		examples: []string{"pretty search 'migration plan'", "pretty search 'failed|timed out' --regex --role assistant", `pretty search '"migration plan" OR rollback' --ranked`, "pretty search needle --session 0123abcd --json"}, run: (*app).cmdSearch,
 	},
 	{
 		name: "status", usage: "status <id>",

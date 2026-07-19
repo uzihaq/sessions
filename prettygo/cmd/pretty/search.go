@@ -17,6 +17,10 @@ func (a *app) cmdSearch(args []string) error {
 	queryText := args[0]
 	args = args[1:]
 	regex := removeFirst(&args, "--regex")
+	ranked := removeFirst(&args, "--ranked")
+	if ranked && regex {
+		return fail(1, "--ranked cannot combine with --regex")
+	}
 	sessionID, hasSession := pluck(&args, "--session")
 	role, hasRole := pluck(&args, "--role")
 	tool, hasTool := pluck(&args, "--tool")
@@ -57,6 +61,9 @@ func (a *app) cmdSearch(args []string) error {
 	if regex {
 		parameters.Set("regex", "true")
 	}
+	if ranked {
+		parameters.Set("ranked", "1")
+	}
 	if hasLimit {
 		parameters.Set("limit", strconv.Itoa(limit))
 	}
@@ -94,5 +101,5 @@ func (a *app) cmdSearch(args []string) error {
 }
 
 func searchUsage() error {
-	return fail(1, "usage: pretty search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex] [--json]")
+	return fail(1, "usage: pretty search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex | --ranked] [--json]")
 }

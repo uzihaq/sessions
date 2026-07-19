@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	historysearch "github.com/uzihaq/pretty-pty/prettygo/internal/search"
@@ -20,7 +21,12 @@ func (s *Server) handleSearchRoute(response http.ResponseWriter, request *http.R
 		s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
 		return true
 	}
-	result, err := historysearch.Run(request.Context(), s.integrationEndpoints, s.registry.List(true), options)
+	indexRoot := s.config.UserStateRoot
+	if indexRoot == "" {
+		indexRoot = s.config.StateRoot
+	}
+	indexPath := filepath.Join(indexRoot, "search-index.db")
+	result, err := historysearch.Run(request.Context(), s.integrationEndpoints, s.registry.List(true), options, indexPath)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if historysearch.IsOptionError(err) {
@@ -45,6 +51,13 @@ func searchOptions(request *http.Request) (historysearch.Options, error) {
 			return historysearch.Options{}, &searchQueryError{message: "regex must be true or false"}
 		}
 		options.Regex = value
+	}
+	if raw := query.Get("ranked"); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return historysearch.Options{}, &searchQueryError{message: "ranked must be true or false"}
+		}
+		options.Ranked = value
 	}
 	if raw := query.Get("limit"); raw != "" {
 		value, err := strconv.Atoi(raw)
