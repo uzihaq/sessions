@@ -30,6 +30,7 @@ type Config struct {
 	RunnerStateDir  string
 	TokenPath       string
 	OpenPath        string
+	SettingsPath    string
 	LaunchAgentsDir string
 	GlobalHooksPath string
 	WebDir          string
@@ -86,6 +87,7 @@ func ConfigFromEnv() (Config, error) {
 		RunnerStateDir:  runnerDir,
 		TokenPath:       filepath.Join(stateRoot, "token"),
 		OpenPath:        filepath.Join(stateRoot, "open"),
+		SettingsPath:    filepath.Join(userStateRoot, "settings.json"),
 		LaunchAgentsDir: filepath.Join(home, "Library", "LaunchAgents"),
 		GlobalHooksPath: filepath.Join(home, ".config", "pretty", "hooks.json"),
 		WebDir:          webDir,

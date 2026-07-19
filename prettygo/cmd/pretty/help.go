@@ -204,6 +204,12 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty deploy", "pretty deploy --repo ~/src/pretty-PTY --no-pull", "pretty deploy --dry-run"}, run: (*app).cmdDeploy,
 	},
 	{
+		name: "lan", usage: "lan <enable|disable|status>",
+		summary: "manage same-network access", group: adminCommandGroup, localJSON: true,
+		longHelp: "Enable, disable, or inspect explicit HTTP access from other devices on the same Wi-Fi or Ethernet network. Protected routes still require the daemon token.",
+		examples: []string{"pretty lan enable", "pretty lan status", "pretty lan disable"}, run: (*app).cmdLan,
+	},
+	{
 		name: "remote", usage: "remote <enable|disable|status>",
 		summary: "manage tailnet-only remote access", group: adminCommandGroup, localJSON: true,
 		longHelp: "Enable, disable, or inspect the Tailscale Serve HTTPS endpoint used for Pretty remote access.",
