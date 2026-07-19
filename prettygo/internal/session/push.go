@@ -53,6 +53,12 @@ func NewPushService(stateRoot string) *PushService {
 
 func (p *PushService) SetHTTPClient(client webpush.HTTPClient) { p.httpClient = client }
 
+func (p *PushService) HasSubscriptions() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.loadSubscriptionsLocked()) > 0
+}
+
 func (p *PushService) VAPIDPublicKey() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -96,8 +102,12 @@ func (p *PushService) RemoveSubscription(endpoint string) error {
 
 func (p *PushService) Send(ctx context.Context, payload PushPayload) {
 	p.mu.Lock()
-	keys, err := p.vapidKeysLocked()
 	subscriptions := p.loadSubscriptionsLocked()
+	if len(subscriptions) == 0 {
+		p.mu.Unlock()
+		return
+	}
+	keys, err := p.vapidKeysLocked()
 	p.mu.Unlock()
 	if err != nil {
 		return

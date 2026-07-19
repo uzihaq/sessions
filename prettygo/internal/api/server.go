@@ -156,6 +156,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if s.handleLANRoute(response, request, corsOrigin) {
 		return
 	}
+	if s.handleNotifyRoute(response, request, corsOrigin) {
+		return
+	}
 	if s.handlePairRoutes(response, request, corsOrigin) {
 		return
 	}

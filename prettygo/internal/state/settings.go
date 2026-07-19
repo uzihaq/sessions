@@ -6,13 +6,71 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
+
+const (
+	NotifyDone    = "done"
+	NotifyWaiting = "waiting"
+	NotifyLost    = "lost"
+)
+
+var settingsMu sync.Mutex
+
+type NotifySettings struct {
+	Done    bool `json:"done"`
+	Waiting bool `json:"waiting"`
+	Lost    bool `json:"lost"`
+}
+
+func DefaultNotifySettings() NotifySettings {
+	return NotifySettings{Done: true, Waiting: true, Lost: true}
+}
+
+func (n NotifySettings) Enabled(kind string) bool {
+	switch kind {
+	case NotifyDone:
+		return n.Done
+	case NotifyWaiting:
+		return n.Waiting
+	case NotifyLost:
+		return n.Lost
+	default:
+		return false
+	}
+}
+
+func (n *NotifySettings) Set(kind string, enabled bool) error {
+	switch kind {
+	case "":
+		n.Done = enabled
+		n.Waiting = enabled
+		n.Lost = enabled
+	case NotifyDone:
+		n.Done = enabled
+	case NotifyWaiting:
+		n.Waiting = enabled
+	case NotifyLost:
+		n.Lost = enabled
+	default:
+		return fmt.Errorf("unknown notification kind %q; choose done, waiting, or lost", kind)
+	}
+	return nil
+}
 
 // Settings contains daemon choices which persist independently of runner
 // state. Additive fields keep this file easy to extend without changing its
 // location or format.
 type Settings struct {
-	LAN bool `json:"lan"`
+	LAN    bool            `json:"lan"`
+	Notify *NotifySettings `json:"notify,omitempty"`
+}
+
+func (s Settings) EffectiveNotify() NotifySettings {
+	if s.Notify == nil {
+		return DefaultNotifySettings()
+	}
+	return *s.Notify
 }
 
 func LoadSettings(path string) (Settings, error) {
@@ -59,4 +117,19 @@ func SaveSettings(path string, settings Settings) error {
 		return fmt.Errorf("replace settings: %w", err)
 	}
 	return nil
+}
+
+// UpdateSettings serializes read-modify-write callers which share the daemon's
+// settings file so independent settings sections are not accidentally erased.
+func UpdateSettings(path string, update func(*Settings) error) error {
+	settingsMu.Lock()
+	defer settingsMu.Unlock()
+	settings, err := LoadSettings(path)
+	if err != nil {
+		return err
+	}
+	if err := update(&settings); err != nil {
+		return err
+	}
+	return SaveSettings(path, settings)
 }

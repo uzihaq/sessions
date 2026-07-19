@@ -93,35 +93,9 @@ func (m *Manager) handleIdle(session *state.Session, duration time.Duration) {
 		summary = mirrorTailSummary(snapshot)
 	}
 	hookContext := idleHookContext{Summary: summary, Outcome: classification.Outcome, DurationMS: duration.Milliseconds()}
-	label := sessionDisplayLabel(info)
-	title := "🟢 " + label + " — done"
-	body := summary
-	if body == "" {
-		body = "finished"
-	}
-	switch classification.Outcome {
-	case IdleBlocked:
-		title = "🟡 " + label + " — needs you"
-		body = firstNonempty(classification.Line, summary, "waiting for input")
-	case IdleError:
-		title = "🔴 " + label + " — hit an error"
-		body = firstNonempty(classification.Line, summary, "error detected")
-	}
 	m.writeIdleSentinel(info)
 	m.runHook(info.OnIdle, info, hookContext, false)
 	m.runHook(m.hooks.OnIdle, info, hookContext, true)
-	go m.push.Send(context.Background(), PushPayload{
-		Title: title, Body: body, Data: map[string]any{"sessionId": info.ID},
-	})
-}
-
-func firstNonempty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func (m *Manager) runHook(script string, info state.SessionInfo, hook idleHookContext, timeout bool) {

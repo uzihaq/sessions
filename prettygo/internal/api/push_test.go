@@ -34,6 +34,12 @@ type pushTestSubscription struct {
 	auth       []byte
 }
 
+type capturedPush struct {
+	method string
+	header http.Header
+	body   []byte
+}
+
 func TestPushRoutesPersistAndRemoveSubscriptions(t *testing.T) {
 	daemon := newTestDaemon(t)
 	vapid := serve(t, daemon.handler, http.MethodGet, "/api/push/vapid", nil, "127.0.0.1:1", nil)
@@ -64,6 +70,15 @@ func TestPushRoutesPersistAndRemoveSubscriptions(t *testing.T) {
 	if err != nil || !bytes.Contains(stored, []byte("push.example")) {
 		t.Fatalf("stored subscriptions=%s err=%v", stored, err)
 	}
+	statusResponse := serve(t, daemon.handler, http.MethodGet, "/api/notify", nil, "127.0.0.1:1", nil)
+	if statusResponse.Code != http.StatusOK {
+		t.Fatalf("notify status=%d body=%s", statusResponse.Code, statusResponse.Body.String())
+	}
+	var notificationStatus notifyState
+	decodeBody(t, statusResponse, &notificationStatus)
+	if !notificationStatus.Subscribed || !notificationStatus.Notify.Done || !notificationStatus.Notify.Waiting || !notificationStatus.Notify.Lost {
+		t.Fatalf("default notification status = %#v", notificationStatus)
+	}
 	removed := serve(t, daemon.handler, http.MethodPost, "/api/push/unsubscribe", bytes.NewBufferString(`{"endpoint":"https://push.example/subscription"}`), "127.0.0.1:1", nil)
 	if removed.Code != http.StatusOK {
 		t.Fatalf("unsubscribe status=%d body=%s", removed.Code, removed.Body.String())
@@ -74,68 +89,30 @@ func TestPushRoutesPersistAndRemoveSubscriptions(t *testing.T) {
 	}
 }
 
-func TestWorkingToIdleSendsEncryptedPushToMock(t *testing.T) {
-	type capturedPush struct {
-		method string
-		header http.Header
-		body   []byte
-	}
-	received := make(chan capturedPush, 1)
-	mock := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Errorf("read mock push body: %v", err)
-		}
-		received <- capturedPush{method: request.Method, header: request.Header.Clone(), body: body}
-		response.WriteHeader(http.StatusCreated)
-	}))
-	defer mock.Close()
-
-	config, launcher, manager := newPushTestManager(t)
+func TestStructuredTurnCompleteSendsExactlyOneEncryptedPush(t *testing.T) {
+	mock, received := newCapturedPushServer(t)
+	config, launcher, manager := newPushTestManagerWithTiming(t, 30*time.Millisecond, 60*time.Millisecond)
 	manager.Push().SetHTTPClient(mock.Client())
-	handler := New(config, manager, manager.Push())
-
-	vapid := serve(t, handler, http.MethodGet, "/api/push/vapid", nil, "127.0.0.1:1", nil)
-	if vapid.Code != http.StatusOK {
-		t.Fatalf("vapid status=%d body=%s", vapid.Code, vapid.Body.String())
-	}
-	var vapidBody map[string]string
-	decodeBody(t, vapid, &vapidBody)
-	if vapidBody["publicKey"] == "" {
-		t.Fatalf("vapid response = %#v", vapidBody)
-	}
-	assertMode(t, filepath.Join(config.UserStateRoot, "vapid.json"), 0o600)
-
 	subscription := validPushSubscription(t, mock.URL)
-	encodedSubscription, err := json.Marshal(subscription.value)
-	if err != nil {
+	if err := manager.Push().AddSubscription(subscription.value); err != nil {
 		t.Fatal(err)
-	}
-	subscribed := serve(t, handler, http.MethodPost, "/api/push/subscribe", bytes.NewReader(encodedSubscription), "127.0.0.1:1", nil)
-	if subscribed.Code != http.StatusOK {
-		t.Fatalf("subscribe status=%d body=%s", subscribed.Code, subscribed.Body.String())
 	}
 	assertMode(t, filepath.Join(config.UserStateRoot, "push-subscriptions.json"), 0o600)
 
 	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
-		Cmd: "/bin/sh", Cwd: config.DefaultCwd, Name: "encrypted edge",
+		Cmd: "codex", Cwd: config.DefaultCwd, Name: "encrypted turn", Kind: state.KindCodexAppServer,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case unexpected := <-received:
-		t.Fatalf("push sent without a working to idle edge: %#v", unexpected)
-	case <-time.After(3 * 10 * time.Millisecond):
-	}
-	const plaintextMarker = "AUTHPUSH_IDLE_PAYLOAD_MARKER"
-	launcher.Runner(created.ID).AddOutput(strings.Repeat("completed work ", 20) + "\n" + plaintextMarker + "\nAll checks passed\n")
+	const plaintextMarker = "AUTHPUSHIDLEPAYLOADMARKER"
+	emitCodexTurn(launcher.Runner(created.ID), "turn-1", plaintextMarker+" finished cleanly.")
 
 	var push capturedPush
 	select {
 	case push = <-received:
 	case <-time.After(2 * time.Second):
-		t.Fatal("mock endpoint did not receive the working to idle notification")
+		t.Fatal("mock endpoint did not receive the structured turn-complete notification")
 	}
 	if push.method != http.MethodPost {
 		t.Fatalf("push method = %q", push.method)
@@ -153,56 +130,150 @@ func TestWorkingToIdleSendsEncryptedPushToMock(t *testing.T) {
 		t.Fatalf("push body is not an encrypted payload: bytes=%d plaintext=%t", len(push.body), bytes.Contains(push.body, []byte(plaintextMarker)))
 	}
 	payload := decryptPushPayload(t, push.body, subscription)
-	if payload.Title != "🟢 encrypted edge — done" {
+	if payload.Title != "🟢 encrypted turn — done" || payload.Body != plaintextMarker+" finished cleanly." {
 		t.Fatalf("decrypted notification = %#v", payload)
+	}
+	select {
+	case duplicate := <-received:
+		t.Fatalf("structured completion double-fired: %#v", decryptPushPayload(t, duplicate.body, subscription))
+	case <-time.After(120 * time.Millisecond):
 	}
 }
 
-func TestWorkingToIdleNotificationShapes(t *testing.T) {
-	tests := []struct {
-		name       string
-		snapshot   string
-		wantPrefix string
-	}{
-		{name: "done", snapshot: "Implemented the change.\nAll checks passed.\n", wantPrefix: "🟢 done — done"},
-		{name: "blocked", snapshot: "The migration changes data.\nContinue? [y/N]\n", wantPrefix: "🟡 blocked — needs you"},
-		{name: "error", snapshot: "Traceback: request failed.\nFatal error: connection failed\n", wantPrefix: "🔴 error — hit an error"},
+func TestWorkingToIdleWaitsForSustainedThreshold(t *testing.T) {
+	mock, received := newCapturedPushServer(t)
+	config, launcher, manager := newPushTestManager(t)
+	manager.Push().SetHTTPClient(mock.Client())
+	subscription := validPushSubscription(t, mock.URL)
+	if err := manager.Push().AddSubscription(subscription.value); err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			bodies := make(chan []byte, 1)
-			mock := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-				body, err := io.ReadAll(request.Body)
-				if err != nil {
-					t.Errorf("read mock push body: %v", err)
-				}
-				bodies <- body
-				response.WriteHeader(http.StatusCreated)
-			}))
-			defer mock.Close()
-			config, launcher, manager := newPushTestManager(t)
-			manager.Push().SetHTTPClient(mock.Client())
-			subscription := validPushSubscription(t, mock.URL)
-			if err := manager.Push().AddSubscription(subscription.value); err != nil {
-				t.Fatal(err)
-			}
-			created, err := manager.Create(context.Background(), state.CreateSessionRequest{
-				Cmd: "/bin/sh", Cwd: config.DefaultCwd, Name: test.name,
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			launcher.Runner(created.ID).AddOutput(strings.Repeat("context ", 30) + "\n" + test.snapshot)
-			select {
-			case body := <-bodies:
-				notification := decryptPushPayload(t, body, subscription)
-				if notification.Title != test.wantPrefix {
-					t.Fatalf("notification title = %q, want %q", notification.Title, test.wantPrefix)
-				}
-			case <-time.After(2 * time.Second):
-				t.Fatal("working to idle notification was not observed")
-			}
-		})
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "/bin/sh", Cwd: config.DefaultCwd, Name: "waiting edge",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher.Runner(created.ID).AddOutput(strings.Repeat("completed work ", 50) + "\nWaiting for the next prompt\n")
+	select {
+	case early := <-received:
+		t.Fatalf("waiting push fired before the sustained threshold: %#v", early)
+	case <-time.After(35 * time.Millisecond):
+	}
+	select {
+	case push := <-received:
+		payload := decryptPushPayload(t, push.body, subscription)
+		if payload.Title != "🟡 waiting edge — waiting" {
+			t.Fatalf("waiting notification = %#v", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("working to idle notification was not observed after the sustained threshold")
+	}
+}
+
+func TestSessionNotificationCooldownCoalescesRapidCompletions(t *testing.T) {
+	mock, received := newCapturedPushServer(t)
+	config, launcher, manager := newPushTestManager(t)
+	manager.Push().SetHTTPClient(mock.Client())
+	subscription := validPushSubscription(t, mock.URL)
+	if err := manager.Push().AddSubscription(subscription.value); err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "codex", Cwd: config.DefaultCwd, Name: "cooldown", Kind: state.KindCodexAppServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := launcher.Runner(created.ID)
+	emitCodexTurn(runner, "turn-1", "first completion")
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first completion did not send")
+	}
+	emitCodexTurn(runner, "turn-2", "latest completion")
+	select {
+	case duplicate := <-received:
+		t.Fatalf("rapid completion bypassed the cooldown: %#v", duplicate)
+	case <-time.After(120 * time.Millisecond):
+	}
+}
+
+func TestNotifyTogglesSuppressAndPreservePerKind(t *testing.T) {
+	mock, received := newCapturedPushServer(t)
+	config, launcher, manager := newPushTestManager(t)
+	manager.Push().SetHTTPClient(mock.Client())
+	handler := New(config, manager, manager.Push())
+	subscription := validPushSubscription(t, mock.URL)
+	if err := manager.Push().AddSubscription(subscription.value); err != nil {
+		t.Fatal(err)
+	}
+	off := serve(t, handler, http.MethodPost, "/api/notify", bytes.NewBufferString(`{"enabled":false}`), "127.0.0.1:1", nil)
+	if off.Code != http.StatusOK {
+		t.Fatalf("notify off status=%d body=%s", off.Code, off.Body.String())
+	}
+	muted, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "codex", Cwd: config.DefaultCwd, Name: "muted", Kind: state.KindCodexAppServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitCodexTurn(launcher.Runner(muted.ID), "muted-turn", "must not send")
+	select {
+	case unexpected := <-received:
+		t.Fatalf("notify off did not suppress completion: %#v", unexpected)
+	case <-time.After(80 * time.Millisecond):
+	}
+	onDone := serve(t, handler, http.MethodPost, "/api/notify", bytes.NewBufferString(`{"enabled":true,"kind":"done"}`), "127.0.0.1:1", nil)
+	if onDone.Code != http.StatusOK {
+		t.Fatalf("notify done on status=%d body=%s", onDone.Code, onDone.Body.String())
+	}
+	var status notifyState
+	decodeBody(t, onDone, &status)
+	if !status.Notify.Done || status.Notify.Waiting || status.Notify.Lost || !status.Subscribed {
+		t.Fatalf("per-kind notification state = %#v", status)
+	}
+	enabled, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "codex", Cwd: config.DefaultCwd, Name: "enabled", Kind: state.KindCodexAppServer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	emitCodexTurn(launcher.Runner(enabled.ID), "enabled-turn", "done is enabled")
+	select {
+	case push := <-received:
+		if payload := decryptPushPayload(t, push.body, subscription); payload.Title != "🟢 enabled — done" {
+			t.Fatalf("enabled per-kind notification = %#v", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("per-kind done toggle did not enable completion push")
+	}
+}
+
+func TestRunnerLostSendsEncryptedRecoveryPush(t *testing.T) {
+	mock, received := newCapturedPushServer(t)
+	config, launcher, manager := newPushTestManager(t)
+	manager.Push().SetHTTPClient(mock.Client())
+	subscription := validPushSubscription(t, mock.URL)
+	if err := manager.Push().AddSubscription(subscription.value); err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.Create(context.Background(), state.CreateSessionRequest{
+		Cmd: "/bin/sh", Cwd: config.DefaultCwd, Name: "lost work",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	launcher.Runner(created.ID).Emit(proto.Event{Kind: proto.EventRunnerLost, Exit: proto.ExitEvent{Reason: "runner-lost"}})
+	select {
+	case push := <-received:
+		payload := decryptPushPayload(t, push.body, subscription)
+		if payload.Title != "🔴 lost work — lost (pretty recover)" {
+			t.Fatalf("lost notification = %#v", payload)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner_lost did not send a recovery notification")
 	}
 }
 
@@ -244,6 +315,11 @@ func TestLaneDeathSendsEncryptedPushToMock(t *testing.T) {
 
 func newPushTestManager(t *testing.T) (state.Config, *prototest.Launcher, *sessionruntime.Manager) {
 	t.Helper()
+	return newPushTestManagerWithTiming(t, 50*time.Millisecond, 250*time.Millisecond)
+}
+
+func newPushTestManagerWithTiming(t *testing.T, waitingDelay, cooldown time.Duration) (state.Config, *prototest.Launcher, *sessionruntime.Manager) {
+	t.Helper()
 	root := t.TempDir()
 	config := state.Config{
 		Host: "127.0.0.1", Port: 0,
@@ -258,9 +334,38 @@ func newPushTestManager(t *testing.T) (state.Config, *prototest.Launcher, *sessi
 	launcher := prototest.NewLauncher()
 	manager := sessionruntime.NewManager(config, launcher, sessionruntime.ManagerOptions{
 		DisableWatchers: true, ActivityInterval: 10 * time.Millisecond,
+		NotifyWaitingDelay: waitingDelay, NotifyCooldown: cooldown,
 	})
 	t.Cleanup(manager.Close)
 	return config, launcher, manager
+}
+
+func newCapturedPushServer(t *testing.T) (*httptest.Server, <-chan capturedPush) {
+	t.Helper()
+	received := make(chan capturedPush, 8)
+	mock := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Errorf("read mock push body: %v", err)
+		}
+		received <- capturedPush{method: request.Method, header: request.Header.Clone(), body: body}
+		response.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(mock.Close)
+	return mock, received
+}
+
+func emitCodexTurn(runner *prototest.Runner, turnID, message string) {
+	runner.AddCodexEvent(map[string]any{
+		"type": "codex", "subtype": "turn_started", "source": "codex-app-server", "turnId": turnID,
+	})
+	runner.AddCodexEvent(map[string]any{
+		"type": "assistant", "subtype": "item_completed", "source": "codex-app-server", "turnId": turnID,
+		"message": map[string]any{"role": "assistant", "content": []map[string]any{{"type": "text", "text": message}}},
+	})
+	runner.AddCodexEvent(map[string]any{
+		"type": "codex", "subtype": "turn_completed", "source": "codex-app-server", "turnId": turnID,
+	})
 }
 
 func validPushSubscription(t *testing.T, endpoint string) pushTestSubscription {

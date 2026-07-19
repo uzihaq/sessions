@@ -206,7 +206,7 @@ func FinalAssistantSummary(events []json.RawMessage) string {
 			continue
 		}
 		text := assistantContent(message["content"])
-		if summary := conciseText(text, 100); summary != "" {
+		if summary := conciseText(text, 120); summary != "" {
 			return summary
 		}
 	}

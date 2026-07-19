@@ -21,6 +21,11 @@ func TestLANListenerLifecycleAndAuth(t *testing.T) {
 	daemon := newTestDaemon(t)
 	daemon.config.UserStateRoot = daemon.config.StateRoot
 	daemon.config.SettingsPath = daemon.config.StateRoot + "/settings.json"
+	notify := state.DefaultNotifySettings()
+	notify.Waiting = false
+	if err := state.SaveSettings(daemon.config.SettingsPath, state.Settings{Notify: &notify}); err != nil {
+		t.Fatal(err)
+	}
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +48,7 @@ func TestLANListenerLifecycleAndAuth(t *testing.T) {
 		t.Fatalf("enabled state = %#v", current)
 	}
 	settings, err := state.LoadSettings(daemon.config.SettingsPath)
-	if err != nil || !settings.LAN {
+	if err != nil || !settings.LAN || settings.EffectiveNotify().Waiting {
 		t.Fatalf("persisted settings after enable = %#v, %v", settings, err)
 	}
 
@@ -104,7 +109,7 @@ func TestLANListenerLifecycleAndAuth(t *testing.T) {
 		t.Fatalf("LAN listener still accepted a connection after disable: HTTP %d", response.StatusCode)
 	}
 	settings, err = state.LoadSettings(daemon.config.SettingsPath)
-	if err != nil || settings.LAN {
+	if err != nil || settings.LAN || settings.EffectiveNotify().Waiting {
 		t.Fatalf("persisted settings after disable = %#v, %v", settings, err)
 	}
 }

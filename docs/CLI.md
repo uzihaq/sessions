@@ -52,6 +52,7 @@ Admin/operational:
   pair                     pair a device with one QR scan
   devices                  list or revoke paired devices
   lan                      manage same-network access
+  notify                   configure session push notifications
   remote                   manage tailnet-only remote access
   token                    print the daemon authentication token
   backup                   configure and run session backups
@@ -617,6 +618,25 @@ Examples:
   pretty lan enable
   pretty lan status
   pretty lan disable
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty notify`
+
+```text
+Usage:
+  pretty notify <status|on|off> [done|waiting|lost]
+
+configure session push notifications
+
+Inspect or toggle encrypted push notifications for structured turn completion, sustained waiting, and unexpectedly lost sessions. Omitting the kind from on or off changes all three kinds; delivery begins only after subscribing in the web UI.
+
+Examples:
+  pretty notify status
+  pretty notify off waiting
+  pretty notify on done
+  pretty --json notify status
 
 Global flags --json, --host, and --port must appear before the command.
 ```
