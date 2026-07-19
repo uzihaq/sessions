@@ -1,7 +1,7 @@
 # pretty-PTY
 
 pretty-PTY keeps Claude Code, Codex, shells, and other terminal programs alive
-behind a local web UI and CLI. Each session has its own supervised runner,
+behind Pretty.app, a local web UI, and a CLI. Each session has its own supervised runner,
 hosting either a PTY or a structured provider conversation, so work survives a
 daemon restart and can be reopened from another browser.
 
@@ -13,14 +13,19 @@ daemon restart and can be reopened from another browser.
   opt-in and goes directly over your Tailscale network.
 - **No default phone-home:** no Pretty account, analytics, telemetry, or relay.
   Opt-in backup, web push, and Tailscale use their configured services.
-- **Small distribution:** three `CGO_ENABLED=0` Go binaries plus the embedded
-  web UI. No Node, npm, native npm modules, or install script.
+- **Native package:** Pretty.app is the primary macOS distribution and keeps
+  its Go daemon and runner processes independent. The current early-access
+  install exposes the same three `CGO_ENABLED=0` binaries directly.
 - **Auditable:** source available under the [MIT license](LICENSE).
 
 Pretty does not replace Claude Code or Codex. Install and authenticate the
 agent CLI you want to run separately.
 
-## Install
+## Install (current early access)
+
+Pretty.app is being completed as the primary installer and updater. Until its
+v2 release gate is complete, the standalone Go package remains the honest
+early-access path:
 
 On Apple Silicon macOS:
 
@@ -88,6 +93,7 @@ Also useful: `pretty snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
 - [Source-derived codebase guide](docs/CODEBASE.md)
 - [Generated CLI reference](docs/CLI.md)
 - [Product rationale and decision log](docs/WHY.md)
+- [Native app package and lifetime contract](docs/NATIVE_APP.md)
 - [Current product and deployment state](STATE.md)
 
 ## Notifications and hooks
@@ -139,8 +145,8 @@ and the [runbooks](docs/RUNBOOKS.md).
 
 ## Development
 
-The Go port is in `prettygo/`; the TypeScript daemon remains the compatibility
-reference for protocols and state layout.
+The Go runtime is in `prettygo/`; Pretty.app is in `src-tauri/`. The TypeScript
+daemon remains only as mini-cutover and rollback evidence.
 
 ```sh
 make -C prettygo binaries

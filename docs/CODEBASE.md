@@ -6,9 +6,24 @@ each claim when behavior changes. Protocol compatibility requirements live in
 [`prettygo/CONTRACT/`](../prettygo/CONTRACT/), while deployment reality lives in
 [`STATE.md`](../STATE.md).
 
+## Native application
+
+`src-tauri/` is the primary macOS client and release package. It uses Tauri 2
+around the shared React build. `src-tauri/src/lib.rs` owns native window and
+tray behavior: scoped server/tool/session windows, persisted window geometry,
+and local status polling. The checked-in shell does not yet install or update
+the daemon; that v2 work must follow the lifetime and rollback contract in
+[`NATIVE_APP.md`](NATIVE_APP.md).
+
+The native process is a management plane, not the owner of session work. Its
+eventual installer may write and kickstart the per-user daemon service, but
+launchd owns that service afterward and independently supervised runners stay
+alive through app quits, daemon reloads, and app upgrades. Android follows the
+macOS release as a paired client and does not host the Go runtime.
+
 ## Process model
 
-Pretty ships three binaries. `prettyd` opens the ledger, restores discoverable
+The runtime ships three binaries. `prettyd` opens the ledger, restores discoverable
 runners, starts the API, and periodically rediscovers sessions
 (`prettygo/cmd/prettyd/main.go`). `runner` is the durable per-session process:
 it can own an interactive PTY, a pipe-backed headless lane, a Codex app-server

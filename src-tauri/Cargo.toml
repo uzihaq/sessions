@@ -1,17 +1,17 @@
 [package]
-name = "app"
+name = "pretty-app"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "Native client and release package for the Pretty local agent runtime"
+authors = ["Uzair Haq"]
+license = "MIT"
+repository = "https://github.com/uzihaq/pretty-PTY"
 edition = "2021"
 rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "app_lib"
+name = "pretty_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

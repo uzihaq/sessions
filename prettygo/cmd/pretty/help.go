@@ -210,10 +210,10 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty uninstall"}, run: (*app).cmdUninstall,
 	},
 	{
-		name: "deploy", usage: "deploy [--repo DIR] [--no-pull] [--dry-run]",
-		summary: "perform the canonical safe update", group: adminCommandGroup,
-		longHelp: "Update dependencies, build, smoke-test, restart, health-check, and verify runners. --no-pull skips git pull; --dry-run performs only non-mutating validation.",
-		examples: []string{"pretty deploy", "pretty deploy --repo ~/src/pretty-PTY --no-pull", "pretty deploy --dry-run"}, run: (*app).cmdDeploy,
+		name: "deploy", usage: "deploy",
+		summary: "explain the retired Node deploy path", group: adminCommandGroup,
+		longHelp: "The mutating Node-daemon deploy path is retired. Pretty.app is the macOS release and update vehicle; this command exits without changing files, services, or sessions and points operators to the current release documentation.",
+		examples: []string{"pretty deploy"}, run: (*app).cmdDeploy,
 	},
 	{
 		name: "pair", usage: "pair [--name NAME]",

@@ -1,13 +1,22 @@
-# Install pretty-PTY
+# Install Pretty
 
-Pretty ships as three static Go binaries:
+Pretty.app is the primary macOS package. Its bundled-runtime installer and
+updater are still under construction, so the current instructions below are
+for developers and early-access headless installs—not the finished consumer
+app. Do not use them to change the production mini.
+
+The standalone runtime ships as three static Go binaries:
 
 - `pretty` — CLI
 - `prettyd` — daemon and embedded web UI
 - `runner` — one long-lived PTY owner per session
 
 Keep all three in the same directory. Pretty uses that adjacency to locate the
-daemon and runner. Node, npm, and an npm install script are not required.
+daemon and runner. Node, npm, and the retired repository install script are not
+required.
+
+For local native-app development and the public release gate, use
+[`NATIVE_APP.md`](NATIVE_APP.md) and [`RELEASE.md`](RELEASE.md).
 
 ## Requirements
 
@@ -15,7 +24,7 @@ daemon and runner. Node, npm, and an npm install script are not required.
 - Claude Code and/or Codex installed separately if you plan to run those tools
 - Tailscale on both devices only if you enable early-access remote access
 
-## Homebrew on macOS
+## Early-access Homebrew install on macOS
 
 ```sh
 brew install uzihaq/tap/pretty
@@ -31,7 +40,7 @@ configured with `PRETTYD_DAEMON_LABEL`. The generated plist always includes
 the selected host/port and the absolute adjacent `runner` path. It does not
 install or modify Claude Code, Codex, or Tailscale.
 
-## Static archive
+## Early-access static archive
 
 Release assets use these names:
 

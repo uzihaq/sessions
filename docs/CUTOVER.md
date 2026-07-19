@@ -1,5 +1,9 @@
 # Node-to-Go daemon cutover
 
+> **Deferred:** do not run this procedure now. Ship and exercise Pretty.app on
+> macOS first. The production mini remains untouched until the user schedules
+> its first app install as a joint maintenance window.
+
 This runbook swaps only the daemon. Existing per-session runners stay alive and
 keep owning their PTYs. The cutover scripts are dry-run-only unless
 `--execute` is present, take a runner-count baseline, fail closed on a drop,

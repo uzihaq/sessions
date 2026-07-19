@@ -7,7 +7,8 @@
 ## How to rehydrate context (the durable-context contract)
 1. `AGENTS.md` (repo root) — the router: what pretty is, repo map, working rules, gate commands.
 2. `docs/WHY.md` — every feature's rationale + every decision this week, dated. The reasoning record.
-3. `docs/CODEBASE.md` + `docs/CLI.md` (generated) — the deep map + real command reference.
+3. `docs/NATIVE_APP.md` + `docs/CODEBASE.md` + `docs/CLI.md` (generated) — package contract,
+   deep map, and real command reference.
 4. somewhere project **pretty-pty** board — task `ROADMAP: pretty-PTY direction` carries dated STATUS
    comments; also PHILOSOPHY task, "Feature gaps" task, the EPICs. Read the newest ROADMAP comment first.
 5. `git log --oneline` — the week's work is legible commit-by-commit.
@@ -26,7 +27,7 @@ transfer needed — the durable record IS the handoff.
   verify **soak-d2 survives** → push → remove worktree + kill lane. Never merge on the lane's word alone.
 
 ## Current reality
-- Product = the Go rewrite on branch **`go-rewrite`** (HEAD d8bb068). MacBook = dev (launchd
+- Product = the Go runtime plus Pretty.app on branch **`go-rewrite`**. MacBook = dev (launchd
   `tech.pretty-pty.dev.daemon`, localhost:8787). Mac mini (100.86.76.84) = prod, still OLD node daemon,
   **UNTOUCHED** — cutover is a JOINT step, now planned as the mini's first Pretty.app install (see below).
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/pretty/sign-identity`;
@@ -43,7 +44,8 @@ before upload, recovery phrase) · **account profiles** (`--profile`, multi-logi
 CLAUDE_CONFIG_DIR/CODEX_HOME) · **`pretty new --worktree`** (+ worktrees list/clean) · **push
 notifications** (done/waiting/lost, `pretty notify`) · docs-from-source suite · teaching errors ·
 code-signing · **Pretty.app v1** (Tauri: menu-bar status, scoped windows, quit never kills sessions).
-Onboarding site refreshed + live (pretty-pty.somewhere.site). Preview shell at pretty-pty-preview.
+Onboarding site refreshed + live (pretty-pty.somewhere.site). The manual-entry preview shell is superseded,
+not a product surface.
 
 ## NEXT: Pretty.app v2 = the release vehicle (the immediate work)
 The app IS the product package. v2 makes "one update updates everything, nothing lost":
@@ -53,21 +55,23 @@ The app IS the product package. v2 makes "one update updates everything, nothing
    (APPLE_ID + app-specific password from appleid.apple.com, or App Store Connect API key). Required
    before anyone DOWNLOADS the app (vs building it). USER ACTION: create the app-specific password.
 4. Post-update health ritual as CODE: daemon back? sessions adopted? counts match pre-update? → then "updated".
-Then: **mini cutover = its first Pretty.app install** (Go daemon adopts node runners — interop-proven:
-`TestNodeRunnerUnderGoDaemonCutover`). Channels: MacBook dev → mini early-release (updates like a
-customer) → customers stable.
+**USER SEQUENCE LOCKED 2026-07-19:** ship the macOS app first, then build Android. Do not cut over the
+mini yet. Its later first Pretty.app install remains the joint Node-to-Go cutover (interop-proven by
+`TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
 
 ## Roadmap after v2 (see board + WHY.md)
-Central/fleet search · semantic search (local embeddings, only if FTS insufficient) · session sharing
-(after pairing ladder — its foundation now exists) · diff viewer (parked) · Android app (Tauri2 + FCM;
-push machinery ready) · always-on VM (the somewhere paid tier). Monetization: pretty FREE, paid = somewhere
-platform; pretty is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
+**Immediate after macOS ships:** Android app (Tauri2 paired client + FCM; push machinery ready). Later:
+central/fleet search · semantic search (local embeddings, only if FTS insufficient) · session sharing
+(pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: pretty FREE,
+paid = somewhere platform; pretty is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
 
 ## OPEN USER DECISIONS (blockers only)
 1. **Product name** — "Somewhere Sessions" vs "pretty by Somewhere". Renames the app in one config line.
 2. **Public-build permission default** — keep skip-perms (owner default) vs constrain-by-default.
-3. **When to do the mini cutover** (joint; via the app per the plan above).
-4. **Notarization creds** (user creates the app-specific password when ready to distribute).
+3. **Notarization creds** (user creates the app-specific password when ready to distribute).
+
+The mini timing is not an open implementation question: no cutover now. Revisit jointly only after the
+macOS app ships.
 
 ## Build / run
 - Build (auto-signs): `cd prettygo && export PATH=$PATH:/opt/homebrew/bin && make binaries`

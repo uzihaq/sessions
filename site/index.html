@@ -410,16 +410,16 @@
 
   <section id="building">
     <p class="kicker">building next</p>
-    <h2>The local core is here.<br><em>The fleet is growing.</em></h2>
-    <p class="lead">These are active directions, not shipped promises. We are showing the sequence in public and keeping the local-first boundary intact.</p>
+    <h2>The local core is here.<br><em>The native app is next.</em></h2>
+    <p class="lead">The durable local runtime is shipped. The next release packages it as a native Mac app, then carries the paired client to Android.</p>
     <div class="roadmap">
-      <div class="roadmap-item"><span class="state">building</span><h3>Native windows</h3><p>A macOS menu-bar app first, Android with push next, and iOS later. The app stays a window onto the daemon; quitting it will not kill sessions.</p></div>
-      <div class="roadmap-item"><span class="state">building</span><h3>Push when you are needed</h3><p>Notifications for done, blocked, and error states — especially the moment an agent needs a decision — without keeping the session in front of you.</p></div>
-      <div class="roadmap-item"><span class="state">building</span><h3>One worktree per task</h3><p>Launch parallel agents with their own worktree and branch, then return to a clean view of what each task changed.</p></div>
-      <div class="roadmap-item"><span class="state">building</span><h3>One fleet, many machines</h3><p>Search and move work across your computers, then add an optional always-on VM through somewhere when local hardware should not be the ceiling.</p></div>
+      <div class="roadmap-item"><span class="state">shipping next</span><h3>Pretty.app for Mac</h3><p>The signed menu-bar shell and scoped windows are built. The release step bundles and safely updates the background Go service without ever owning session lifetime.</p></div>
+      <div class="roadmap-item"><span class="state">shipped</span><h3>Push when you are needed</h3><p>Done, waiting, and lost events already feed encrypted browser push. Android FCM delivery follows the shipped Mac app.</p></div>
+      <div class="roadmap-item"><span class="state">shipped</span><h3>One worktree per task</h3><p><code>pretty new --worktree</code> creates the branch and worktree; cleanup refuses live, dirty, or unmerged work.</p></div>
+      <div class="roadmap-item"><span class="state">later</span><h3>One fleet, many machines</h3><p>After the native clients: search and move work across your computers, then add an optional always-on VM through somewhere when local hardware should not be the ceiling.</p></div>
     </div>
     <p class="somewhere"><strong>pretty stays free.</strong> <a href="https://somewhere.tech">somewhere</a> is the platform behind it — the optional home for encrypted backup and, later, always-on compute. The local runtime does not require a cloud account.</p>
-    <p class="fine">Roadmap source: <code>docs/WHY.md</code>. Native apps, native push, worktree-per-task orchestration, and cross-machine fleet expansion are labeled building because they are not shipped yet.</p>
+    <p class="fine">Roadmap source: <code>docs/WHY.md</code>. Mac packaging is next; Android follows after the Mac app ships. The production mini is not being cut over yet.</p>
   </section>
 
   <footer>

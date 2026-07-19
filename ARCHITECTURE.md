@@ -1,80 +1,80 @@
-# pretty-PTY architecture
+# Pretty architecture
 
-pretty-PTY is a local PTY runtime with a browser UI and command-line client.
-The production distribution is three static Go binaries; the existing
-TypeScript daemon remains the normative compatibility reference during the
-interop-first migration.
+Pretty is a native client around a local, durable agent-session runtime. The
+macOS app is the primary package; the Go daemon, runner, and CLI remain separate
+processes inside that package so an app quit or update cannot destroy work.
 
-## Process model
+## Product and process model
 
 ```text
-browser / pretty CLI
-        |
-        | HTTP + multiplexed WebSocket
-        v
-prettyd (127.0.0.1:8787, embedded React UI)
-        |
-        | one Unix socket per session
-        v
-runner <id>  -> PTY -> claude / codex / shell / arbitrary command
-runner <id>  -> PTY -> ...
+Pretty.app / browser / pretty CLI
+              |
+              | local HTTP + multiplexed WebSocket
+              v
+           prettyd  (independent per-user launchd service)
+              |
+              | one Unix socket per session
+              v
+runner <id> -> structured provider / PTY / headless command
+runner <id> -> structured provider / PTY / headless command
 ```
 
-The roles are deliberately separate:
-
-| Binary | Lifetime | Responsibility |
+| Component | Lifetime | Responsibility |
 | --- | --- | --- |
-| `pretty` | one command | API client, orchestration, diagnostics, install and remote setup |
-| `prettyd` | background service | HTTP/WS, discovery, watchers, lane ledger, notifications, embedded UI |
-| `runner` | one per session | owns the PTY, terminal mirror, socket, replay log, and child process |
+| `Pretty.app` | user interface | Native windows, tray, install/update control, and health reporting |
+| `pretty` | one command | API client, orchestration, diagnostics, install, pairing, and remote setup |
+| `prettyd` | background service | HTTP/WS, discovery, session coordination, lane ledger, notifications, and embedded browser UI |
+| `runner` | one per session | Owns provider state or PTY, local socket, replay log, and child process |
 
-On macOS, `pretty install` registers `prettyd` as
-`tech.pretty-pty.daemon`. Each session is separately supervised under
-`tech.pretty-pty.runner.<id>`. Restarting the daemon does not terminate the PTY
-owners; the daemon discovers their sockets and reattaches. Session teardown is
-explicit and guarded against accidental mass removal.
+The app manages the installed runtime but does not own its lifetime. launchd
+owns the daemon, and each runner is supervised separately below it. Quitting or
+updating Pretty.app must leave both running. Replacing the daemon must preserve
+the live-runner baseline and let the new daemon rediscover every session before
+the update reports success.
 
-All production Go builds use `CGO_ENABLED=0`. The daemon embeds the built web
-UI, so end users do not need Node, npm, Vite, or a separate static-file server.
+The v1 Tauri 2 shell already provides tray status, persistent window geometry,
+and scoped windows. The v2 release gate bundles the three Go binaries, installs
+or upgrades the per-user daemon, rolls back failed upgrades, and adds a signed,
+notarized updater. See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md).
+
+All production Go builds use `CGO_ENABLED=0`. The daemon embeds the React UI,
+so the browser and native shells share one frontend and end users do not need
+Node, npm, Vite, or a separate static-file server.
 
 ## Compatibility boundary
 
-The TypeScript implementation in `prettyd/src/` defines the external contract:
-
-- HTTP routes and response shapes
-- WebSocket protocol and replay ordering
-- runner Unix-socket frame protocol
-- state directory and persistent event-log formats
-- launchd labels and plist behavior
-
-The Go daemon and runner preserve those contracts so either side can be swapped
-independently. Detailed executable contracts live in [`prettygo/CONTRACT/`](prettygo/CONTRACT/):
+The shipped Go implementation owns current product behavior. The retired
+TypeScript implementation in `prettyd/` is retained as protocol, rollback, and
+mini-cutover evidence until that later migration is complete. The stable
+external contracts are documented in [`prettygo/CONTRACT/`](prettygo/CONTRACT/):
 
 - [`http-api.md`](prettygo/CONTRACT/http-api.md)
 - [`ws.md`](prettygo/CONTRACT/ws.md)
 - [`runner-protocol.md`](prettygo/CONTRACT/runner-protocol.md)
 - [`state-dir.md`](prettygo/CONTRACT/state-dir.md)
 
-The React frontend talks to either daemon unchanged.
+The frontend continues to work against either daemon while the production mini
+remains on Node. New product work belongs in the Go runtime, React frontend, or
+Tauri client—not in the TypeScript daemon.
 
 ## Session lifecycle
 
-1. A browser or `pretty new` sends `POST /api/sessions`.
-2. Before launch, the daemon records the durable lane boundary when applicable.
+1. A client sends `POST /api/sessions`.
+2. Before launch, the daemon records durable creation intent in the lane ledger.
 3. The daemon writes a per-session launchd plist on macOS and starts `runner`.
-4. The runner spawns the requested program in a PTY, binds `<id>.sock`, and
-   writes metadata plus an append-only event log.
+4. The runner starts the selected session kind, binds `<id>.sock`, and persists
+   metadata plus an append-only event log.
 5. The daemon connects, receives `HELLO`, requests replay, and exposes the
    session over HTTP and WebSocket.
-6. Clients receive sequenced output and can reconnect from their last sequence.
-7. `pretty kill` records an explicit tombstone before terminating the selected
-   session. Unexpected loss remains visible to `pretty recover`.
+6. Clients reconnect from their last raw and structured sequence positions.
+7. `pretty kill` records an explicit tombstone before terminating only the
+   selected session. Unexpected loss remains visible to `pretty recover`.
 
-The terminal byte stream is the source of truth. Provider JSONL watchers add
-structured Claude/Codex conversation views and activity facts without making
-LLM calls or changing the underlying PTY stream.
+PTY sessions preserve terminal bytes. Structured Codex and Claude sessions use
+their provider event contracts as the authoritative history. Watchers add
+structured facts to legacy PTY sessions without making LLM calls.
 
-## Runner protocol
+## Runner and browser protocols
 
 Runner traffic uses length-prefixed binary frames over a Unix socket:
 
@@ -82,22 +82,15 @@ Runner traffic uses length-prefixed binary frames over a Unix socket:
 uint32-be frame length | uint8 type | payload
 ```
 
-Runner-to-daemon frames carry `HELLO`, sequenced `OUTPUT`, `EXIT`, snapshot
-responses, and replay completion. Daemon-to-runner frames carry input, resize,
-snapshot/replay requests, and explicit kill. Replay is ordered before live
-output, and sequence numbers let clients detect gaps.
+Runner-to-daemon frames carry `HELLO`, sequenced output or structured events,
+exit state, snapshots, and replay completion. Daemon-to-runner frames carry
+input, resize, snapshot/replay requests, and explicit kill. Replay is ordered
+before live traffic, and sequence numbers expose gaps.
 
-## Browser protocol
-
-The browser normally opens one multiplexed WebSocket at `/ws?mux=1`. It
-attaches only the sessions it needs, tags traffic by session ID, and can choose
-raw output replay, structured event replay, and live streams independently.
-
-The server emits per-session hello, output, structured provider events, gaps,
-exit, and runner-loss messages. The client reconnects with its last raw and
-structured sequence positions. A bounded in-memory daemon log provides fast
-replay; each runner's on-disk log provides the durable source after a daemon
-restart.
+The frontend normally opens one multiplexed WebSocket at `/ws?mux=1`. It
+attaches only the sessions it needs and can request raw replay, structured
+replay, and live streams independently. The daemon keeps a bounded in-memory
+window while the runner event log provides durable replay after daemon restart.
 
 ## State and recovery
 
@@ -106,10 +99,8 @@ The default runtime layout is:
 ```text
 ~/.local/state/pretty-PTY/
 ├── token
-├── open
-├── vapid.json
-├── push-subscriptions.json
-├── idle/<session-id>
+├── settings.json
+├── search-index.db
 ├── uploads/
 └── runners/
     ├── <id>.json
@@ -118,72 +109,60 @@ The default runtime layout is:
     └── <id>.log
 
 ~/Library/LaunchAgents/
-├── tech.pretty-pty.daemon.plist
+├── <configured-prettyd-label>.plist
 └── tech.pretty-pty.runner.<id>.plist
 
 ~/Library/Application Support/pretty-PTY/ledger/lanes.sqlite3
 ```
 
-`PRETTYD_STATE_DIR` relocates runner artifacts for interoperability and tests;
-safe isolation also sets a scratch `HOME` because auth, push, uploads, and idle
-state otherwise remain under the user's home. `PRETTY_LEDGER_PATH` separately
-relocates the append-only SQLite lane ledger.
+`PRETTYD_STATE_DIR` relocates runner and daemon state for interoperability and
+tests; isolated work also uses a scratch `HOME`. `PRETTY_LEDGER_PATH`
+separately relocates the append-only lane ledger.
 
 The ledger writes launch intent before process creation and a tombstone before
-requested termination. It distinguishes expected exits, explicitly closed
-lanes, external sessions, and unexpectedly lost lanes. `pretty recover` shows
-the plan; `pretty recover --reopen` is the explicit mutation.
+requested termination. It distinguishes live managed, closed, external, and
+unexpectedly lost lanes. `pretty recover` is read-only; `--reopen` is the
+explicit mutation.
 
 ## Security and trust boundaries
 
-- Default listener: `127.0.0.1:8787`.
-- Wildcard binds such as `0.0.0.0` and `::` are refused.
-- Protected HTTP routes use a bearer token; WebSockets use the same token in
-  the connection query.
-- Browser origins are restricted to loopback, the configured host, and the
-  published Pretty web origins.
-- Remote access is opt-in through Tailscale Serve. Pretty runs no relay.
-- Browser push is opt-in and stores subscriptions locally.
+- The default listener is `127.0.0.1:8787`; wildcard binds are refused.
+- Protected remote HTTP and WebSocket routes use bearer or paired-device
+  credentials.
+- Browser origins are restricted independently from API authentication.
+- Same-Wi-Fi and Tailscale access are opt-in. Pretty runs no relay.
+- Browser push and encrypted transcript backup are opt-in and locally
+  configured.
 - Pretty launches installed agent CLIs but contains no model client and makes
-  no LLM requests.
+  no model API requests.
+- Install and update code may never perform broad runner cleanup.
 
-Tailscale membership and the daemon token are security boundaries, not a
-replacement for host security. The remote flow also warns before requesting a
-publicly logged Tailscale HTTPS certificate.
+## Distribution sequence
 
-## Notifications and hooks
+1. Ship the signed and notarized macOS app with the bundled Go runtime and safe
+   updater.
+2. Build the Android paired client; it connects to a Mac daemon and does not run
+   the daemon or runners itself.
+3. Revisit the production mini only in a later joint maintenance window.
 
-The daemon observes working-to-idle transitions. It writes an idle sentinel,
-can deliver an approved browser push notification, and can execute:
-
-- a per-session `--on-idle` shell hook; and
-- a global `onIdle` hook from `~/.config/pretty/hooks.json`.
-
-Hooks receive session identity, cwd, tool, local outcome classification, final
-message summary, and duration through `PRETTY_*` environment variables. Global
-hooks have a 30-second limit; per-session hooks run detached.
-
-## Distribution
-
-`make -C prettygo binaries` builds the embedded frontend and cross-compiles:
-
-- macOS arm64
-- Linux arm64
-- Linux amd64
-
-Release archives keep `pretty`, `prettyd`, and `runner` adjacent. The Homebrew
-formula installs the same layout. `pretty install` currently automates launchd
-only; Linux binaries run directly or under a user-provided supervisor.
+Standalone Go archives and Homebrew remain secondary developer/headless
+channels. The retired Node deployment path is non-mutating.
 
 See [installation](docs/INSTALL.md), [release procedure](docs/RELEASE.md), and
-the concise [Go port constraints](prettygo/ARCHITECTURE.md).
+the [codebase guide](docs/CODEBASE.md).
 
 ## Verification
 
 ```sh
-cd prettygo && go test ./...
-node prettygo/parity/run.mjs
+cd prettygo
+GOFLAGS=-buildvcs=false go build ./...
+go vet ./...
+go test ./...
+cd ..
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+npm run tauri:build
 ```
 
-The parity harness uses separate ephemeral loopback ports, scratch homes, and a
-launchctl shim. It never needs the user's live daemon or runner state.
+Use scratch state for interoperability or install tests. None of these gates
+requires touching the production mini.

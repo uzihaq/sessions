@@ -1,6 +1,7 @@
-// Pretty.app is intentionally only a native window layer. It never starts,
-// stops, or owns prettyd or a runner, so quitting this process cannot affect
-// any durable session.
+// Pretty.app v1 is a native window and tray layer. The v2 lifecycle manager is
+// kept separate from this UI code: it may install or kickstart prettyd, but the
+// app process never owns prettyd or a runner, so quitting it cannot affect a
+// durable session.
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex, thread, time::Duration};

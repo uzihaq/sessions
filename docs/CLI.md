@@ -50,7 +50,7 @@ Models and interactive:
 Admin/operational:
   install                  install and start the development daemon
   uninstall                stop and remove the development daemon
-  deploy                   perform the canonical safe update
+  deploy                   explain the retired Node deploy path
   pair                     pair a device with one QR scan
   devices                  list or revoke paired devices
   lan                      manage same-network access
@@ -593,16 +593,14 @@ Global flags --json, --host, and --port must appear before the command.
 
 ```text
 Usage:
-  pretty deploy [--repo DIR] [--no-pull] [--dry-run]
+  pretty deploy
 
-perform the canonical safe update
+explain the retired Node deploy path
 
-Update dependencies, build, smoke-test, restart, health-check, and verify runners. --no-pull skips git pull; --dry-run performs only non-mutating validation.
+The mutating Node-daemon deploy path is retired. Pretty.app is the macOS release and update vehicle; this command exits without changing files, services, or sessions and points operators to the current release documentation.
 
 Examples:
   pretty deploy
-  pretty deploy --repo ~/src/pretty-PTY --no-pull
-  pretty deploy --dry-run
 
 Global flags --json, --host, and --port must appear before the command.
 ```

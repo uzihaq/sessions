@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
-# Compatibility entry point for the canonical safe deploy.
-# Dependency installs, builds, smoke import, restart, and verification all live
-# in `pretty deploy` so this script cannot drift into an unsafe restart path.
-#
-# Usage:
-#   bash scripts/install.sh [--no-pull] [--dry-run]
-#
-# The script resolves its own location so it works regardless of the
-# directory you run it from.
-
 set -euo pipefail
 
-# ── Resolve repo root ──────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-CLI_SRC="$REPO_ROOT/prettyd/bin/pretty.cjs"
+cat >&2 <<'EOF'
+scripts/install.sh was retired with the Node-daemon deploy path; no changes were made.
 
-exec node "$CLI_SRC" deploy --repo "$REPO_ROOT" "$@"
+For local Pretty.app development, use:
+  npm run ship
+
+For the current standalone Go development daemon, install adjacent pretty,
+prettyd, and runner binaries and run:
+  pretty install
+
+Public app release and update work follows docs/RELEASE.md and
+docs/NATIVE_APP.md. The production mini must not be changed by this script.
+EOF
+exit 2
