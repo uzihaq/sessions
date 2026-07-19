@@ -25,13 +25,27 @@ Format: `FEATURE — WHY (the pain/decision) — [status] — PROMOTE: yes/no/la
 
 ## Distribution
 - **Hosted onboarding site (pretty-pty.somewhere.site)** — the "what we never do" trust contract + guided setup. — live — PROMOTE: yes
-- **Hosted app shell (drive-from-anywhere)** — built, NOT deployed (pending user go). — PROMOTE: yes when live
+- **Hosted app shell (drive-from-anywhere)** — deployed to pretty-pty-preview.somewhere.site 2026-07-18; manual endpoint/token UX REJECTED by user — superseded by QR pairing + native app. — PROMOTE: no (superseded)
+
+## Monetization & the somewhere funnel (decision 2026-07-18)
+- **pretty is FREE; monetization flows through the somewhere platform.** Give pretty away; the paid surface (e.g. the always-on VM, fleet phase 3) comes with a somewhere platform tier. pretty is TOP-OF-FUNNEL for somewhere — nearly every pretty user should learn about somewhere through using it (onboarding site, backup-to-somewhere, VM upsell are the natural touchpoints). Matches the market read (local core free everywhere; paid = hosted convenience/team) with our twist: the "cloud tier" IS the somewhere platform, not a pretty-specific relay. Never token markup; never a required cloud.
+
+## Backup ladder (user-requested 2026-07-18)
+- **`pretty backup` (to the user's OWN somewhere project)** — transcripts are the user's most valuable artifact and live on one disk; the daemon pushes them DIRECTLY to the user's own somewhere account (no relay, incremental, manifest). — **already shipped** (internal/backup, enable/now/status) — PROMOTE: yes (and it's a somewhere-funnel touchpoint)
+- **Client-side encrypted backup (`--encrypt`) — "maximum security"** — encrypt transcripts locally (age/X25519-style; key never leaves the machine; printed recovery phrase) BEFORE upload, so even the somewhere platform cannot read them. The backup story becomes "your history, backed up, unreadable by anyone but you." Local encrypt-at-rest can share the key machinery. — roadmap (next rung) — PROMOTE: **yes**
 
 ## Deferred (why we're NOT doing it yet)
 - **Customer-owned VM / Linux runner** — "much later" per user; needs systemd runner backend.
 - **JSON casing normalization** — the inconsistency is real but a broad rename breaks the frontend; not worth it now.
 - **Permission-default reversal** — codex says constrain-by-default for safety; user explicitly wants skip-perms for their trusted orchestration. PENDING USER DECISION for the public build.
 - **More fuzzing/guards** — every package is fuzzed; stop chasing invented edge cases (user steer 2026-07-17: keep life easy).
+
+## Competitive-gap roadmap (promoted by user 2026-07-18; research: board task "Feature gaps vs the field")
+- **Mobile push on blocked/done** — 6 competitors converged on it; most-wanted feature in the space, and most on-thesis for us (the ledger means you can walk away; push closes the loop). E2E-encrypted push machinery ALREADY in the daemon — remaining work is notify-event wiring + FCM delivery with the Android app. — roadmap — PROMOTE: **yes**
+- **`pretty new --worktree` (worktree-per-task)** — 5/5 orchestrators auto-create worktree+branch per session; we do it by hand for every codex lane. Ship our own workflow. — roadmap — PROMOTE: yes
+- **Diff viewer** — "agent done → what changed" shouldn't require leaving pretty. Cheap unified tier first; inline-comments-to-agent tier later. — roadmap — PROMOTE: later
+- **Prompt queuing** — park input typed mid-turn, deliver on completion (fixes our own documented can't-type pain). — roadmap — PROMOTE: later
+- **Session sharing** — deferred until after the QR-pairing/per-device-key ladder (its natural foundation).
 
 ## Search roadmap (added 2026-07-17, user-requested)
 - **`pretty search` (keyword, one daemon)** — you can't find text once it scrolls off. — building — PROMOTE: yes
