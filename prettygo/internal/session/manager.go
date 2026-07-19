@@ -255,6 +255,8 @@ func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSess
 		Name: prepared.Name, Description: prepared.Description,
 		DescriptionSource: ledger.DescriptionSource(prepared.DescriptionSource),
 		Tool:              string(prepared.Tool), Cwd: info.Cwd,
+		WorktreePath: prepared.WorktreePath, Branch: prepared.WorktreeBranch,
+		Base: prepared.WorktreeBase, SourceRepo: prepared.SourceRepo,
 		ResumeArgv: resumeArgv, LaneUUID: info.ID, ProviderUUID: providerUUID,
 		CreatorKind: creatorKind, CreatorID: creatorID,
 	}); err != nil {
@@ -480,6 +482,7 @@ func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionIn
 		info := state.SessionInfo{
 			ID: lane.LaneID, Name: lane.Name, Description: lane.Description,
 			DescriptionSource: string(lane.DescriptionSource), Cwd: lane.Cwd,
+			WorktreePath: lane.WorktreePath, Branch: lane.Branch, Base: lane.Base, SourceRepo: lane.SourceRepo,
 			CreatedAt: lane.CreatedAtMS, LastDataAt: lane.LastEventAtMS,
 			Tool: state.SessionTool(lane.Tool), Exited: true, ExitedAt: &exitedAt,
 			ExitCode: lane.ExitCode, ExitSignal: lane.ExitSignal,
@@ -525,6 +528,10 @@ func (m *Manager) withProvenance(ctx context.Context, infos []state.SessionInfo)
 		}
 		infos[index].CreatorKind = string(current.CreatorKind)
 		infos[index].CreatorID = current.CreatorID
+		infos[index].WorktreePath = current.WorktreePath
+		infos[index].Branch = current.Branch
+		infos[index].Base = current.Base
+		infos[index].SourceRepo = current.SourceRepo
 		if current.CreatorKind == ledger.CreatorSession {
 			infos[index].ParentSessionID = current.CreatorID
 		}
@@ -660,10 +667,35 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 		}
 	}
 
+	var preparedWorktree *createdWorktree
+	if request.Worktree {
+		if m.boundaries == nil || m.ledgerReader == nil {
+			return state.SessionInfo{}, errors.New("--worktree requires the Pretty ledger, but ledger access is unavailable; restore the daemon ledger and retry")
+		}
+		sourceCwd := request.Cwd
+		if strings.TrimSpace(sourceCwd) == "" {
+			sourceCwd = m.config.DefaultCwd
+		}
+		worktree, err := createGitWorktree(ctx, sourceCwd, request.Name, request.Base)
+		if err != nil {
+			return state.SessionInfo{}, err
+		}
+		request.Cwd = worktree.Path
+		request.WorktreePath = worktree.Path
+		request.WorktreeBranch = worktree.Branch
+		request.WorktreeBase = worktree.Base
+		request.SourceRepo = worktree.SourceRepo
+		preparedWorktree = &worktree
+	} else if strings.TrimSpace(request.Base) != "" {
+		return state.SessionInfo{}, errors.New("--base requires --worktree")
+	}
+
+	creationRecorded := false
 	beforeLaunch := func(ctx context.Context, prepared state.PreparedSession) error {
 		if err := m.recordCreated(ctx, prepared, creatorKind, creatorID); err != nil {
 			return err
 		}
+		creationRecorded = true
 		if takeover == nil {
 			return nil
 		}
@@ -683,6 +715,12 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 		RunnerReady:   m.recordRunnerReady,
 	})
 	if err != nil {
+		if preparedWorktree != nil && !creationRecorded {
+			if rollbackErr := rollbackCreatedGitWorktree(ctx, *preparedWorktree); rollbackErr != nil {
+				return state.SessionInfo{}, fmt.Errorf("%w; new worktree was preserved at %s because safe rollback was refused: %v",
+					err, preparedWorktree.Path, rollbackErr)
+			}
+		}
 		return state.SessionInfo{}, err
 	}
 	session, ok := m.registry.Get(info.ID)

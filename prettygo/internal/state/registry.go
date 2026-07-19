@@ -46,6 +46,10 @@ type PreparedSession struct {
 	Kind              string
 	SpecPath          string
 	Tool              SessionTool
+	WorktreePath      string
+	WorktreeBranch    string
+	WorktreeBase      string
+	SourceRepo        string
 }
 
 type SessionMetadata struct {
@@ -194,6 +198,8 @@ func (r *Registry) CreateWithLifecycle(
 	prepared := PreparedSession{
 		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Description: description,
 		DescriptionSource: descriptionSource, Kind: kind, SpecPath: specPath, Tool: tool,
+		WorktreePath: request.WorktreePath, WorktreeBranch: request.WorktreeBranch,
+		WorktreeBase: request.WorktreeBase, SourceRepo: request.SourceRepo,
 	}
 	if prepared.Name != "" {
 		launchRequest.Env["RUNNER_NAME"] = prepared.Name

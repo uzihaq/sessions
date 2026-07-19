@@ -98,6 +98,10 @@ type Created struct {
 	DescriptionSource DescriptionSource
 	Tool              string
 	Cwd               string
+	WorktreePath      string
+	Branch            string
+	Base              string
+	SourceRepo        string
 	ResumeArgv        []string
 	LaneUUID          string
 	ProviderUUID      string

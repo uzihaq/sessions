@@ -12,6 +12,10 @@ type LaneState struct {
 	DescriptionSource        DescriptionSource
 	Tool                     string
 	Cwd                      string
+	WorktreePath             string
+	Branch                   string
+	Base                     string
+	SourceRepo               string
 	ResumeArgv               []string
 	ProviderUUID             string
 	CreatorKind              CreatorKind
@@ -83,6 +87,10 @@ func Fold(events []Event) []LaneState {
 			state.DescriptionSource = payload.DescriptionSource
 			state.Tool = payload.Tool
 			state.Cwd = payload.Cwd
+			state.WorktreePath = payload.WorktreePath
+			state.Branch = payload.Branch
+			state.Base = payload.Base
+			state.SourceRepo = payload.SourceRepo
 			state.ResumeArgv = append([]string(nil), payload.ResumeArgv...)
 			state.ProviderUUID = payload.ProviderUUID
 			state.CreatorKind = payload.CreatorKind

@@ -18,6 +18,7 @@ Session ids may be full ids or unique prefixes from `pretty ls`.
 Daily workflows:
   new                      create an interactive session
   run                      run a command in a headless lane
+  worktrees                list or safely clean Pretty-created worktrees
   ls                       list sessions
   sessions                 list agent sessions and headless lanes
   lanes                    list headless lanes
@@ -72,15 +73,16 @@ Run `pretty help <command>` for usage, options, and examples.
 
 ```text
 Usage:
-  pretty new [--tool claude|codex|shell] [--cwd P] [--name L] [--description PURPOSE] [options] [args...]
+  pretty new [--tool claude|codex|shell] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]
 
 create an interactive session
 
-Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --description (alias --desc) records why the session exists. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.
+Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.
 
 Examples:
   pretty new --tool claude --cwd ~/work
-  pretty new --tool codex --model gpt-5-codex
+  pretty new --tool codex --name parser-fix --worktree
+  pretty new --tool codex --name release-fix --worktree --base release
   pretty new --cmd /bin/zsh
 
 Global flags --json, --host, and --port must appear before the command.
@@ -90,16 +92,35 @@ Global flags --json, --host, and --port must appear before the command.
 
 ```text
 Usage:
-  pretty run [--name N] [--description PURPOSE] [--cwd D] [--spec FILE] [--wait [--output]] -- <cmd args...>
+  pretty run [--name N] [--description PURPOSE] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>
 
 run a command in a headless lane
 
-Create a headless lane for the command following the first -- separator. --description (alias --desc) records why the lane exists. Every child argument after that separator is passed unchanged. Without --wait, print the lane id and return. --wait blocks for completion and propagates the child exit code; --output prints the captured output tail.
+Create a headless lane for the command following the first -- separator. --description (alias --desc) records why the lane exists. --worktree creates an isolated Pretty-owned worktree; it does not symlink node_modules. Every child argument after the separator is passed unchanged. Without --wait, print the lane id and return. --wait blocks for completion and propagates the child exit code; --output prints the captured output tail.
 
 Examples:
   pretty run -- make test
-  pretty run --name lint --wait --output -- npm run lint
+  pretty run --name lint --worktree --wait --output -- npm run lint
   pretty --json run --wait -- sh -c 'exit 3'
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty worktrees`
+
+```text
+Usage:
+  pretty worktrees [clean [--dry-run]]
+
+list or safely clean Pretty-created worktrees
+
+List worktrees recorded in Pretty's ledger with dirty, merge, and session state. clean removes only worktrees whose session has exited, whose tree is clean, and whose branch is fully merged into its recorded base; every other worktree is skipped with a reason. --dry-run shows the plan without mutation. There is no force option, and killing a session never cleans its worktree automatically.
+
+Examples:
+  pretty worktrees
+  pretty --json worktrees
+  pretty worktrees clean --dry-run
+  pretty worktrees clean
 
 Global flags --json, --host, and --port must appear before the command.
 ```
