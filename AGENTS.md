@@ -45,12 +45,12 @@ relevant source path; if prose and code disagree, the code wins.
 
 ## Build, test, and gate commands
 
-Run the documentation lane gate verbatim:
+Run the gate from your worktree's `prettygo/` directory:
 
 ```sh
-cd /Users/uzair/pretty-PTY-docs/prettygo && export PATH=$PATH:/opt/homebrew/bin
+cd <your-worktree>/prettygo && export PATH=$PATH:/opt/homebrew/bin
 go build ./... && go vet ./... && go test ./...
-bash scripts/gen-cli-docs.sh
+bash scripts/gen-cli-docs.sh   # when CLI surface or docs changed; output must be committed unchanged
 git diff --stat go-rewrite..HEAD
 ```
 
