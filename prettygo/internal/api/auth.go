@@ -86,7 +86,7 @@ func isLoopbackPeer(request *http.Request) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func allowedOrigin(origin, bindHost string) bool {
+func allowedOrigin(origin, bindHost string, additionalHosts ...string) bool {
 	if origin == "" {
 		return true
 	}
@@ -102,7 +102,15 @@ func allowedOrigin(origin, bindHost string) bool {
 	if hostname == "127.0.0.1" || hostname == "localhost" || hostname == "::1" {
 		return true
 	}
-	return strings.EqualFold(hostname, strings.Trim(bindHost, "[]"))
+	if strings.EqualFold(hostname, strings.Trim(bindHost, "[]")) {
+		return true
+	}
+	for _, host := range additionalHosts {
+		if host != "" && strings.EqualFold(hostname, strings.Trim(host, "[]")) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedOrigin(parsed *url.URL) string {

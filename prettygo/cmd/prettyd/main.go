@@ -49,6 +49,12 @@ func main() {
 	})
 	defer manager.Close()
 	handler := api.New(config, manager, manager.Push())
+	handler.RestoreLAN(log.Printf)
+	defer func() {
+		if err := handler.CloseLAN(); err != nil {
+			log.Printf("close LAN listener: %v", err)
+		}
+	}()
 	server := &http.Server{
 		Addr: config.ListenAddress(), Handler: handler,
 		ReadHeaderTimeout: 65 * time.Second,

@@ -36,6 +36,7 @@ type Server struct {
 	registry             sessionService
 	push                 pushService
 	tokens               tokenStore
+	lan                  *lanListener
 	backups              *backup.Service
 	integrationEndpoints *integrations.Service
 }
@@ -74,6 +75,7 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
 		}),
 	}
+	server.lan = newLANListener(config, server)
 	// Create the token while the daemon is starting, including when the open
 	// escape hatch is present. This keeps a fresh install secure without an
 	// inbound request and makes `pretty token` immediately useful. A failure
@@ -92,7 +94,7 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	path := request.URL.Path
 	origin := request.Header.Get("Origin")
 	corsOrigin := ""
-	if allowedOrigin(origin, s.config.Host) {
+	if allowedOrigin(origin, s.config.Host, s.lan.activeHost()) {
 		corsOrigin = origin
 	}
 
@@ -112,6 +114,7 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		s.sendJSON(response, http.StatusOK, map[string]any{
 			"ok": true, "name": "prettyd", "version": "0.1.0",
 			"listen":         map[string]any{"host": s.config.Host, "port": s.config.Port},
+			"lan":            s.lan.state(),
 			"discovering":    s.registry.IsDiscovering(),
 			"sessionsLoaded": len(s.registry.List(true)),
 		}, corsOrigin)
@@ -138,11 +141,14 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if path == "/ws" {
-		if !allowedOrigin(origin, s.config.Host) {
+		if !allowedOrigin(origin, s.config.Host, s.lan.activeHost()) {
 			s.sendJSON(response, http.StatusForbidden, map[string]any{"error": "forbidden origin"}, "")
 			return
 		}
 		s.serveWebSocket(response, request)
+		return
+	}
+	if s.handleLANRoute(response, request, corsOrigin) {
 		return
 	}
 	if path == "/api/push/vapid" && request.Method == http.MethodGet {

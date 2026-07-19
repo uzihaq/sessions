@@ -34,7 +34,7 @@ func TestConfigFromEnvParityAndScratchIsolation(t *testing.T) {
 	if config.RunnerPath != runner {
 		t.Fatalf("runner path = %q, want %q", config.RunnerPath, runner)
 	}
-	for _, path := range []string{config.TokenPath, config.OpenPath, config.LaunchAgentsDir, config.WebDir} {
+	for _, path := range []string{config.TokenPath, config.OpenPath, config.SettingsPath, config.LaunchAgentsDir, config.WebDir} {
 		if path == "" || !filepath.IsAbs(path) {
 			t.Errorf("path is not absolute: %q", path)
 		}
