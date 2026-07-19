@@ -67,6 +67,11 @@ peers bypass token authentication unless a forwarding header makes the peer
 ambiguous; non-loopback clients use the configured bearer or query token unless
 the explicit `open` sentinel enables the compatibility escape hatch
 (`prettygo/internal/api/auth.go`, `prettygo/internal/api/server.go`).
+QR pairing lives here too: single-use five-minute tickets are claimed by an
+unauthenticated, rate-limited `POST /api/pair/claim`, which mints per-device
+tokens stored as SHA-256 hashes with list/revoke management
+(`prettygo/internal/api/pair.go`); device tokens authorize anywhere the master
+token does.
 Browser-origin checks are a separate CORS and WebSocket boundary, not a second
 authentication factor.
 
@@ -76,7 +81,11 @@ authentication factor.
 somewhere credentials; its config records the token path rather than copying a
 token (`prettygo/internal/backup/config.go`, `prettygo/internal/backup/push.go`).
 Pushes are serialized, and scheduled work only runs when the feature is enabled
-(`prettygo/internal/backup/service.go`).
+(`prettygo/internal/backup/service.go`). With `--encrypt`, transcripts and the
+manifest are sealed locally with XChaCha20-Poly1305 before upload — the key
+stays on the machine (0600, recovery phrase printed once) so the destination
+can never read them; enabling encryption busts the incremental cache so prior
+plaintext re-uploads encrypted (`prettygo/internal/backup/encrypt.go`).
 
 ### `claudep`
 
