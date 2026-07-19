@@ -16,6 +16,7 @@ import {
   writeNewSessionDefaults
 } from '../lib/newSessionDefaults';
 import { ServerSelector } from './ServerSelector';
+import { claimCurrentOriginPairing } from '../lib/hostedBootstrap';
 
 interface Props {
   textSize: TextSize;
@@ -78,6 +79,9 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
   const [pushEnabled, setPushEnabled] = useState(readPushEnabled);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
+  const [pairTicket, setPairTicket] = useState('');
+  const [pairBusy, setPairBusy] = useState(false);
+  const [pairMessage, setPairMessage] = useState<string | null>(null);
   const [sessionDefaults, setSessionDefaults] = useState<NewSessionDefaults>(readNewSessionDefaults);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -195,6 +199,21 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
       setPushMessage((err as Error).message);
     } finally {
       setPushBusy(false);
+    }
+  };
+
+  const claimPairTicket = async (): Promise<void> => {
+    if (pairBusy || !pairTicket.trim()) return;
+    setPairBusy(true);
+    setPairMessage(null);
+    try {
+      const claimed = await claimCurrentOriginPairing(pairTicket);
+      setPairTicket('');
+      setPairMessage(`Paired as ${claimed.name}`);
+    } catch (error) {
+      setPairMessage(error instanceof Error ? error.message : 'Pairing failed. Run `pretty pair` again.');
+    } finally {
+      setPairBusy(false);
     }
   };
 
@@ -326,6 +345,38 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
               Settings because the user doesn't need to see the host:port
               in the chrome all the time; it only matters when switching
               between machines. */}
+          <div className="settings-menu-divider" />
+          <div className="settings-menu-section" aria-label="Pair">
+            <div className="settings-menu-section-title">Pair this browser</div>
+            <div className="settings-menu-field-row">
+              <label className="settings-menu-field">
+                <span>Ticket</span>
+                <input
+                  className="settings-menu-input"
+                  type="text"
+                  value={pairTicket}
+                  onChange={(event) => setPairTicket(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void claimPairTicket();
+                  }}
+                  placeholder="From pretty pair"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn settings-menu-clickable"
+                disabled={pairBusy || !pairTicket.trim()}
+                onClick={() => void claimPairTicket()}
+              >
+                {pairBusy ? 'Pairing…' : 'Pair'}
+              </button>
+            </div>
+            {pairMessage ? (
+              <div className="settings-menu-status" role="status">{pairMessage}</div>
+            ) : null}
+          </div>
           <div className="settings-menu-divider" />
           <div className="settings-menu-row settings-menu-server">
             <span className="settings-menu-icon">🖥</span>

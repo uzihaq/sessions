@@ -89,12 +89,17 @@ interface ServersStore {
   // Runtime-only auth state for an embedded same-origin daemon. This is not
   // part of ServerConfig and is deliberately never persisted.
   tokenRequiredServerId: string | null;
+  // Runtime-only error from an attempted one-time pairing claim. Keeping it
+  // in the server store lets bootstrap surface the failure after React mounts
+  // without putting the ticket back into the URL or persistent storage.
+  pairingError: string | null;
   addServer: (s: Omit<ServerConfig, 'id' | 'isDefault'>) => ServerConfig;
   removeServer: (id: string) => void;
   // Patch fields on an existing server (e.g. save a token entered after a
   // 401, or flip scheme). Persists to localStorage like the other mutators.
   updateServer: (id: string, updates: Partial<Omit<ServerConfig, 'id' | 'isDefault'>>) => void;
   markTokenRequired: (id: string) => void;
+  setPairingError: (error: string | null) => void;
   setActive: (id: string | null) => void;
   // Resolve the live config for the active server. Falls back to the
   // default if the saved active id no longer exists (e.g. user removed
@@ -115,6 +120,7 @@ export const useServers = create<ServersStore>((set, get) => ({
   servers: initial.servers,
   activeId: initial.activeId,
   tokenRequiredServerId: null,
+  pairingError: null,
 
   addServer: (s) => {
     const next: ServerConfig = {
@@ -164,6 +170,8 @@ export const useServers = create<ServersStore>((set, get) => ({
     set({ tokenRequiredServerId: id });
   },
 
+  setPairingError: (error) => set({ pairingError: error }),
+
   setActive: (id) => {
     if (id === null) {
       writeActiveId(null);
@@ -197,6 +205,41 @@ function currentOriginServer(): ServerConfig {
     isDefault: true,
     scheme
   };
+}
+
+function matchesCurrentOrigin(server: ServerConfig, current: ServerConfig): boolean {
+  return (server.scheme ?? 'http') === current.scheme
+    && server.host.toLowerCase() === current.host.toLowerCase()
+    && server.port === current.port;
+}
+
+// Adopt the daemon serving this page, optionally attaching a freshly claimed
+// per-device token. This is shared by the health-probe bootstrap and the
+// pairing bootstrap so both paths create the same stable current-origin entry.
+export function adoptCurrentOriginServer(
+  token?: string,
+  tokenRequired = false
+): ServerConfig {
+  const store = useServers.getState();
+  const current = currentOriginServer();
+  const existing = store.servers.find((server) => matchesCurrentOrigin(server, current));
+  const tokenUpdate = token === undefined ? {} : { token: token.trim() || undefined };
+  const adopted: ServerConfig = existing
+    ? { ...existing, ...tokenUpdate, isDefault: true }
+    : { ...current, ...tokenUpdate };
+  const servers = existing
+    ? store.servers.map((server) => server.id === existing.id ? adopted : server)
+    : [...store.servers, adopted];
+
+  writeServers(servers);
+  writeActiveId(adopted.id);
+  useServers.setState({
+    servers,
+    activeId: adopted.id,
+    tokenRequiredServerId: tokenRequired ? adopted.id : null,
+    pairingError: null
+  });
+  return adopted;
 }
 
 function hasStoredServerList(): boolean {
@@ -246,14 +289,7 @@ export async function bootstrapCurrentOriginServer(): Promise<void> {
     return;
   }
 
-  const server = currentOriginServer();
-  writeServers([server]);
-  writeActiveId(server.id);
-  useServers.setState({
-    servers: [server],
-    activeId: server.id,
-    tokenRequiredServerId: tokenRequired ? server.id : null
-  });
+  adoptCurrentOriginServer(undefined, tokenRequired);
 }
 
 // Non-reactive accessor for use inside api/prettyd.ts and similar — those

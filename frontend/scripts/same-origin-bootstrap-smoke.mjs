@@ -46,7 +46,7 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--disable-dev-shm-usage']
 });
 
-async function openCase(health) {
+async function openCase(health, pairClaim = null) {
   const page = await browser.newPage();
   await page.setBypassServiceWorker(true);
   await page.evaluateOnNewDocument(() => window.localStorage.clear());
@@ -54,11 +54,44 @@ async function openCase(health) {
   let healthRequests = 0;
   let sessionsRequests = 0;
   let sessionsUnauthorized = false;
+  let pairClaimRequests = 0;
+  const pairClaimTickets = [];
+  const sessionsAuthorizations = [];
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.setRequestInterception(true);
   page.on('request', (request) => {
     const url = request.url();
+    if (url === `${origin}/api/pair/claim`) {
+      pairClaimRequests += 1;
+      try {
+        pairClaimTickets.push(JSON.parse(request.postData() ?? '{}').ticket ?? '');
+      } catch {
+        pairClaimTickets.push('');
+      }
+      if (pairClaim === 'success') {
+        void request.respond({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            device_id: '00000000-0000-4000-8000-000000000001',
+            token: 'paired-device-token',
+            name: 'Smoke browser'
+          })
+        });
+      } else if (pairClaim === 'expired') {
+        void request.respond({
+          status: 410,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: 'Pairing ticket is invalid, expired, or already used. Run `pretty pair` to create a new one.'
+          })
+        });
+      } else {
+        void request.respond({ status: 404, contentType: 'application/json', body: '{}' });
+      }
+      return;
+    }
     if (url === `${origin}/api/health`) {
       healthRequests += 1;
       if (health === 'reject') {
@@ -72,6 +105,7 @@ async function openCase(health) {
     }
     if (url === `${origin}/api/sessions`) {
       sessionsRequests += 1;
+      sessionsAuthorizations.push(request.headers().authorization ?? '');
       const status = sessionsUnauthorized ? 401 : 200;
       const body = status === 200 ? JSON.stringify({ sessions: [] }) : '';
       void request.respond({ status, contentType: 'application/json', body });
@@ -85,6 +119,9 @@ async function openCase(health) {
     pageErrors,
     get healthRequests() { return healthRequests; },
     get sessionsRequests() { return sessionsRequests; },
+    get pairClaimRequests() { return pairClaimRequests; },
+    get pairClaimTickets() { return [...pairClaimTickets]; },
+    get sessionsAuthorizations() { return [...sessionsAuthorizations]; },
     requireSessionsToken() { sessionsUnauthorized = true; }
   };
 }
@@ -167,6 +204,55 @@ try {
   assert.deepEqual(fragment.pageErrors, []);
   await fragment.page.close();
 
+  const paired = await openCase('healthy', 'success');
+  await paired.page.goto(`${origin}/#pair=one-time-smoke-ticket`, {
+    waitUntil: 'domcontentloaded', timeout: 15_000
+  });
+  await paired.page.waitForSelector('.app-shell', { timeout: 10_000 });
+  await paired.page.waitForFunction(() => {
+    const servers = JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]');
+    return servers.length === 1 && servers[0].token === 'paired-device-token';
+  });
+  const pairedState = await paired.page.evaluate(() => ({
+    hash: window.location.hash,
+    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]'),
+    activeId: window.localStorage.getItem('pretty-pty:active-server')
+  }));
+  assert.equal(paired.healthRequests, 0);
+  assert.equal(paired.pairClaimRequests, 1);
+  assert.deepEqual(paired.pairClaimTickets, ['one-time-smoke-ticket']);
+  assert.equal(pairedState.hash, '');
+  assert.equal(pairedState.servers[0].token, 'paired-device-token');
+  assert.equal(pairedState.servers[0].isDefault, true);
+  assert.equal(pairedState.activeId, pairedState.servers[0].id);
+  await paired.page.waitForFunction(() => document.querySelector('.empty-state') !== null);
+  assert.ok(paired.sessionsAuthorizations.includes('Bearer paired-device-token'));
+  paired.requireSessionsToken();
+  await paired.page.waitForSelector('.daemon-banner-token-input', { timeout: 6_000 });
+  assert.deepEqual(paired.pageErrors, []);
+  await paired.page.close();
+
+  const expiredPair = await openCase('healthy', 'expired');
+  await expiredPair.page.goto(`${origin}/#pair=expired-smoke-ticket`, {
+    waitUntil: 'domcontentloaded', timeout: 15_000
+  });
+  await expiredPair.page.waitForSelector('[data-testid="connect-screen"]', { timeout: 10_000 });
+  await expiredPair.page.waitForSelector('.connect-error', { timeout: 10_000 });
+  const expiredPairState = await expiredPair.page.evaluate(() => ({
+    hash: window.location.hash,
+    error: document.querySelector('.connect-error')?.textContent?.trim() ?? '',
+    endpointInputUsable: !(document.querySelector('.connect-form input[type="url"]')?.disabled ?? true),
+    activeId: window.localStorage.getItem('pretty-pty:active-server')
+  }));
+  assert.equal(expiredPair.healthRequests, 0);
+  assert.equal(expiredPair.pairClaimRequests, 1);
+  assert.equal(expiredPairState.hash, '');
+  assert.match(expiredPairState.error, /invalid, expired, or already used/i);
+  assert.equal(expiredPairState.endpointInputUsable, true);
+  assert.equal(expiredPairState.activeId, null);
+  assert.deepEqual(expiredPair.pageErrors, []);
+  await expiredPair.page.close();
+
   console.log(JSON.stringify({
     origin,
     healthy: {
@@ -190,6 +276,20 @@ try {
       hashAfterBootstrap: fragmentState.hash,
       selected: fragmentState.activeId === fragmentState.servers[0].id,
       tokenStored: fragmentState.servers[0].token === 'fragment-smoke-token'
+    },
+    pairing: {
+      claimRequests: paired.pairClaimRequests,
+      healthRequests: paired.healthRequests,
+      hashAfterBootstrap: pairedState.hash,
+      tokenStored: pairedState.servers[0].token === 'paired-device-token',
+      revokedTokenPrompted: true
+    },
+    expiredPairing: {
+      claimRequests: expiredPair.pairClaimRequests,
+      healthRequests: expiredPair.healthRequests,
+      hashAfterBootstrap: expiredPairState.hash,
+      pickerUsable: expiredPairState.endpointInputUsable,
+      error: expiredPairState.error
     }
   }, null, 2));
 } finally {

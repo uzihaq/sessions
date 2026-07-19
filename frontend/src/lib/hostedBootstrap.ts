@@ -1,4 +1,8 @@
-import { useServers, type ServerConfig } from './servers';
+import {
+  adoptCurrentOriginServer,
+  useServers,
+  type ServerConfig
+} from './servers';
 import { isLoopbackHost, parseServerEndpoint } from './serverEndpoint';
 
 function matchesEndpoint(
@@ -83,4 +87,87 @@ export function bootstrapHostedConnection(): void {
   } catch {
     return;
   }
+}
+
+interface PairClaimResponse {
+  device_id: string;
+  token: string;
+  name: string;
+}
+
+function pairingTicket(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed, window.location.origin);
+    const fromFragment = new URLSearchParams(parsed.hash.slice(1)).get('pair');
+    if (fromFragment) return fromFragment.trim();
+  } catch {
+    // A bare ticket is the normal Settings input; return it unchanged.
+  }
+  if (trimmed.startsWith('#')) {
+    return new URLSearchParams(trimmed.slice(1)).get('pair')?.trim() ?? '';
+  }
+  return trimmed;
+}
+
+function pairClaimError(status: number, body: unknown): Error {
+  if (typeof body === 'object' && body !== null) {
+    const error = (body as Record<string, unknown>).error;
+    if (typeof error === 'string' && error.trim()) return new Error(error.trim());
+  }
+  return new Error(`Pairing failed (HTTP ${status}). Run pretty pair again.`);
+}
+
+// Claim only against the page's own daemon origin. Pairing tickets are never
+// sent to a configured cross-origin server or to the hosted app shell.
+export async function claimCurrentOriginPairing(
+  ticketValue: string,
+  name?: string
+): Promise<PairClaimResponse> {
+  const ticket = pairingTicket(ticketValue);
+  if (!ticket) throw new Error('Paste a pairing ticket from `pretty pair`.');
+
+  const response = await fetch(`${window.location.origin}/api/pair/claim`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ticket, ...(name?.trim() ? { name: name.trim() } : {}) })
+  });
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    // The status-specific fallback below remains instructional.
+  }
+  if (!response.ok) throw pairClaimError(response.status, body);
+  if (typeof body !== 'object' || body === null) {
+    throw new Error('Pairing succeeded without a device credential. Run `pretty pair` again.');
+  }
+  const claimed = body as Partial<PairClaimResponse>;
+  if (!claimed.device_id || !claimed.token || !claimed.name) {
+    throw new Error('Pairing succeeded with an invalid device credential. Run `pretty pair` again.');
+  }
+
+  adoptCurrentOriginServer(claimed.token);
+  return claimed as PairClaimResponse;
+}
+
+// Run before every other bootstrap. The fragment is scrubbed before the
+// network request so even an expired or malformed ticket never stays visible.
+export async function bootstrapPairingConnection(): Promise<boolean> {
+  if (typeof window === 'undefined' || !window.location.hash) return false;
+  const params = new URLSearchParams(window.location.hash.slice(1));
+  if (!params.has('pair')) return false;
+
+  const ticket = params.get('pair') ?? '';
+  scrubFragment();
+  try {
+    await claimCurrentOriginPairing(ticket);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Pairing failed. Run `pretty pair` again.';
+    const store = useServers.getState();
+    store.setPairingError(detail);
+    store.setActive(null);
+  }
+  return true;
 }
