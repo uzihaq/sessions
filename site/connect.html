@@ -4,9 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pretty — connect to your Mac</title>
-<meta name="description" content="Connect this browser directly to pretty on your Mac. The address and token stay in your browser and never touch our servers.">
+<meta name="description" content="Open a shipped #endpoint connect link without exposing its fragment. This static page checks your Mac directly, then opens the daemon-served app.">
 <script>
-  // Capture the QR payload, then scrub it before any font or other request begins.
+  // Capture the #endpoint compatibility payload, then scrub it before any font
+  // or other request begins. URL fragments are never included in HTTP requests.
   (function () {
     var hash = window.location.hash;
     window.__prettyConnectFragment = hash.length > 1 ? hash.slice(1) : '';
@@ -147,25 +148,27 @@
 
   <main>
     <section class="hero">
-      <p class="kicker">dead-shell entry</p>
+      <p class="kicker">endpoint handoff</p>
       <h1>Back to your <em>sessions</em>.</h1>
-      <p class="lede">This page checks the private address printed by <strong><code>pretty remote enable</code></strong>, then opens the full hosted app against the daemon on your Mac.</p>
-      <p class="privacy"><span class="lock">◆</span><span><strong>your address and token never touch our servers — this page and the hosted app are static files.</strong> After handoff, the app talks straight from this browser to your pretty endpoint.</span></p>
+      <p class="lede">This compatibility page handles the <strong><code>#endpoint=…</code></strong> link printed by <code>pretty remote enable</code>. It checks that address directly, then sends this browser to the app served by your own daemon.</p>
+      <p class="privacy"><span class="lock">◆</span><span><strong>the fragment never touches our servers.</strong> The current command puts no master token in this link. For zero-typing, per-device credentials, use <code>pretty pair</code>.</span></p>
 
       <div class="shell" id="shell">
         <div class="shell-bar"><span class="led"></span><span id="stateLabel">waiting for a connect link</span></div>
         <div class="shell-body">
           <div class="verdict-mark" id="verdictMark">No address yet.</div>
-          <p class="status-copy" id="statusCopy" aria-live="polite">Run the remote command on your Mac, then scan the QR code it prints.</p>
+          <p class="status-copy" id="statusCopy" aria-live="polite">Run the remote command on your Mac, then open its endpoint link. For the recommended one-scan sign-in, run pretty pair after remote access is enabled.</p>
           <p class="endpoint" id="endpointLine" hidden>checking <code id="endpointText"></code></p>
-          <a class="open" id="openButton" href="https://pretty-pty.somewhere.site/" target="_top">Open the hosted app →</a>
+          <a class="open" id="openButton" href="setup.html" target="_top">Open your Mac →</a>
           <div class="instructions" id="instructions">
             <p>On the Mac where pretty is installed:</p>
             <div class="command">pretty remote enable</div>
-            <p>Keep Tailscale connected on both devices, then scan the QR code. It brings the address and token here in the link fragment.</p>
+            <p>Keep Tailscale connected on both devices. The endpoint link carries the verified address here in the fragment; the current flow does not put the master token in it.</p>
+            <div class="command">pretty pair --name "my phone"</div>
+            <p>That newer QR opens the daemon-served app directly and exchanges a five-minute, single-use ticket for a revocable device credential.</p>
           </div>
-          <p class="safe">Saved only in this browser under <code>pretty-pty:hosted-connect</code>. The handoff stays in a URL fragment, which is scrubbed before the app loads. No analytics. No relay. No third-party scripts.</p>
-          <noscript><p class="status-copy">JavaScript is required to read and immediately scrub the private link fragment.</p></noscript>
+          <p class="safe">Saved only in this browser under <code>pretty-pty:hosted-connect</code>. The handoff fragment is scrubbed before fonts or other resources load. A legacy optional <code>token</code> field is still forwarded for compatibility, but new QR pairing never shares the master token. No analytics. No terminal relay. Flow source: <code>prettygo/cmd/pretty/remote.go</code> and <code>frontend/src/lib/hostedBootstrap.ts</code>.</p>
+          <noscript><p class="status-copy">JavaScript is required to read and immediately scrub the endpoint fragment.</p></noscript>
         </div>
       </div>
     </section>
@@ -202,7 +205,8 @@
     function validEndpoint(raw) {
       try {
         var url = new URL(raw);
-        var local = url.protocol === 'http:' && url.hostname === 'localhost';
+        var localHost = url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]';
+        var local = url.protocol === 'http:' && localHost;
         if (url.protocol !== 'https:' && !local) return null;
         if (url.username || url.password) return null;
         url.hash = '';
@@ -213,11 +217,11 @@
       }
     }
 
-    async function requestHealth(url, token, withToken) {
+    async function requestHealth(url, token) {
       var controller = new AbortController();
       var timeout = setTimeout(function () { controller.abort(); }, 8000);
       var options = { cache: 'no-store', signal: controller.signal };
-      if (withToken) options.headers = { Authorization: 'Bearer ' + token };
+      if (token) options.headers = { Authorization: 'Bearer ' + token };
       try {
         return await fetch(url + '/api/health', options);
       } finally {
@@ -226,13 +230,15 @@
     }
 
     async function connect(endpoint, token) {
-      setState('checking', 'checking your Mac', 'Reaching your daemon…', 'This request goes directly from your browser to the address in the QR link.');
+      setState('checking', 'checking your Mac', 'Reaching your daemon…', 'This browser is calling the public health route at the endpoint in the fragment.');
       endpointLine.hidden = false;
       endpointText.textContent = endpoint;
       instructions.hidden = true;
 
       try {
-        localStorage.setItem('pretty-pty:hosted-connect', JSON.stringify({ endpoint: endpoint, token: token }));
+        var remembered = { endpoint: endpoint };
+        if (token) remembered.token = token;
+        localStorage.setItem('pretty-pty:hosted-connect', JSON.stringify(remembered));
       } catch (error) {
         // Storage can be disabled; the one-time connection check still works.
       }
@@ -240,17 +246,15 @@
       var response = null;
       var usedFallback = false;
       try {
-        response = await requestHealth(endpoint, token, true);
+        response = await requestHealth(endpoint, token);
       } catch (error) {
-        // Authorization can trigger a CORS preflight on older daemons. Retry the
-        // public health route without a token; never retry against another host.
-        usedFallback = true;
+        response = null;
       }
 
-      if (!response || !response.ok) {
+      if (token && (!response || !response.ok)) {
         try {
           usedFallback = true;
-          response = await requestHealth(endpoint, token, false);
+          response = await requestHealth(endpoint, '');
         } catch (error) {
           response = null;
         }
@@ -263,8 +267,9 @@
           ? ' ' + health.sessionsLoaded + ' session' + (health.sessionsLoaded === 1 ? '' : 's') + ' loaded.'
           : '';
         var fallbackNote = usedFallback ? ' The public health check answered without the token.' : '';
-        setState('connected', 'connected', 'Your Mac answered.', 'The private endpoint is live. Open the hosted app to use your sessions.' + sessionNote + fallbackNote);
-        openButton.href = 'https://pretty-pty.somewhere.site/#endpoint=' + encodeURIComponent(endpoint) + '&token=' + encodeURIComponent(token);
+        var authNote = token ? ' The legacy credential will be handed to the daemon-served app in a scrubbed fragment.' : ' The app may ask for a credential; use pretty pair for a revocable per-device one.';
+        setState('connected', 'connected', 'Your Mac answered.', 'The private endpoint is live. Open your Mac\'s own app to use the sessions.' + sessionNote + fallbackNote + authNote);
+        openButton.href = endpoint + '/#endpoint=' + encodeURIComponent(endpoint) + (token ? '&token=' + encodeURIComponent(token) : '');
         openButton.classList.add('visible');
       } else {
         var detail = response ? 'The daemon answered HTTP ' + response.status + '.' : 'The endpoint did not answer within 8 seconds.';
@@ -277,13 +282,10 @@
     var params = new URLSearchParams(fragment);
     var endpoint = validEndpoint(params.get('endpoint') || '');
     var token = params.get('token') || '';
-    var tokenIsHex = /^[a-f0-9]+$/i.test(token);
 
-    if (!endpoint || !tokenIsHex) {
+    if (!endpoint) {
       instructions.hidden = false;
-      setState('blocked', 'invalid connect link', 'Link rejected.', !endpoint
-        ? 'The endpoint must use https://, or http://localhost for the Mac you are sitting at.'
-        : 'The connect token is missing or is not hexadecimal. Run pretty remote enable again for a fresh QR link.');
+      setState('blocked', 'invalid connect link', 'Link rejected.', 'The endpoint must use https://, or loopback HTTP for the Mac you are sitting at. Run pretty remote enable again for a fresh link.');
       return;
     }
 

@@ -3,10 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pretty — your agent sessions, everywhere</title>
-<meta name="description" content="A better tmux for Claude Code &amp; Codex on your Mac. Sessions that survive everything, driven from any browser. We never see your data.">
-<meta property="og:title" content="pretty — your agent sessions, everywhere">
-<meta property="og:description" content="A better tmux for Claude Code &amp; Codex on your Mac. Long-lived sessions from any browser, with no relay and no hosted terminal data.">
+<title>pretty — never lose your agent fleet</title>
+<meta name="description" content="A free, local runtime for durable Claude Code, Codex, shell, and headless sessions. Structured agent control, full-history search, QR pairing, and encrypted backup.">
+<meta property="og:title" content="pretty — never lose your agent fleet">
+<meta property="og:description" content="Durable agent sessions on your Mac. Local-first, directly connected, and free — with structured control, search, recovery, pairing, and encrypted backup already shipped.">
+<script>
+  // `pretty remote enable` ships a root #endpoint link. Keep that fragment out
+  // of requests and hand it to the compatibility page that knows how to scrub it.
+  if (new URLSearchParams(location.hash.slice(1)).has('endpoint')) {
+    location.replace('connect.html' + location.hash);
+  }
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
@@ -76,6 +83,12 @@
     margin-top: 26px; max-width: 56ch; color: var(--cream-dim); font-size: 15.5px;
   }
   .hero .sub strong { color: var(--cream); font-weight: 500; }
+  .hero-flag {
+    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 22px; padding: 5px 11px;
+    border: 1px solid rgba(240,198,116,.3); border-radius: 20px; color: var(--amber);
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  }
+  .hero-flag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
 
   /* terminal window */
   .term {
@@ -126,6 +139,14 @@
   .cell h3 { font-size: 14px; font-weight: 600; color: var(--phos); margin-bottom: 10px; }
   .cell p { font-size: 13.5px; color: var(--cream-dim); }
   .cell .n { display:block; font-family: var(--serif); font-style: italic; font-size: 26px; color: var(--cream-faint); margin-bottom: 14px; }
+  .cell code { color: var(--cream); font-size: 12px; }
+  .toolbelt {
+    margin-top: 20px; padding: 22px 24px; border: 1px dashed var(--line); border-radius: 8px;
+    color: var(--cream-dim); font-size: 13.5px;
+  }
+  .toolbelt strong { color: var(--cream); font-weight: 500; }
+  .toolbelt code { color: var(--phos); }
+  .toolbelt a { color: var(--phos); text-decoration: none; border-bottom: 1px solid var(--phos-dim); }
 
   /* ---------- guarantees: the centerpiece ---------- */
   .never { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-top: 26px; }
@@ -143,7 +164,7 @@
   .fine { margin-top: 18px; font-size: 12.5px; color: var(--cream-faint); max-width: 68ch; }
 
   /* ---------- two paths ---------- */
-  .paths { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 36px; }
+  .paths { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 36px; }
   .path {
     border: 1px solid var(--line); border-radius: 10px; padding: 28px 26px 30px;
     background: linear-gradient(180deg, var(--ink-2), var(--ink));
@@ -168,6 +189,21 @@
   }
   .path a.go:hover { filter: brightness(1.1); }
   .path.remote a.go { background: transparent; color: var(--amber); border: 1px solid var(--amber); font-weight: 500; }
+  .path.lan .tag { color: var(--cream-dim); }
+  .path.lan a.go { background: transparent; color: var(--cream); border: 1px solid var(--line-2, #2f4136); font-weight: 500; }
+
+  /* ---------- building in the open ---------- */
+  .roadmap { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 34px; }
+  .roadmap-item { border: 1px solid var(--line); border-radius: 9px; padding: 23px; background: var(--ink-2); }
+  .roadmap-item .state { display: block; margin-bottom: 12px; color: var(--amber); font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; }
+  .roadmap-item h3 { margin-bottom: 8px; color: var(--cream); font-size: 14px; font-weight: 600; }
+  .roadmap-item p { color: var(--cream-dim); font-size: 13px; }
+  .somewhere {
+    margin-top: 26px; padding: 24px; border-left: 2px solid var(--phos-dim);
+    background: rgba(126,240,166,.035); color: var(--cream-dim); font-size: 13.5px;
+  }
+  .somewhere strong { color: var(--cream); font-weight: 500; }
+  .somewhere a { color: var(--phos); text-decoration: none; border-bottom: 1px solid var(--phos-dim); }
 
   /* ---------- install ---------- */
   .install-box {
@@ -189,6 +225,7 @@
   @media (max-width: 720px) {
     .grid3 { grid-template-columns: 1fr; }
     .paths { grid-template-columns: 1fr; }
+    .roadmap { grid-template-columns: 1fr; }
     .never-row { grid-template-columns: 1fr; gap: 8px; padding: 22px 2px; }
     .hero { padding-top: 64px; }
     nav { gap: 14px; }
@@ -216,51 +253,71 @@
   </header>
 
   <section class="hero">
-    <h1 class="rise" style="animation-delay:.05s">Your agents keep working.<br><em>You keep living.</em></h1>
+    <span class="hero-flag rise">building in the open · useful now</span>
+    <h1 class="rise" style="animation-delay:.05s">Never lose your<br><em>agent fleet.</em></h1>
     <p class="sub rise" style="animation-delay:.15s">
-      <strong>pretty</strong> is a better tmux for the agent era. Keep <strong>Claude Code</strong>,
-      <strong>Codex</strong>, and shells running on your Mac, then pick them up from any browser.
-      Sessions survive restarts and reboots. Every send confirms or fails loudly — never silently lost.
+      <strong>pretty</strong> is the free, local runtime for durable <strong>Claude Code</strong>,
+      <strong>Codex</strong>, shell, and headless command sessions. Start work, walk away, recover after a
+      daemon crash, search every conversation, and pick it back up from another screen. No Pretty account.
+      No terminal relay. Your Mac stays in charge.
     </p>
 
     <div class="term rise" style="animation-delay:.3s">
       <div class="term-bar">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="term-title">pretty — 31 sessions, all alive</span>
+        <span class="term-title">pretty — local agent runtime</span>
       </div>
       <div class="term-body">
-        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/pretty &amp;&amp; pretty install</span></span>
-        <span class="ln p2"><span class="ok">✓</span> <span class="out">daemon registered with launchd — survives reboots</span></span>
-        <span class="ln p3"><span class="ok">✓</span> <span class="out">web ui → </span><span class="am">http://localhost:8787</span></span>
-        <span class="ln p4"><span class="prompt">$</span> <span class="cmd">pretty new --tool claude --name refactor</span></span>
-        <span class="ln p5"><span class="ok">✓</span> <span class="out">session </span><span class="cmd">refactor</span><span class="out"> running — full access, no prompts</span></span>
-        <span class="ln p6"><span class="out">  …close the laptop. take the walk. it keeps going.</span></span>
-        <span class="ln p7"><span class="prompt">$</span> <span class="cmd">pretty last refactor</span></span>
-        <span class="ln p8"><span class="ok">→</span> <span class="out">"Done — all 47 tests passing."</span> <span class="cursor"></span></span>
+        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">pretty new --tool codex --name migration --description "plan the cutover"</span></span>
+        <span class="ln p2"><span class="ok">✓</span> <span class="out">durable session created — the runner owns the work</span></span>
+        <span class="ln p3"><span class="prompt">$</span> <span class="cmd">pretty search '"migration plan" OR rollback' --ranked</span></span>
+        <span class="ln p4"><span class="ok">→</span> <span class="out">ranked matches across live and saved history</span></span>
+        <span class="ln p5"><span class="prompt">$</span> <span class="cmd">pretty sessions --mine</span></span>
+        <span class="ln p6"><span class="ok">→</span> <span class="out">your sessions and lanes, with provenance and purpose</span></span>
+        <span class="ln p7"><span class="prompt">$</span> <span class="cmd">pretty recover --reopen</span></span>
+        <span class="ln p8"><span class="ok">✓</span> <span class="out">recoverable work reopened</span> <span class="cursor"></span></span>
       </div>
     </div>
   </section>
 
   <section id="what">
-    <p class="kicker">what it is</p>
-    <h2>tmux, if it were built <em>for agents</em></h2>
+    <p class="kicker">already shipped</p>
+    <h2>The feature tour is <em>real.</em></h2>
+    <p class="lead">Not a waitlist and not a mockup. These are the parts already in the Go runtime and CLI today.</p>
     <div class="grid3">
       <div class="cell">
         <span class="n">i.</span>
-        <h3>Sessions are sacred</h3>
-        <p>Every session is its own supervised process, owned by macOS launchd — not by a terminal window. Daemon restarts, app updates, reboots: your agents reattach and continue.</p>
+        <h3>Never lose the fleet</h3>
+        <p>Each session lives in its own runner, outside the daemon. The ledger records what exists, so reloads do not kill the work and <code>pretty recover --reopen</code> can rebuild a lost lane in one command.</p>
       </div>
       <div class="cell">
         <span class="n">ii.</span>
-        <h3>Sends that confirm</h3>
-        <p>The worst agent bug is the message that never arrived. pretty confirms every send against the agent's own transcript — it lands, or it fails loudly and keeps your draft.</p>
+        <h3>Structured, not scraped</h3>
+        <p>Codex runs through its JSON-RPC app-server contract; Claude runs through its structured stream-JSON path. You get reliable sends, streaming, and model controls without driving a TUI by screen-scraping.</p>
       </div>
       <div class="cell">
         <span class="n">iii.</span>
-        <h3>Two views, one truth</h3>
-        <p>A raw terminal when you need the cockpit, a clean chat view when you're reading on your phone. Both derived from the same session — nothing re-typed, nothing scraped.</p>
+        <h3>Search all of it</h3>
+        <p><code>pretty search</code> covers live and persisted conversations. Keep exact substring and regex for precision, or opt into FTS5 ranking with BM25, stemming, phrases, and boolean queries.</p>
+      </div>
+      <div class="cell">
+        <span class="n">iv.</span>
+        <h3>Access grows with you</h3>
+        <p>Use localhost with zero setup, <code>pretty lan enable</code> on the same Wi-Fi without Tailscale, or <code>pretty remote enable</code> anywhere over Tailscale Serve. Remote TLS ends on your Mac.</p>
+      </div>
+      <div class="cell">
+        <span class="n">v.</span>
+        <h3>Scan once. Revoke anytime.</h3>
+        <p><code>pretty pair</code> mints a five-minute, single-use QR ticket. The device receives its own revocable credential; the daemon's master token is never put in the QR.</p>
+      </div>
+      <div class="cell">
+        <span class="n">vi.</span>
+        <h3>Encrypted before upload</h3>
+        <p><code>pretty backup … --encrypt</code> applies XChaCha20-Poly1305 on your Mac before your history reaches your own somewhere project. The recovery key stays with you; nobody without it — including us — can read the backup.</p>
       </div>
     </div>
+    <p class="toolbelt"><strong>Built for agents running agents:</strong> install the bundled <a href="https://github.com/uzihaq/pretty-PTY/blob/go-rewrite/skills/pretty/SKILL.md">pretty skill</a>, use <code>--mine</code> to query work by provenance, and add <code>--description</code> so every lane says why it exists. If you omit one, pretty can derive the purpose from the first message.</p>
+    <p class="fine">Feature sources: <code>docs/WHY.md</code>, <code>docs/CLI.md</code>, <code>prettygo/cmd/pretty/help.go</code>, <code>prettygo/internal/api/pair.go</code>, and <code>prettygo/internal/backup/encrypt.go</code>.</p>
   </section>
 
   <section id="never">
@@ -271,19 +328,19 @@
     <div class="never">
       <div class="never-row">
         <span class="no">see your data</span>
-        <p>There is no relay and no backend session store. Terminal bytes travel browser&nbsp;→&nbsp;your Mac over your own tailnet. We never see, store, or forward a single keystroke or token of output.</p>
+        <p>There is no Pretty relay and no hosted session store. Terminal bytes travel browser&nbsp;→&nbsp;your Mac over loopback, your local network, or your own tailnet. We never see, store, or forward a single keystroke or token of output.</p>
       </div>
       <div class="never-row">
         <span class="no">hold your keys</span>
-        <p>Your daemon token is generated on your Mac and shared via a URL <em>fragment</em> — the part of a link that browsers never send to a server. It cannot appear in our logs, because it never reaches us.</p>
+        <p>QR pairing puts a five-minute, single-use ticket in a URL <em>fragment</em> — the part browsers never send to a server. Your Mac exchanges it for one revocable device credential. The master daemon token is never in the QR.</p>
       </div>
       <div class="never-row">
         <span class="no">kill your sessions</span>
-        <p>A bad deploy of this page cannot touch your running agents — they live in launchd on your machine, and the same UI is served locally at <code>localhost:8787</code> as a permanent fallback.</p>
+        <p>A bad deploy of this page cannot touch your running agents — separate runner processes own the work on your machine, and the daemon serves its own UI at <code>localhost:8787</code> as the permanent local path.</p>
       </div>
       <div class="never-row">
         <span class="no">phone home</span>
-        <p>No analytics, no third-party scripts, no telemetry. View source on this page — it's one HTML file. What you can read is all there is.</p>
+        <p>No analytics, no telemetry, and no Pretty account required. Optional remote access uses your Tailscale network; optional backup writes directly from your daemon to your own somewhere project.</p>
       </div>
       <div class="never-row">
         <span class="no">run install scripts</span>
@@ -291,15 +348,15 @@
       </div>
       <div class="never-row">
         <span class="no">ship what we don't run</span>
-        <p>We run our own fleet — dozens of concurrent agent sessions, every day — on exactly the setup documented below. If it breaks, it breaks us first.</p>
+        <p>We run our own agent work on the same runner, daemon, ledger, and CLI documented below. If the durable-session path breaks, it breaks our work first.</p>
       </div>
     </div>
-    <p class="fine">Precise version: the hosted page is the terminal <em>client</em>, so "never" means never by architecture — no relay, no storage, no third-party code — not a cryptographic impossibility. That honesty is part of the contract too.</p>
+    <p class="fine">Precise version: the core runtime is local and terminal traffic has no Pretty data plane. Remote use is strongest through the daemon-served same-origin UI; the hosted onboarding page is still mutable web code. Encrypted backup protects bytes before upload. That honesty is part of the contract too.</p>
   </section>
 
   <section id="start">
     <p class="kicker">get started</p>
-    <h2>Two ways in. <em>Both yours.</em></h2>
+    <h2>Three rungs. <em>You choose the reach.</em></h2>
 
     <div class="paths">
       <div class="path local">
@@ -314,14 +371,26 @@
         <a class="go" href="setup.html#install">Set up on this Mac →</a>
       </div>
 
+      <div class="path lan">
+        <span class="tag">same Wi-Fi</span>
+        <h3>Around the house</h3>
+        <p class="when">Phone, tablet, or another computer — no Tailscale needed.</p>
+        <ol class="steps">
+          <li><span class="k">1</span><code>pretty lan enable</code></li>
+          <li><span class="k">2</span><code>pretty pair --name "phone"</code></li>
+          <li><span class="k">3</span>scan once; the device gets its own credential.</li>
+        </ol>
+        <a class="go" href="setup.html#access">Set up local-network access →</a>
+      </div>
+
       <div class="path remote">
-        <span class="tag">+2 minutes</span>
+        <span class="tag">anywhere</span>
         <h3>From anywhere</h3>
         <p class="when">Your phone, your laptop, the café — over your own private tailnet.</p>
         <ol class="steps">
           <li><span class="k">1</span>Install <code>Tailscale</code> and sign in (free)</li>
           <li><span class="k">2</span><code>pretty remote enable</code></li>
-          <li><span class="k">3</span>Scan the QR it prints — sessions on your phone.</li>
+          <li><span class="k">3</span><code>pretty pair</code>, then scan once.</li>
         </ol>
         <a class="go" href="setup.html#remote">Set up phone access →</a>
       </div>
@@ -333,15 +402,29 @@
       <span class="prompt">$</span> <span class="cmd">pretty install</span> &nbsp;<span class="c"># registers the daemon, prints your local URL</span><br>
       <span class="c"># or download the static archive directly:</span><br>
       <span class="prompt">$</span> <span class="cmd">curl -fLO https://github.com/uzihaq/pretty-PTY/releases/download/v&lt;version&gt;/pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</span><br>
-      <span class="prompt">$</span> <span class="cmd">pretty remote enable</span> &nbsp;<span class="c"># optional — phone access via Tailscale</span>
+      <span class="prompt">$</span> <span class="cmd">pretty pair</span> &nbsp;<span class="c"># optional — one-time QR, per-device credential</span>
     </div>
 
     <p class="status">Early access — once you're running, keep the <a href="docs.html">Go CLI reference</a> close for sessions, lanes, recovery, and remote access.</p>
   </section>
 
+  <section id="building">
+    <p class="kicker">building next</p>
+    <h2>The local core is here.<br><em>The fleet is growing.</em></h2>
+    <p class="lead">These are active directions, not shipped promises. We are showing the sequence in public and keeping the local-first boundary intact.</p>
+    <div class="roadmap">
+      <div class="roadmap-item"><span class="state">building</span><h3>Native windows</h3><p>A macOS menu-bar app first, Android with push next, and iOS later. The app stays a window onto the daemon; quitting it will not kill sessions.</p></div>
+      <div class="roadmap-item"><span class="state">building</span><h3>Push when you are needed</h3><p>Notifications for done, blocked, and error states — especially the moment an agent needs a decision — without keeping the session in front of you.</p></div>
+      <div class="roadmap-item"><span class="state">building</span><h3>One worktree per task</h3><p>Launch parallel agents with their own worktree and branch, then return to a clean view of what each task changed.</p></div>
+      <div class="roadmap-item"><span class="state">building</span><h3>One fleet, many machines</h3><p>Search and move work across your computers, then add an optional always-on VM through somewhere when local hardware should not be the ceiling.</p></div>
+    </div>
+    <p class="somewhere"><strong>pretty stays free.</strong> <a href="https://somewhere.tech">somewhere</a> is the platform behind it — the optional home for encrypted backup and, later, always-on compute. The local runtime does not require a cloud account.</p>
+    <p class="fine">Roadmap source: <code>docs/WHY.md</code>. Native apps, native push, worktree-per-task orchestration, and cross-machine fleet expansion are labeled building because they are not shipped yet.</p>
+  </section>
+
   <footer>
-    <span>pretty — made for people who run agents.</span>
-    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS · MIT</span>
+    <span>pretty — the free local tool by <a href="https://somewhere.tech">somewhere</a>.</span>
+    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
   </footer>
 </main>
 </body>

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pretty — get set up</title>
-<meta name="description" content="Get pretty running on your Mac in minutes. Two paths — local and from-anywhere over Tailscale — and the page checks each step actually worked.">
+<meta name="description" content="Install pretty's static Go binaries, choose localhost, LAN, or Tailscale access, pair each device with one QR scan, and optionally encrypt backup before upload.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
@@ -133,6 +133,14 @@
   .btn-open .arr { transition: transform .2s; }
   .btn-open:hover .arr { transform: translateX(3px); }
 
+  /* ---- access ladder ---- */
+  .access-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 20px 0; }
+  .access-card { padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--ink-2); }
+  .access-card h3 { margin-bottom: 8px; color: var(--cream); font-size: 14px; font-weight: 600; }
+  .access-card p { color: var(--cream-faint); font-size: 13px; }
+  .access-card code { color: var(--phos); }
+  .access-card .reach { display: block; margin-bottom: 11px; color: var(--amber); font-size: 10.5px; letter-spacing: .15em; text-transform: uppercase; }
+
   /* ---- the live check panel ---- */
   .check {
     margin: 22px 0; border: 1px solid var(--line-2); border-radius: 10px;
@@ -180,6 +188,8 @@
   .closing .line { font-family: var(--serif); font-size: clamp(24px, 5vw, 36px); font-style: italic; color: var(--cream); }
   .closing .never { margin-top: 20px; font-size: 12.5px; color: var(--cream-faint); letter-spacing: .3px; }
   .closing .never a { color: var(--phos-dim); border-bottom: 1px solid var(--line-2); }
+  .source-note { margin: 18px auto 0; max-width: 66ch; color: var(--cream-faint); font-size: 11.5px; }
+  .source-note code { color: var(--cream-dim); }
   footer { padding: 30px 0 60px; text-align: center; color: var(--cream-faint); font-size: 12px; }
   footer a { color: var(--cream-dim); }
   footer a:hover { color: var(--phos); }
@@ -191,6 +201,7 @@
     nav { max-width: 230px; justify-content: flex-end; flex-wrap: wrap; row-gap: 4px; }
     .check-row { align-items: stretch; flex-direction: column; }
     .check-row button { min-height: 44px; }
+    .access-grid { grid-template-columns: 1fr; }
   }
   @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
@@ -212,14 +223,14 @@
   <section class="hero">
     <div class="kicker">get set up</div>
     <h1>Let's get you <em>running</em>.</h1>
-    <p class="lede">Two ways in — on your Mac, or from anywhere. Both take minutes. And this page <b>checks each step actually worked</b>, so you're never guessing whether it's connected.</p>
+    <p class="lede">Install the local runtime, choose exactly how far it can reach, then pair each device with one scan. The core needs <b>no Pretty account</b>, and nothing here sends terminal traffic through us.</p>
   </section>
 
   <!-- prereqs -->
   <div class="step">
     <div class="step-head"><div class="num">0</div><div><div class="step-title">Before you start</div><div class="step-sub">a 10-second inventory</div></div></div>
     <div class="step-body">
-      <p class="note">You need an <b style="color:var(--cream)">Apple Silicon Mac</b>, either <b style="color:var(--cream)">Homebrew</b> or <code>curl</code>, and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — pretty runs the agents you already have; it doesn't replace them. You do not need Node, npm, Xcode, or a native build toolchain.</p>
+      <p class="note">For this walkthrough you need an <b style="color:var(--cream)">Apple Silicon Mac</b>, either <b style="color:var(--cream)">Homebrew</b> or a downloaded release archive, and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — pretty runs the agents you already have; it does not replace or rebill them. You do not need Node, npm, Xcode, or a native build toolchain.</p>
     </div>
   </div>
 
@@ -236,7 +247,7 @@
       <div class="cmd"><code>mkdir -p "$HOME/.local/bin" &amp;&amp; install -m 0755 pretty prettyd runner "$HOME/.local/bin/"</code><button class="copy">copy</button></div>
       <p class="note">Replace <code>&lt;version&gt;</code> with the release number. Check the SHA-256 first; the <a href="https://github.com/uzihaq/pretty-PTY/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">installation guide</a> has the verification steps and Linux archive names.</p>
       <div class="cmd"><code>pretty install</code><button class="copy">copy</button></div>
-      <p class="note"><code>pretty install</code> registers the Go daemon with launchd, starts it, checks its health, and prints the local URL. Open that URL. Your sessions survive daemon restarts and Mac reboots — close terminals, close the laptop lid, they keep going.</p>
+      <p class="note"><code>pretty install</code> registers the Go daemon with launchd, starts it, checks its health, and prints the local URL. Open that URL. Session runners live outside the daemon, so closing a terminal or reloading the daemon does not kill their work.</p>
       <a class="btn-open" href="http://localhost:8787" target="_blank" rel="noopener">Open the local URL <span class="arr">→</span></a>
       <div class="tip"><b>Stuck on install?</b> Keep all three binaries in the same directory and make sure it is on <code>PATH</code>. <code>pretty doctor</code> checks the daemon and session runners.</div>
       <details class="trouble">
@@ -255,15 +266,19 @@
     </div>
   </div>
 
-  <!-- 2: tailscale -->
-  <div class="step" id="remote">
-    <div class="step-head"><div class="num">2</div><div><div class="step-title">Reach it from anywhere</div><div class="step-sub">optional · +2 minutes</div></div></div>
+  <!-- 2: access ladder -->
+  <div class="step" id="access">
+    <div class="step-head"><div class="num">2</div><div><div class="step-title">Choose the reach</div><div class="step-sub">local first · each wider listener is opt-in</div></div></div>
     <div class="step-body">
-      <p class="note">Want your sessions on your phone, or from another laptop? You'll put them on <b>Tailscale</b> — a private network just for <em>your</em> devices. No ports opened to the internet, and <b>nothing routed through us</b>: your browser talks straight to your Mac.</p>
-      <p class="note" style="margin-top:18px"><b style="color:var(--cream)">a.</b> Install Tailscale and sign in — <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>. Do it on your Mac <em>and</em> your phone (same account).</p>
-      <p class="note"><b style="color:var(--cream)">b.</b> Back on your Mac, turn on remote access:</p>
+      <p class="note">Pretty starts on <code>127.0.0.1:8787</code>. Widen that boundary only when you want another device to connect.</p>
+      <div class="access-grid">
+        <div class="access-card"><span class="reach">your Mac · zero setup</span><h3>Stay on localhost</h3><p>Nothing to enable. Open <code>http://localhost:8787</code>; no network configuration or account is involved.</p></div>
+        <div class="access-card"><span class="reach">same Wi-Fi · no Tailscale</span><h3>Open the LAN rung</h3><p>Run <code>pretty lan enable</code>. Pretty binds a second listener to the current LAN address; protected routes still require a credential.</p></div>
+      </div>
+      <span id="remote"></span>
+      <p class="note"><b style="color:var(--cream)">From anywhere:</b> install Tailscale and sign in on the Mac and client device — <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a> — then run:</p>
       <div class="cmd"><code>pretty remote enable</code><button class="copy">copy</button></div>
-      <p class="note">That runs <code>tailscale serve</code> for you (gives your daemon a real HTTPS address like <code>https://your-mac.tailnet.ts.net</code>) and prints a <b>QR code</b>. Scan it with your phone — it lands you right back here, already connected, no typing.</p>
+      <p class="note">Pretty configures a tailnet-only Tailscale Serve HTTPS endpoint and verifies it. TLS terminates on your Mac; there is no Pretty relay and no open internet port.</p>
       <div class="tip"><b>One honest heads-up:</b> Tailscale's HTTPS certificate lists your machine + tailnet name in public certificate-transparency logs. Harmless for most, but if your machine name is sensitive, rename it before you enable serve.</div>
       <details class="trouble">
         <summary>Remote-access troubleshooting</summary>
@@ -281,11 +296,35 @@
     </div>
   </div>
 
-  <!-- 3: the live check -->
-  <div class="step" id="check-connection">
-    <div class="step-head"><div class="num">3</div><div><div class="step-title">Is it working?</div><div class="step-sub">the whole chain, checked live</div></div></div>
+  <!-- 3: pairing -->
+  <div class="step" id="pair">
+    <div class="step-head"><div class="num">3</div><div><div class="step-title">Pair the device</div><div class="step-sub">scan once · zero typing · no shared master secret</div></div></div>
     <div class="step-body">
-      <p class="note">Paste your pretty address below and we'll actually reach out to it — right now, from your browser — and tell you if Tailscale, the daemon, and the connection are all up. (This check runs entirely between you and your Mac. We never see it.)</p>
+      <p class="note">After enabling LAN or remote access, mint a one-time QR for the device in your hand:</p>
+      <div class="cmd"><code>pretty pair --name "my phone"</code><button class="copy">copy</button></div>
+      <p class="note">The ticket expires after five minutes and works once. It is exchanged directly with your Mac for a per-device credential; the daemon's master token is never embedded in the QR.</p>
+      <div class="cmd"><code>pretty devices</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>pretty devices revoke &lt;id-or-prefix&gt;</code><button class="copy">copy</button></div>
+      <p class="note">List each credential by device and revoke one immediately without rotating every other device.</p>
+    </div>
+  </div>
+
+  <!-- 4: encrypted backup -->
+  <div class="step" id="backup">
+    <div class="step-head"><div class="num">4</div><div><div class="step-title">Back up the history</div><div class="step-sub">optional · encrypted before upload</div></div></div>
+    <div class="step-body">
+      <p class="note">If you have a somewhere project, Pretty can push its session history there directly. Turn on local XChaCha20-Poly1305 encryption so the transcripts and manifest leave your Mac only as ciphertext:</p>
+      <div class="cmd"><code>pretty backup enable --project my-project --interval 15m --encrypt</code><button class="copy">copy</button></div>
+      <p class="note">Write down the recovery phrase. The key stays on your machine, somewhere receives encrypted bytes, and there is no Pretty-operated backup relay. Without that phrase, nobody can reset or recover the key for you.</p>
+      <div class="cmd"><code>pretty backup status</code><button class="copy">copy</button></div>
+    </div>
+  </div>
+
+  <!-- 5: the live check -->
+  <div class="step" id="check-connection">
+    <div class="step-head"><div class="num">5</div><div><div class="step-title">Is it working?</div><div class="step-sub">the direct route, checked live</div></div></div>
+    <div class="step-body">
+      <p class="note">Paste a localhost or Tailscale HTTPS address below and this browser will call its public health route directly. The address and result are not sent through us. For same-Wi-Fi HTTP, open the LAN URL itself; an HTTPS onboarding page cannot make a mixed-content check.</p>
       <div class="check" id="check">
         <div class="check-bar"><span class="led"></span><span id="checkLabel">not checked yet</span></div>
         <div class="check-body">
@@ -296,7 +335,7 @@
           <div class="verdict" id="verdict"></div>
         </div>
       </div>
-      <p class="note" style="font-size:13.5px;color:var(--cream-faint)">On your Mac? Just try <code>http://localhost:8787</code>. From your phone? Use the <code>.ts.net</code> address the QR gave you.</p>
+      <p class="note" style="font-size:13.5px;color:var(--cream-faint)">On your Mac? Try <code>http://localhost:8787</code>. Away from it? Use the <code>.ts.net</code> address from <code>pretty remote status</code>.</p>
     </div>
   </div>
 
@@ -309,11 +348,12 @@
   </section>
 
   <div class="closing">
-    <div class="line">Close the laptop. Take the walk.<br>It keeps going.</div>
+    <div class="line">Close the terminal. Take the walk.<br>The runner keeps going.</div>
     <div class="never">Terminal traffic goes straight from your browser to your Mac — we never relay or store it. <a href="index.html#never">what we never do →</a></div>
+    <p class="source-note">Setup claims and commands checked against <code>docs/INSTALL.md</code>, <code>docs/CLI.md</code>, <code>prettygo/cmd/pretty/help.go</code>, <code>prettygo/cmd/pretty/pair.go</code>, and <code>prettygo/internal/backup/encrypt.go</code>.</p>
   </div>
 
-  <footer>pretty · <a href="docs.html">docs</a> · <a href="https://github.com/uzairhaq/pretty-PTY">source</a> · macOS · MIT</footer>
+  <footer>pretty is the free local tool by <a href="https://somewhere.tech">somewhere</a> · <a href="docs.html">docs</a> · <a href="https://github.com/uzairhaq/pretty-PTY">source</a> · MIT</footer>
 </div>
 
 <script>
@@ -346,9 +386,8 @@
   });
 
   // ---- the live daemon check ----
-  // Talks ONLY to the URL you type (your own daemon). /api/health is always open
-  // (no token needed) and returns { discovering, sessionsLoaded }. The daemon
-  // allows this page's origin (see prettyd isAllowedOrigin), so we can read the body.
+  // Talks ONLY to the URL you type (your own daemon). /api/health is public and
+  // returns { discovering, sessionsLoaded }. The daemon allows this site's origin.
   var el = {
     box: document.getElementById('check'),
     label: document.getElementById('checkLabel'),
@@ -397,12 +436,12 @@
           (n !== null ? n + ' session' + (n === 1 ? '' : 's') + ' running' : 'Daemon is up') +
           ' · ' + ms + 'ms' +
           (h.discovering ? ' <small>Still reattaching sessions — give it a second and re-check.</small>' :
-            '<small>Tailscale, the daemon, and the connection are all working. Open the address above to jump in.</small>');
+            '<small>The daemon and this direct route are working. Open the address above to jump in.</small>');
       } else {
         setState('bad', 'daemon said ' + r.status);
         el.verdict.innerHTML = '<span class="glyph">○</span> Reached your Mac, but the daemon answered <b>' + r.status +
           '</b>.<small>' + (r.status === 401 || r.status === 403
-            ? 'Auth is on and this page has no token yet — use the QR/connect link from <code>pretty remote enable</code>, which carries it.'
+            ? 'The health route is unexpectedly protected. Run <code>pretty doctor</code>, then use <code>pretty pair</code> from the Mac for a fresh device credential.'
             : 'The daemon is reachable but unhappy — try <code>pretty doctor</code> on your Mac.') + '</small>';
       }
     } catch (e) {
@@ -410,7 +449,7 @@
       var https = /^https:/i.test(base);
       el.verdict.innerHTML = '<span class="glyph">○</span> <b>Couldn\'t reach it.</b>' +
         '<small>Most likely one of:<br>' +
-        '• <b>Tailscale isn\'t connected</b> on this device — open the Tailscale app and check you\'re signed in (both this device and your Mac).<br>' +
+        (https ? '• <b>Tailscale is not connected</b> on this device — open the Tailscale app and check both devices are on the same tailnet.<br>' : '') +
         '• <b>The daemon isn\'t running</b> — run <code>pretty install</code> on your Mac.<br>' +
         (https ? '• <b>Remote access isn\'t on</b> — run <code>pretty remote enable</code> to start <code>tailscale serve</code>.'
                : '• Using <code>http://localhost</code> from a different device won\'t work — that only reaches the Mac you\'re sitting at.') +
