@@ -7,7 +7,17 @@ import { useServers, type ServerConfig } from '../lib/servers';
 const LOCAL_ENDPOINT = 'http://localhost:8787';
 const HEALTH_TIMEOUT_MS = 8_000;
 
-export function ConnectScreen(): JSX.Element {
+interface ConnectScreenProps {
+  localDaemonUnavailable?: boolean;
+  detail?: string;
+  onRetry?: () => void;
+}
+
+export function ConnectScreen({
+  localDaemonUnavailable = false,
+  detail,
+  onRetry
+}: ConnectScreenProps = {}): JSX.Element {
   const servers = useServers((state) => state.servers);
   const setActive = useServers((state) => state.setActive);
   const removeServer = useServers((state) => state.removeServer);
@@ -24,6 +34,35 @@ export function ConnectScreen(): JSX.Element {
     () => servers.filter((server) => !server.isDefault),
     [servers]
   );
+
+  if (localDaemonUnavailable) {
+    return (
+      <main className="connect-screen" data-testid="connect-screen">
+        <section className="connect-panel" aria-labelledby="connect-title">
+          <div className="connect-brand">pretty-PTY</div>
+          <p className="connect-kicker">native window → local daemon</p>
+          <h1 id="connect-title">Pretty isn&apos;t running yet.</h1>
+          <p className="connect-lede">
+            The app is only a window onto the local Pretty daemon. Your sessions
+            stay separate from the app and keep running when you quit it.
+          </p>
+          <section className="connect-setup" aria-labelledby="setup-title">
+            <h2 id="setup-title">Start Pretty on this Mac</h2>
+            <ol>
+              <li>
+                <span>Install and start the local daemon.</span>
+                <code>pretty install</code>
+              </li>
+            </ol>
+          </section>
+          {detail ? <p className="connect-error" role="alert">{detail}</p> : null}
+          <button type="button" className="connect-submit" onClick={onRetry}>
+            Try again
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   const probe = async (server: ServerConfig): Promise<void> => {
     setPairingError(null);

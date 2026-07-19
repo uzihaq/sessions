@@ -1,0 +1,175 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import puppeteer from 'puppeteer';
+
+const frontendDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const distDir = path.join(frontendDir, 'dist');
+if (!fs.existsSync(path.join(distDir, 'index.html'))) {
+  throw new Error('frontend/dist is missing; run npx vite build first');
+}
+
+const sessions = [
+  {
+    id: 'codex-1', cmd: 'codex', args: [], cwd: '/tmp/codex', cols: 120, rows: 40,
+    createdAt: 1, pid: 101, tool: 'codex', working: false, lastDataAt: 1,
+    lastUserMessageAt: null, exited: false, exitCode: null, exitSignal: null, exitedAt: null
+  },
+  {
+    id: 'claude-1', cmd: 'claude', args: [], cwd: '/tmp/claude', cols: 120, rows: 40,
+    createdAt: 2, pid: 102, tool: 'claude-code', working: false, lastDataAt: 2,
+    lastUserMessageAt: null, exited: false, exitCode: null, exitSignal: null, exitedAt: null
+  },
+  {
+    id: 'shell-1', cmd: 'zsh', args: [], cwd: '/tmp/shell', cols: 120, rows: 40,
+    createdAt: 3, pid: 103, tool: 'terminal', working: false, lastDataAt: 3,
+    lastUserMessageAt: null, exited: false, exitCode: null, exitSignal: null, exitedAt: null
+  }
+];
+
+function listen(server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+}
+
+function addressOf(server) {
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('server did not bind');
+  return address;
+}
+
+function daemonServer(sessionPrefix) {
+  let sessionRequests = 0;
+  const server = http.createServer((request, response) => {
+    response.setHeader('access-control-allow-origin', '*');
+    if (request.url === '/api/sessions') {
+      sessionRequests += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      const body = sessionPrefix
+        ? sessions.map((session) => ({ ...session, id: `${sessionPrefix}-${session.id}` }))
+        : sessions;
+      response.end(JSON.stringify({ sessions: body }));
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end('{}');
+  });
+  return {
+    server,
+    get sessionRequests() { return sessionRequests; }
+  };
+}
+
+const contentTypes = new Map([
+  ['.css', 'text/css; charset=utf-8'],
+  ['.html', 'text/html; charset=utf-8'],
+  ['.js', 'text/javascript; charset=utf-8'],
+  ['.json', 'application/json; charset=utf-8'],
+  ['.png', 'image/png'],
+  ['.svg', 'image/svg+xml'],
+  ['.woff2', 'font/woff2']
+]);
+
+const uiServer = http.createServer((request, response) => {
+  const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://localhost').pathname);
+  const relativePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const filePath = path.resolve(distDir, relativePath);
+  if (!filePath.startsWith(`${distDir}${path.sep}`) || !fs.existsSync(filePath)) {
+    response.writeHead(404).end('not found');
+    return;
+  }
+  response.writeHead(200, {
+    'content-type': contentTypes.get(path.extname(filePath)) ?? 'application/octet-stream'
+  });
+  fs.createReadStream(filePath).pipe(response);
+});
+
+const primary = daemonServer('');
+const scoped = daemonServer('scoped');
+await Promise.all([listen(uiServer), listen(primary.server), listen(scoped.server)]);
+
+const uiAddress = addressOf(uiServer);
+const primaryAddress = addressOf(primary.server);
+const scopedAddress = addressOf(scoped.server);
+const origin = `http://127.0.0.1:${uiAddress.port}`;
+const storedServers = [
+  {
+    id: 'primary-server', name: 'Primary', host: '127.0.0.1', port: primaryAddress.port,
+    isDefault: false, scheme: 'http'
+  },
+  {
+    id: 'scoped-server', name: 'Scoped', host: '127.0.0.1', port: scopedAddress.port,
+    isDefault: false, scheme: 'http'
+  }
+];
+
+const browser = await puppeteer.launch({
+  headless: true,
+  args: ['--no-sandbox', '--disable-dev-shm-usage']
+});
+
+async function openCase(query, selector = '[role="tab"][data-tab-id]') {
+  const page = await browser.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  await page.evaluateOnNewDocument((serversValue) => {
+    window.localStorage.clear();
+    window.localStorage.setItem('pretty-pty:servers', JSON.stringify(serversValue));
+    window.localStorage.setItem('pretty-pty:active-server', 'primary-server');
+  }, storedServers);
+  await page.goto(`${origin}/${query}`, { waitUntil: 'domcontentloaded', timeout: 15_000 });
+  await page.waitForSelector(selector, { timeout: 10_000 });
+  return { page, pageErrors };
+}
+
+async function tabIds(query) {
+  const current = await openCase(query);
+  await current.page.waitForFunction(
+    () => document.querySelectorAll('[role="tab"][data-tab-id]').length > 0
+  );
+  const ids = await current.page.$$eval(
+    '[role="tab"][data-tab-id]',
+    (nodes) => nodes.map((node) => node.getAttribute('data-tab-id'))
+  );
+  assert.deepEqual(current.pageErrors, []);
+  await current.page.close();
+  return ids;
+}
+
+try {
+  assert.deepEqual(await tabIds(''), ['codex-1', 'claude-1', 'shell-1']);
+  assert.deepEqual(await tabIds('?tool=codex'), ['codex-1']);
+  assert.deepEqual(await tabIds('?tool=claude'), ['claude-1']);
+  assert.deepEqual(await tabIds('?tool=shell'), ['shell-1']);
+
+  const primaryBefore = primary.sessionRequests;
+  const scopedBefore = scoped.sessionRequests;
+  assert.deepEqual(
+    await tabIds('?server=scoped-server'),
+    ['scoped-codex-1', 'scoped-claude-1', 'scoped-shell-1']
+  );
+  assert.equal(primary.sessionRequests, primaryBefore);
+  assert.ok(scoped.sessionRequests > scopedBefore);
+
+  const single = await openCase('?session=codex-1&mode=single', '.single-mode');
+  const singleLabel = await single.page.$eval('.single-mode-label', (node) => node.textContent?.trim());
+  assert.equal(singleLabel, 'codex');
+  assert.deepEqual(single.pageErrors, []);
+  await single.page.close();
+
+  console.log(JSON.stringify({
+    normal: 3,
+    toolScopes: ['codex', 'claude', 'shell'],
+    serverScope: 'scoped-server',
+    singleSession: 'codex-1',
+    result: 'ok'
+  }));
+} finally {
+  await browser.close();
+  await Promise.all([
+    new Promise((resolve) => uiServer.close(resolve)),
+    new Promise((resolve) => primary.server.close(resolve)),
+    new Promise((resolve) => scoped.server.close(resolve))
+  ]);
+}

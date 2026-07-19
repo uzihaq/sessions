@@ -1,9 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import {
-  isTauri,
-  getAutostartEnabled,
-  setAutostartEnabled
-} from '../lib/tauriBridge';
 import { getPushVapidPublicKey, subscribePush, unsubscribePush } from '../api/prettyd';
 import { type TextSize, nextSize, sizeLabel, writeTextSize } from '../lib/textSize';
 import {
@@ -68,14 +63,9 @@ async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
   return navigator.serviceWorker.register(new URL('sw.js', scope), { scope: scope.pathname });
 }
 
-// Settings popover anchored to a header button. Visible everywhere
-// because the text-size picker matters for both browser + Tauri;
-// the autostart row only renders in Tauri.
+// Settings popover anchored to a header button.
 export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props): JSX.Element {
-  const tauri = isTauri();
   const [open, setOpen] = useState(false);
-  const [autostart, setAutostart] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(readPushEnabled);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushMessage, setPushMessage] = useState<string | null>(null);
@@ -86,18 +76,6 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!tauri || !open) return;
-    let cancelled = false;
-    void getAutostartEnabled().then((v) => {
-      if (!cancelled) {
-        setAutostart(v);
-        setLoaded(true);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [tauri, open]);
-
-  useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent): void => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
@@ -105,12 +83,6 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
-
-  const toggleAutostart = async (): Promise<void> => {
-    const next = !autostart;
-    setAutostart(next);
-    await setAutostartEnabled(next);
-  };
 
   const cycleSize = (): void => {
     const next = nextSize(textSize);
@@ -317,17 +289,6 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
               </label>
             </div>
           </div>
-          {tauri ? (
-            <label className="settings-menu-row">
-              <input
-                type="checkbox"
-                checked={autostart}
-                onChange={() => void toggleAutostart()}
-                disabled={!loaded}
-              />
-              <span>Launch at login</span>
-            </label>
-          ) : null}
           <label className="settings-menu-row settings-menu-toggle">
             <input
               type="checkbox"

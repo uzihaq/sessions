@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { randomUUID } from './uuid';
+import { isTauri } from './tauriBridge';
+import { readWindowScope } from './windowScope';
 
 // A "server" is a prettyd instance reachable over the network. The user can
 // have multiple — their Mac Mini on Tailscale, their local MacBook, a Fly
@@ -27,6 +29,19 @@ const ACTIVE_KEY = 'pretty-pty:active-server';
 
 function embeddedServer(): ServerConfig | null {
   if (typeof window === 'undefined') return null;
+  // Tauri's page origin is its asset protocol, not the daemon. A fresh
+  // desktop install still needs to be zero-configuration and talk directly
+  // to the loopback daemon managed by `pretty install`.
+  if (isTauri()) {
+    return {
+      id: 'local',
+      name: 'This machine',
+      host: 'localhost',
+      port: 8787,
+      isDefault: true,
+      scheme: 'http'
+    };
+  }
   const scheme = window.location.protocol === 'https:' ? 'https' : 'http';
   const port = window.location.port
     ? Number(window.location.port)
@@ -110,7 +125,11 @@ interface ServersStore {
 const initial = (() => {
   const servers = readServers();
   const savedActive = readActiveId();
-  const activeId = servers.some((s) => s.id === savedActive)
+  const windowScope = readWindowScope();
+  const scopedServerId = windowScope?.kind === 'server' ? windowScope.value : '';
+  const activeId = servers.some((s) => s.id === scopedServerId)
+    ? scopedServerId
+    : servers.some((s) => s.id === savedActive)
     ? savedActive
     : (servers.find((s) => s.isDefault) ?? servers[0])?.id ?? null;
   return { servers, activeId };
