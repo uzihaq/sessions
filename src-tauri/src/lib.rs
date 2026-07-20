@@ -558,6 +558,8 @@ fn start_tray_poll(app: AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(TrayState::default())
         .invoke_handler(tauri::generate_handler![
             open_scoped_window,

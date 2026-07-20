@@ -8,6 +8,8 @@ import { MobileNav } from './components/MobileNav';
 import { ConnectionStatus, fromTerminalStatus } from './components/ConnectionStatus';
 import { GridView } from './components/GridView';
 import { FleetView } from './components/FleetView';
+import { UsageDashboard } from './components/UsageDashboard';
+import { SearchView } from './components/SearchView';
 import { useSessions } from './store/sessions';
 import { useServers, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
@@ -61,12 +63,12 @@ function readSingleModeParams(): { sessionId: string } | null {
 // (active-machine monitor tiles).
 // Persisted per-window in localStorage so each window remembers its
 // last choice. Grid is best when N ≥ 2 and the window is wide.
-type LayoutMode = 'tabs' | 'fleet' | 'grid';
+type LayoutMode = 'tabs' | 'fleet' | 'search' | 'usage' | 'grid';
 const LAYOUT_KEY = 'pretty-pty:layout-mode';
 function readStoredLayout(): LayoutMode {
   try {
     const v = window.localStorage.getItem(LAYOUT_KEY);
-    if (v === 'tabs' || v === 'fleet' || v === 'grid') return v;
+    if (v === 'tabs' || v === 'fleet' || v === 'search' || v === 'usage' || v === 'grid') return v;
   } catch { /* ignore */ }
   return 'tabs';
 }
@@ -320,6 +322,22 @@ function ConnectedApp(): JSX.Element {
             </button>
             <button
               type="button"
+              className={`layout-toggle-btn${layoutMode === 'search' ? ' is-active' : ''}`}
+              onClick={() => setLayoutMode('search')}
+              title="Search conversations across the fleet"
+            >
+              search
+            </button>
+            <button
+              type="button"
+              className={`layout-toggle-btn${layoutMode === 'usage' ? ' is-active' : ''}`}
+              onClick={() => setLayoutMode('usage')}
+              title="Local token usage and cost"
+            >
+              usage
+            </button>
+            <button
+              type="button"
               className={`layout-toggle-btn${layoutMode === 'grid' ? ' is-active' : ''}`}
               onClick={() => setLayoutMode('grid')}
               title="Tile every session"
@@ -329,7 +347,7 @@ function ConnectedApp(): JSX.Element {
           </div>
         ) : null}
         <ConnectionStatus
-          status={effectiveLayout !== 'fleet' && activeId
+          status={effectiveLayout === 'tabs' && activeId
             ? fromTerminalStatus(activeStatus.terminalStatus)
             : null}
         />
@@ -348,6 +366,10 @@ function ConnectedApp(): JSX.Element {
           />
         ) : effectiveLayout === 'fleet' ? (
           <FleetView onOpenSession={openFleetSession} />
+        ) : effectiveLayout === 'search' ? (
+          <SearchView onOpenSession={openFleetSession} />
+        ) : effectiveLayout === 'usage' ? (
+          <UsageDashboard />
         ) : effectiveLayout === 'grid' ? (
           sessions.length > 0 ? (
             <GridView

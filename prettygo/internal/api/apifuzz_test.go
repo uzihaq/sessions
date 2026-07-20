@@ -259,6 +259,10 @@ func (s *fuzzSessionService) Get(id string) (*state.Session, bool) {
 func (s *fuzzSessionService) RequestKill(context.Context, string, bool) error { return nil }
 func (s *fuzzSessionService) Input(context.Context, string, string) bool      { return true }
 func (s *fuzzSessionService) DeepDiagnostics() []map[string]any               { return []map[string]any{} }
+func (s *fuzzSessionService) UpdateTags(_ string, tags map[string]string) (map[string]string, error) {
+	return state.CloneTags(tags), nil
+}
+func (s *fuzzSessionService) Tags(string) (map[string]string, error) { return nil, nil }
 
 type fuzzPushService struct{}
 

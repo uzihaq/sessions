@@ -240,6 +240,10 @@ func (m *Manager) List(includeExited bool) []state.SessionInfo {
 }
 func (m *Manager) Get(id string) (*state.Session, bool) { return m.registry.Get(id) }
 func (m *Manager) DeepDiagnostics() []map[string]any    { return m.registry.DeepDiagnostics() }
+func (m *Manager) UpdateTags(id string, tags map[string]string) (map[string]string, error) {
+	return m.registry.UpdateTags(id, tags)
+}
+func (m *Manager) Tags(id string) (map[string]string, error) { return m.registry.Tags(id) }
 
 func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSession, creatorKind ledger.CreatorKind, creatorID string) error {
 	if m.boundaries == nil {
@@ -495,6 +499,9 @@ func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionIn
 		}
 		if lane.Tool == string(state.ToolLane) {
 			info.Kind = state.KindLane
+		}
+		if metadata, metadataErr := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, lane.LaneID+".json")); metadataErr == nil {
+			info.Tags = state.CloneTags(metadata.Tags)
 		}
 		infos = append(infos, info)
 		seen[lane.LaneID] = struct{}{}

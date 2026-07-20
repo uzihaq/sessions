@@ -55,6 +55,13 @@ A distributable build is complete only when all of these are true:
 The app must never call a broad cleanup command during install or update.
 Recovery remains an explicit user action through `pretty recover`.
 
+The implementation pins the updater public key and reads
+`https://pretty-pty.somewhere.site/releases/latest.json`. Somewhere hosts only
+that small mutable metadata file; every signed app archive is immutable and
+versioned on GitHub Releases. The settings menu checks explicitly and tells the
+user before installation that only the UI restarts—the launchd daemon and its
+runners continue independently.
+
 ## Release sequence
 
 1. Build and rehearse from source on the MacBook with isolated scratch state.

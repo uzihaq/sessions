@@ -16,8 +16,12 @@ local status polling, and lifecycle status exposed to the frontend.
 while `src-tauri/src/lifecycle.rs` verifies their manifest, stages immutable
 runtime versions, installs `tech.somewhere.sessions.daemon`, waits for health
 and discovery, verifies the live-session baseline, and rolls back on failure.
-The app-bundle updater itself remains the next release layer; its contract lives
-in [`NATIVE_APP.md`](NATIVE_APP.md).
+The signed app-bundle updater is configured in `src-tauri/tauri.conf.json` and
+exposed through the native-only settings flow in
+`frontend/src/lib/tauriBridge.ts`. `scripts/release-app.sh` validates the
+version, signing key, notarization credentials, nested signatures, stapling,
+Gatekeeper assessment, and renders the static Tauri manifest. Its release
+contract lives in [`NATIVE_APP.md`](NATIVE_APP.md).
 
 The native process is a management plane, not the owner of session work. Its
 installer writes and kickstarts the per-user daemon service, but launchd owns

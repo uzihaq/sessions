@@ -21,6 +21,7 @@ import (
 	"github.com/uzihaq/pretty-pty/prettygo/internal/integrations"
 	sessionruntime "github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/usage"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/watch"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/webassets"
 )
@@ -40,6 +41,7 @@ type Server struct {
 	lan                  *lanListener
 	backups              *backup.Service
 	integrationEndpoints *integrations.Service
+	usage                *usage.Service
 }
 
 type sessionService interface {
@@ -48,6 +50,8 @@ type sessionService interface {
 	Create(context.Context, state.CreateSessionRequest) (state.SessionInfo, error)
 	List(bool) []state.SessionInfo
 	Get(string) (*state.Session, bool)
+	Tags(string) (map[string]string, error)
+	UpdateTags(string, map[string]string) (map[string]string, error)
 	RequestKill(context.Context, string, bool) error
 	Input(context.Context, string, string) bool
 	DeepDiagnostics() []map[string]any
@@ -77,6 +81,25 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
 		}),
 	}
+	usageRoot := config.UserStateRoot
+	if usageRoot == "" {
+		usageRoot = config.StateRoot
+	}
+	claudeRoots := []string{
+		filepath.Join(config.DefaultCwd, ".claude", "projects"),
+		filepath.Join(config.DefaultCwd, ".config", "claude", "projects"),
+	}
+	if configured := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configured != "" {
+		claudeRoots = append(claudeRoots, filepath.Join(configured, "projects"))
+	}
+	codexRoot := filepath.Join(config.DefaultCwd, ".codex")
+	if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
+		codexRoot = configured
+	}
+	server.usage = usage.NewService(usage.Options{
+		Path: filepath.Join(usageRoot, "usage.sqlite3"), ClaudeRoots: claudeRoots,
+		CodexRoots: []string{filepath.Join(codexRoot, "sessions")}, RunnerStateDir: config.RunnerStateDir,
+	})
 	server.lan = newLANListener(config, server)
 	// Create the token while the daemon is starting, including when the open
 	// escape hatch is present. This keeps a fresh install secure without an
@@ -219,6 +242,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if s.handleSearchRoute(response, request, corsOrigin) {
 		return
 	}
+	if s.handleUsageRoute(response, request, corsOrigin) {
+		return
+	}
 	if s.handleProfilesRoute(response, request, corsOrigin) {
 		return
 	}
@@ -317,6 +343,35 @@ func (s *Server) authorized(request *http.Request) (bool, error) {
 
 func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.Request, id, suffix, corsOrigin string) {
 	session, ok := s.registry.Get(id)
+	if suffix == "/tags" && request.Method == http.MethodGet {
+		tags, err := s.registry.Tags(id)
+		if err != nil {
+			s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "unknown session", "id": id}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"tags": tags}, corsOrigin)
+		return
+	}
+	if suffix == "/tags" && request.Method == http.MethodPut {
+		var body struct {
+			Tags map[string]string `json:"tags"`
+		}
+		if err := readJSON(request, &body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		tags, err := s.registry.UpdateTags(id, body.Tags)
+		if err != nil {
+			status := http.StatusBadRequest
+			if strings.Contains(err.Error(), "not found") || errors.Is(err, os.ErrNotExist) {
+				status = http.StatusNotFound
+			}
+			s.sendJSON(response, status, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"tags": tags}, corsOrigin)
+		return
+	}
 	if suffix == "" && request.Method == http.MethodDelete {
 		if !ok {
 			s.sendJSON(response, http.StatusNotFound, map[string]any{"ok": false}, corsOrigin)
@@ -402,7 +457,7 @@ func (s *Server) sendJSON(response http.ResponseWriter, status int, body any, co
 		response.Header().Set("Access-Control-Allow-Origin", corsOrigin)
 	}
 	response.Header().Set("Vary", "Origin")
-	response.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+	response.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 	response.Header().Set("Access-Control-Allow-Headers", "content-type, authorization, x-pretty-creator-session, x-pretty-owner-id")
 	response.WriteHeader(status)
 	if status == http.StatusNoContent {

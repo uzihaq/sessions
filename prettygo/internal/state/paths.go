@@ -54,25 +54,26 @@ func EnsureDir(dir string) error {
 // Metadata mirrors prettyd/src/runner.ts SessionMeta. Field order is kept the
 // same so the human-readable JSON also matches the normative implementation.
 type Metadata struct {
-	ID                string   `json:"id"`
-	Name              string   `json:"name,omitempty"`
-	Description       string   `json:"description,omitempty"`
-	DescriptionSource string   `json:"description_source,omitempty"`
-	Kind              string   `json:"kind,omitempty"`
-	SpecPath          string   `json:"specPath,omitempty"`
-	Profile           string   `json:"profile,omitempty"`
-	ConfigDir         string   `json:"config_dir,omitempty"`
-	Cmd               string   `json:"cmd"`
-	Args              []string `json:"args"`
-	Cwd               string   `json:"cwd"`
-	Cols              int      `json:"cols"`
-	Rows              int      `json:"rows"`
-	CreatedAt         int64    `json:"createdAt"`
-	PID               int      `json:"pid"`
-	SockPath          string   `json:"sockPath"`
-	ConversationID    string   `json:"conversationId,omitempty"`
-	RemoteEndpoint    string   `json:"remoteEndpoint,omitempty"`
-	ClaudeSessionID   string   `json:"claudeSessionId,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name,omitempty"`
+	Description       string            `json:"description,omitempty"`
+	DescriptionSource string            `json:"description_source,omitempty"`
+	Tags              map[string]string `json:"tags,omitempty"`
+	Kind              string            `json:"kind,omitempty"`
+	SpecPath          string            `json:"specPath,omitempty"`
+	Profile           string            `json:"profile,omitempty"`
+	ConfigDir         string            `json:"config_dir,omitempty"`
+	Cmd               string            `json:"cmd"`
+	Args              []string          `json:"args"`
+	Cwd               string            `json:"cwd"`
+	Cols              int               `json:"cols"`
+	Rows              int               `json:"rows"`
+	CreatedAt         int64             `json:"createdAt"`
+	PID               int               `json:"pid"`
+	SockPath          string            `json:"sockPath"`
+	ConversationID    string            `json:"conversationId,omitempty"`
+	RemoteEndpoint    string            `json:"remoteEndpoint,omitempty"`
+	ClaudeSessionID   string            `json:"claudeSessionId,omitempty"`
 }
 
 // CompletionManifest is the durable terminal fact emitted by a headless lane.

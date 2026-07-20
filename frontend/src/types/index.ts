@@ -8,6 +8,7 @@ export type SessionTool = 'claude-code' | 'codex' | 'terminal';
 
 export interface SessionInfo {
   id: string;
+  tags?: Record<string, string>;
   cmd: string;
   args: string[];
   cwd: string;
@@ -41,6 +42,7 @@ export interface CreateSessionRequest {
   cols?: number;
   rows?: number;
   env?: Record<string, string>;
+  tags?: Record<string, string>;
 }
 
 export interface DirectoryCandidate {

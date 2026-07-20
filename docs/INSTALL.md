@@ -1,9 +1,10 @@
 # Install Sessions
 
 Sessions.app is the primary macOS package. Its bundled-runtime installer and
-updater are still under construction, so the current instructions below are
-for developers and early-access headless installs—not the finished consumer
-app. Do not use them to change the production mini.
+signed updater are implemented; the first public download is gated on Apple
+notarization and publication of the matching immutable updater artifact. The
+instructions below remain for developers and early-access headless installs.
+Do not use them to change the production mini.
 
 The standalone runtime ships as three static Go binaries:
 

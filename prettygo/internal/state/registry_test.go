@@ -24,7 +24,10 @@ func TestDiscoveryAttachesKnownSocketsAndPreservesUnknownOnes(t *testing.T) {
 	}
 	launcher := prototest.NewLauncher()
 	first := NewRegistry(config, launcher)
-	created, err := first.Create(context.Background(), CreateSessionRequest{Cmd: "/bin/sh", Cwd: root, Name: "survives discovery"})
+	created, err := first.Create(context.Background(), CreateSessionRequest{
+		Cmd: "/bin/sh", Cwd: root, Name: "survives discovery",
+		Tags: map[string]string{"Product.Line": " Sessions "},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +40,7 @@ func TestDiscoveryAttachesKnownSocketsAndPreservesUnknownOnes(t *testing.T) {
 	if err := second.Discover(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if sessions := second.List(false); len(sessions) != 1 || sessions[0].ID != created.ID || sessions[0].Name != "survives discovery" {
+	if sessions := second.List(false); len(sessions) != 1 || sessions[0].ID != created.ID || sessions[0].Name != "survives discovery" || sessions[0].Tags["product.line"] != "Sessions" {
 		t.Fatalf("discovered sessions = %#v", sessions)
 	}
 	metadata, err := ReadRunnerMetadata(filepath.Join(config.RunnerStateDir, created.ID+".json"))
@@ -46,6 +49,23 @@ func TestDiscoveryAttachesKnownSocketsAndPreservesUnknownOnes(t *testing.T) {
 	}
 	if metadata.Name != "survives discovery" {
 		t.Fatalf("persisted metadata name = %q", metadata.Name)
+	}
+	if metadata.Tags["product.line"] != "Sessions" {
+		t.Fatalf("persisted metadata tags = %#v", metadata.Tags)
+	}
+	updated, err := second.UpdateTags(created.ID, map[string]string{"team": "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated["team"] != "native" || len(updated) != 1 {
+		t.Fatalf("UpdateTags() = %#v", updated)
+	}
+	metadata, err = ReadRunnerMetadata(filepath.Join(config.RunnerStateDir, created.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Tags["team"] != "native" || len(metadata.Tags) != 1 {
+		t.Fatalf("updated metadata tags = %#v", metadata.Tags)
 	}
 
 	unknownID := "00000000-0000-4000-8000-000000000000"

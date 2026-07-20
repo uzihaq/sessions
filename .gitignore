@@ -20,3 +20,4 @@ node_modules/
 prettygo/dist-go/
 /src-tauri/runtime/*
 !/src-tauri/runtime/.gitkeep
+/release/out/

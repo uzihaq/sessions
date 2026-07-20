@@ -19,6 +19,7 @@ Daily workflows:
   new                      create an interactive session
   profiles                 list Claude and Codex login profiles
   run                      run a command in a headless lane
+  tags                     view or edit session tags
   worktrees                list or safely clean Pretty-created worktrees
   ls                       list sessions
   sessions                 list agent sessions and headless lanes
@@ -28,6 +29,7 @@ Daily workflows:
   wait                     wait for session idle or lane exit
   last                     print recent conversation or lane output
   search                   search normalized session chat history
+  usage                    report local Claude and Codex token usage
   status                   show a compact session status card
   kill                     terminate sessions or lanes
   recover                  inspect or reopen recoverable sessions
@@ -74,11 +76,11 @@ Run `pretty help <command>` for usage, options, and examples.
 
 ```text
 Usage:
-  pretty new [--tool claude|codex|shell] [--profile NAME] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]
+  pretty new [--tool claude|codex|shell] [--profile NAME] [--cwd P] [--name L] [--description PURPOSE] [--tag KEY=VALUE ...] [--worktree [--base REF]] [options] [args...]
 
 create an interactive session
 
-Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --profile selects a private Claude or Codex login under Pretty's user state; first use opens the tool's own login flow. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.
+Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --profile selects a private Claude or Codex login under Pretty's user state; first use opens the tool's own login flow. --description (alias --desc) records why the session exists. Repeat --tag key=value for product, client, team, cost center, or any user-defined dimension. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.
 
 Examples:
   pretty new --tool claude --profile work --cwd ~/work
@@ -110,7 +112,7 @@ Global flags --json, --host, and --port must appear before the command.
 
 ```text
 Usage:
-  pretty run [--name N] [--description PURPOSE] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>
+  pretty run [--name N] [--description PURPOSE] [--tag KEY=VALUE ...] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>
 
 run a command in a headless lane
 
@@ -120,6 +122,25 @@ Examples:
   pretty run -- make test
   pretty run --name lint --worktree --wait --output -- npm run lint
   pretty --json run --wait -- sh -c 'exit 3'
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty tags`
+
+```text
+Usage:
+  pretty tags <session> [key=value ...] [--remove key ...] [--clear]
+
+view or edit session tags
+
+With no edits, print a session's tags. key=value adds or replaces a tag, --remove deletes one key, and --clear removes all tags. Tags are durable daemon-owned dimensions used by usage reports and the Sessions dashboard.
+
+Examples:
+  pretty tags 0123abcd
+  pretty tags 0123abcd product=Sessions client=Acme
+  pretty tags 0123abcd --remove client
+  pretty --json tags 0123abcd
 
 Global flags --json, --host, and --port must appear before the command.
 ```
@@ -282,6 +303,26 @@ Examples:
   pretty search 'failed|timed out' --regex --role assistant
   pretty search '"migration plan" OR rollback' --ranked
   pretty search needle --session 0123abcd --json
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `pretty usage`
+
+```text
+Usage:
+  pretty usage [daily|weekly|monthly|session|tag] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]
+
+report local Claude and Codex token usage
+
+Incrementally index the local Claude Code and Codex JSONL stores, then report token usage and estimated cost by day, week, month, session, or one session-tag dimension. auto uses a recorded cost when present and otherwise calculates with pinned ccusage pricing semantics; calculate always prices tokens; display shows recorded costs only. No usage data leaves the daemon.
+
+Examples:
+  pretty usage
+  pretty usage weekly --since 2026-07-01
+  pretty usage session --mode calculate
+  pretty usage tag --dimension product
+  pretty --json usage monthly
 
 Global flags --json, --host, and --port must appear before the command.
 ```

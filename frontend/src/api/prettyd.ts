@@ -152,6 +152,32 @@ export async function listServerSessions(
   return body.sessions;
 }
 
+export interface SearchMatch {
+  session_id: string;
+  name: string;
+  tool: 'claude' | 'codex' | 'shell';
+  role: 'user' | 'assistant';
+  timestamp: string | null;
+  text: string;
+  snippet: string;
+}
+
+export interface SearchResponse { matches: SearchMatch[]; total: number }
+
+export async function searchServer(
+  server: ServerConfig,
+  options: { query: string; mode: 'ranked' | 'exact' | 'regex'; role?: string; tool?: string; limit?: number },
+  signal?: AbortSignal
+): Promise<SearchResponse> {
+  const query = new URLSearchParams({ q: options.query, limit: String(options.limit ?? 100) });
+  if (options.mode === 'ranked') query.set('ranked', 'true');
+  if (options.mode === 'regex') query.set('regex', 'true');
+  if (options.role) query.set('role', options.role);
+  if (options.tool) query.set('tool', options.tool);
+  const r = await serverFetch(server, `${httpBaseForServer(server)}/api/search?${query.toString()}`, { signal });
+  return json<SearchResponse>(r);
+}
+
 export async function createSession(req: CreateSessionRequest): Promise<SessionInfo> {
   const r = await apiFetch(`${httpBase()}/api/sessions`, {
     method: 'POST',
@@ -159,6 +185,72 @@ export async function createSession(req: CreateSessionRequest): Promise<SessionI
     body: JSON.stringify(req)
   });
   return json<SessionInfo>(r);
+}
+
+export async function updateSessionTags(
+  sessionId: string,
+  tags: Record<string, string>
+): Promise<Record<string, string>> {
+  const r = await apiFetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/tags`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tags })
+  });
+  const body = await json<{ tags: Record<string, string> | null }>(r);
+  return body.tags ?? {};
+}
+
+export interface UsageTokens {
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+}
+
+export interface UsageRow {
+  key: string;
+  start?: string;
+  provider?: string;
+  sessionId?: string;
+  providerSessionId?: string;
+  tags?: Record<string, string>;
+  models: string[];
+  tokens: UsageTokens;
+  costUSD: number;
+  recordedCostUSD: number;
+  calculatedCostUSD: number;
+  entries: number;
+  missingPricingEntries: number;
+}
+
+export interface UsageReport {
+  generatedAt: string;
+  group: 'daily' | 'weekly' | 'monthly' | 'session' | 'tag';
+  mode: 'auto' | 'calculate' | 'display';
+  dimension?: string;
+  pricing: { source: string; revision: string; url: string; note: string };
+  scan: { filesSeen: number; filesRead: number; linesRead: number; entriesSeen: number };
+  rows: UsageRow[];
+  totals: UsageRow;
+}
+
+export interface UsageOptions {
+  group: UsageReport['group'];
+  mode: UsageReport['mode'];
+  provider?: 'claude' | 'codex';
+  since?: string;
+  until?: string;
+  dimension?: string;
+}
+
+export async function fetchUsage(options: UsageOptions, signal?: AbortSignal): Promise<UsageReport> {
+  const query = new URLSearchParams({ group: options.group, mode: options.mode });
+  if (options.provider) query.set('provider', options.provider);
+  if (options.since) query.set('since', options.since);
+  if (options.until) query.set('until', options.until);
+  if (options.dimension) query.set('dimension', options.dimension);
+  const r = await apiFetch(`${httpBase()}/api/usage?${query.toString()}`, { signal });
+  return json<UsageReport>(r);
 }
 
 export interface Snapshot {

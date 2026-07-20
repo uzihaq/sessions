@@ -209,6 +209,33 @@ func (a *app) postJSON(path string, body, target any, errorCode int) error {
 	return nil
 }
 
+func (a *app) putJSON(path string, body, target any, errorCode int) error {
+	response, err := a.api.request(context.Background(), http.MethodPut, path, body, 0)
+	if err != nil {
+		return fail(errorCode, "%s → %s", path, err)
+	}
+	if response.status == http.StatusNotFound {
+		if id := sessionIDFromAPIPath(path); id != "" {
+			return fail(1, "%s", unknownSessionMessage(id))
+		}
+	}
+	if response.status >= 400 {
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(response.body, &payload) == nil && payload.Error != "" {
+			return fail(errorCode, "%s", payload.Error)
+		}
+		return fail(errorCode, "%s → %d %s", path, response.status, prefixBytes(response.body, 200))
+	}
+	if target != nil {
+		if err := json.Unmarshal(response.body, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *app) delete(path string) (bool, error) {
 	response, err := a.api.request(context.Background(), http.MethodDelete, path, nil, 0)
 	if err != nil {

@@ -36,7 +36,8 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
       old.rows === f.rows &&
       old.pid === f.pid &&
       old.claudeCustomTitle === f.claudeCustomTitle &&
-      old.claudeAiTitle === f.claudeAiTitle
+      old.claudeAiTitle === f.claudeAiTitle &&
+      tagsEqual(old.tags, f.tags)
     ) {
       return old;
     }
@@ -47,6 +48,16 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
   // (App, SessionTabs, GridView) don't re-render at all on an idle 3s poll.
   if (next.length === prev.length && next.every((s, i) => s === prev[i])) return prev;
   return next;
+}
+
+function tagsEqual(
+  left: Record<string, string> | undefined,
+  right: Record<string, string> | undefined
+): boolean {
+  const leftEntries = Object.entries(left ?? {});
+  const rightEntries = Object.entries(right ?? {});
+  return leftEntries.length === rightEntries.length
+    && leftEntries.every(([key, value]) => right?.[key] === value);
 }
 
 interface SessionsState {
@@ -62,6 +73,7 @@ interface SessionsState {
   refresh: () => Promise<void>;
   create: (req: CreateSessionRequest) => Promise<SessionInfo>;
   kill: (id: string) => Promise<void>;
+  updateTags: (id: string, tags: Record<string, string>) => Promise<void>;
   setActive: (id: string | null) => void;
 }
 
@@ -75,6 +87,7 @@ const ACTIVE_KEY = 'pretty-pty:active-session:v1';
 
 interface CachedSession {
   id: string;
+  tags?: Record<string, string>;
   cmd: string;
   args: string[];
   cwd: string;
@@ -122,6 +135,7 @@ function writeCache(sessions: SessionInfo[], activeId: string | null): void {
   try {
     const stripped: CachedSession[] = sessions.map((s) => ({
       id: s.id,
+      tags: s.tags,
       cmd: s.cmd,
       args: s.args,
       cwd: s.cwd,
@@ -187,6 +201,17 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const nextActive = s.activeId === id ? (remaining[0]?.id ?? null) : s.activeId;
       writeCache(remaining, nextActive);
       return { sessions: remaining, activeId: nextActive };
+    });
+  },
+
+  updateTags: async (id, requested) => {
+    const tags = await api.updateSessionTags(id, requested);
+    set((state) => {
+      const sessions = state.sessions.map((session) => (
+        session.id === id ? { ...session, tags } : session
+      ));
+      writeCache(sessions, state.activeId);
+      return { sessions };
     });
   },
 

@@ -28,9 +28,9 @@ const (
 // top-level help, and per-command help. Keep the daily path first.
 var commandTable = []commandSpec{
 	{
-		name: "new", usage: "new [--tool claude|codex|shell] [--profile NAME] [--cwd P] [--name L] [--description PURPOSE] [--worktree [--base REF]] [options] [args...]",
+		name: "new", usage: "new [--tool claude|codex|shell] [--profile NAME] [--cwd P] [--name L] [--description PURPOSE] [--tag KEY=VALUE ...] [--worktree [--base REF]] [options] [args...]",
 		summary: "create an interactive session", group: dailyCommandGroup,
-		longHelp: "Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --profile selects a private Claude or Codex login under Pretty's user state; first use opens the tool's own login flow. --description (alias --desc) records why the session exists. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.",
+		longHelp: "Create a session. --tool selects a built-in Claude, Codex, or shell preset; --cmd supplies a command directly. --profile selects a private Claude or Codex login under Pretty's user state; first use opens the tool's own login flow. --description (alias --desc) records why the session exists. Repeat --tag key=value for product, client, team, cost center, or any user-defined dimension. --worktree creates pretty/<name> from the current branch (or --base REF), records its provenance, and runs the session there. Pretty does not create node_modules symlinks; install dependencies in the worktree when needed. Session controls include --model, --effort, --fast, --on-idle, --wait-ready, and --force.",
 		examples: []string{"pretty new --tool claude --profile work --cwd ~/work", "pretty new --tool codex --name parser-fix --worktree", "pretty new --tool codex --name release-fix --worktree --base release", "pretty new --cmd /bin/zsh"},
 		run:      (*app).cmdNew,
 	},
@@ -41,11 +41,17 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty profiles", "pretty --json profiles"}, run: (*app).cmdProfiles,
 	},
 	{
-		name: "run", usage: "run [--name N] [--description PURPOSE] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>",
+		name: "run", usage: "run [--name N] [--description PURPOSE] [--tag KEY=VALUE ...] [--cwd D] [--worktree [--base REF]] [--spec FILE] [--wait [--output]] -- <cmd args...>",
 		summary: "run a command in a headless lane", group: dailyCommandGroup,
 		longHelp: "Create a headless lane for the command following the first -- separator. --description (alias --desc) records why the lane exists. --worktree creates an isolated Pretty-owned worktree; it does not symlink node_modules. Every child argument after the separator is passed unchanged. Without --wait, print the lane id and return. --wait blocks for completion and propagates the child exit code; --output prints the captured output tail.",
 		examples: []string{"pretty run -- make test", "pretty run --name lint --worktree --wait --output -- npm run lint", "pretty --json run --wait -- sh -c 'exit 3'"},
 		run:      (*app).cmdRun,
+	},
+	{
+		name: "tags", usage: "tags <session> [key=value ...] [--remove key ...] [--clear]",
+		summary: "view or edit session tags", group: dailyCommandGroup, localJSON: true,
+		longHelp: "With no edits, print a session's tags. key=value adds or replaces a tag, --remove deletes one key, and --clear removes all tags. Tags are durable daemon-owned dimensions used by usage reports and the Sessions dashboard.",
+		examples: []string{"pretty tags 0123abcd", "pretty tags 0123abcd product=Sessions client=Acme", "pretty tags 0123abcd --remove client", "pretty --json tags 0123abcd"}, run: (*app).cmdTags,
 	},
 	{
 		name: "worktrees", usage: "worktrees [clean [--dry-run]]",
@@ -100,6 +106,12 @@ var commandTable = []commandSpec{
 		summary: "search normalized session chat history", group: dailyCommandGroup, localJSON: true,
 		longHelp: "Search chat history across every live and persisted session known to the daemon. Matching is a case-insensitive substring by default; --regex uses a Go regular expression. --ranked opts into BM25-ranked, stemmed search with quoted phrases and AND/OR/NOT boolean operators, and cannot be combined with --regex. Filters are evaluated by the daemon, so --host can search a remote Pretty instance.",
 		examples: []string{"pretty search 'migration plan'", "pretty search 'failed|timed out' --regex --role assistant", `pretty search '"migration plan" OR rollback' --ranked`, "pretty search needle --session 0123abcd --json"}, run: (*app).cmdSearch,
+	},
+	{
+		name: "usage", usage: "usage [daily|weekly|monthly|session|tag] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]",
+		summary: "report local Claude and Codex token usage", group: dailyCommandGroup, localJSON: true,
+		longHelp: "Incrementally index the local Claude Code and Codex JSONL stores, then report token usage and estimated cost by day, week, month, session, or one session-tag dimension. auto uses a recorded cost when present and otherwise calculates with pinned ccusage pricing semantics; calculate always prices tokens; display shows recorded costs only. No usage data leaves the daemon.",
+		examples: []string{"pretty usage", "pretty usage weekly --since 2026-07-01", "pretty usage session --mode calculate", "pretty usage tag --dimension product", "pretty --json usage monthly"}, run: (*app).cmdUsage,
 	},
 	{
 		name: "status", usage: "status <id>",

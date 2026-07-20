@@ -38,6 +38,7 @@ interface FleetViewProps {
 // machine therefore cannot delay updates from any other machine.
 export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
   const servers = useServers((state) => state.servers);
+  const [includeExited, setIncludeExited] = useState(false);
 
   return (
     <div className="fleet-view" aria-label="Fleet sessions">
@@ -46,12 +47,17 @@ export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
           <h1>Fleet</h1>
           <p>Live sessions across {servers.length} {servers.length === 1 ? 'machine' : 'machines'}</p>
         </div>
+        <label className="fleet-history-toggle">
+          <input type="checkbox" checked={includeExited} onChange={(event) => setIncludeExited(event.target.checked)} />
+          Show history
+        </label>
       </div>
       <div className="fleet-server-list">
         {servers.map((server) => (
           <FleetServerGroup
             key={server.id}
             server={server}
+            includeExited={includeExited}
             onOpenSession={(sessionId) => onOpenSession(server.id, sessionId)}
           />
         ))}
@@ -62,9 +68,11 @@ export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
 
 function FleetServerGroup({
   server,
+  includeExited,
   onOpenSession
 }: {
   server: ServerConfig;
+  includeExited: boolean;
   onOpenSession: (sessionId: string) => void;
 }): JSX.Element {
   const [snapshot, setSnapshot] = useState<ServerSnapshot>(INITIAL_SNAPSHOT);
@@ -131,6 +139,8 @@ function FleetServerGroup({
   }, [server]);
 
   const unavailable = snapshot.reachability === 'unreachable';
+  const visibleSessions = includeExited ? snapshot.sessions : snapshot.sessions.filter((session) => !session.exited);
+  const activeCount = snapshot.sessions.filter((session) => !session.exited).length;
   const reachabilityLabel = snapshot.reachability === 'reachable'
     ? 'reachable'
     : snapshot.reachability === 'unreachable'
@@ -146,7 +156,7 @@ function FleetServerGroup({
         />
         <div className="fleet-server-identity">
           <h2>{server.name}</h2>
-          <span>{formatServerEndpoint(server)}</span>
+          <span>{formatServerEndpoint(server)} · {activeCount} active{snapshot.sessions.length > activeCount ? ` · ${snapshot.sessions.length - activeCount} retained` : ''}</span>
         </div>
         <span className={`fleet-reachability-label is-${snapshot.reachability}`}>
           {reachabilityLabel}
@@ -154,15 +164,15 @@ function FleetServerGroup({
       </header>
 
       <div className="fleet-session-list">
-        {snapshot.sessions.map((session) => (
+        {visibleSessions.map((session) => (
           <FleetSessionRow
             key={session.id}
             session={session}
-            disabled={unavailable}
+            disabled={unavailable || session.exited}
             onOpen={() => onOpenSession(session.id)}
           />
         ))}
-        {snapshot.sessions.length === 0 ? (
+        {visibleSessions.length === 0 ? (
           <div className="fleet-session-empty">
             {snapshot.reachability === 'checking'
               ? 'Checking machine…'
@@ -170,6 +180,8 @@ function FleetServerGroup({
               ? 'Session data unavailable'
               : snapshot.sessionsError
               ? snapshot.sessionsError
+              : snapshot.sessions.length > 0
+              ? 'No active sessions — enable Show history to see retained work'
               : 'No sessions'}
           </div>
         ) : null}
@@ -200,7 +212,7 @@ function FleetSessionRow({
       className="fleet-session-row"
       disabled={disabled}
       onClick={onOpen}
-      aria-label={`Open ${label}, ${state}`}
+      aria-label={session.exited ? `${label}, retained history` : `Open ${label}, ${state}`}
     >
       <span className="fleet-session-icon" aria-hidden>
         <ParserIcon icon={TOOL_ICONS[session.tool]} size={18} />
@@ -208,6 +220,11 @@ function FleetSessionRow({
       <span className="fleet-session-main">
         <span className="fleet-session-name">{label}</span>
         <span className="fleet-session-cwd">{cwd}</span>
+        {session.tags && Object.keys(session.tags).length > 0 ? (
+          <span className="fleet-session-tags">
+            {Object.entries(session.tags).slice(0, 3).map(([key, value]) => <span key={key}>{key}={value}</span>)}
+          </span>
+        ) : null}
       </span>
       <span className={`fleet-session-state is-${state}`}>
         <span className="fleet-session-state-dot" aria-hidden />

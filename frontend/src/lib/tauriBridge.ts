@@ -83,3 +83,62 @@ export async function getNativeRuntimeStatus(): Promise<NativeRuntimeStatus | nu
   if (!isTauri()) return null;
   return invoke<NativeRuntimeStatus>('runtime_status');
 }
+
+export interface NativeUpdateInfo {
+  currentVersion: string;
+  version: string;
+  notes: string | null;
+  publishedAt: string | null;
+}
+
+export interface NativeUpdateProgress {
+  downloadedBytes: number;
+  totalBytes: number | null;
+}
+
+type PendingUpdate = Awaited<ReturnType<typeof import('@tauri-apps/plugin-updater')['check']>>;
+
+let pendingUpdate: PendingUpdate = null;
+
+export async function checkForNativeUpdate(): Promise<NativeUpdateInfo | null> {
+  if (!isTauri()) return null;
+  if (pendingUpdate) {
+    await pendingUpdate.close();
+    pendingUpdate = null;
+  }
+  const { check } = await import('@tauri-apps/plugin-updater');
+  pendingUpdate = await check({ timeout: 12_000 });
+  if (!pendingUpdate) return null;
+  return {
+    currentVersion: pendingUpdate.currentVersion,
+    version: pendingUpdate.version,
+    notes: pendingUpdate.body ?? null,
+    publishedAt: pendingUpdate.date ?? null
+  };
+}
+
+export async function installNativeUpdate(
+  onProgress?: (progress: NativeUpdateProgress) => void
+): Promise<void> {
+  if (!isTauri()) throw new Error('Updates are available only in Sessions.app');
+  if (!pendingUpdate) throw new Error('Check for an update first');
+
+  let downloadedBytes = 0;
+  let totalBytes: number | null = null;
+  await pendingUpdate.downloadAndInstall((event) => {
+    if (event.event === 'Started') {
+      downloadedBytes = 0;
+      totalBytes = event.data.contentLength ?? null;
+    } else if (event.event === 'Progress') {
+      downloadedBytes += event.data.chunkLength;
+    } else if (event.event === 'Finished' && totalBytes !== null) {
+      downloadedBytes = totalBytes;
+    }
+    onProgress?.({ downloadedBytes, totalBytes });
+  });
+
+  // Relaunch only the UI process. The daemon and every runner are launchd-owned
+  // and remain alive across this replacement.
+  const { relaunch } = await import('@tauri-apps/plugin-process');
+  await relaunch();
+}

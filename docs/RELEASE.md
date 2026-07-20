@@ -8,17 +8,17 @@ update story.
 
 The checked-in Tauri application builds as `Sessions.app`. It bundles signed Go
 binaries and implements idempotent first install, health/discovery checks,
-live-session baseline verification, and rollback for daemon upgrades. It does
-not yet update the app bundle itself or publish a signed updater feed. Do not
-distribute it as the finished product until the remaining v2 gate in
-[`NATIVE_APP.md`](NATIVE_APP.md) is complete.
+live-session baseline verification, rollback for daemon upgrades, and a signed
+Tauri updater. The first public updater manifest is intentionally absent until
+the corresponding immutable archive is notarized and uploaded. Do not publish
+a placeholder manifest or point it at a mutable artifact.
 
-Developer builds may use:
+Developer builds may use their own updater key:
 
 ```sh
 npm install
 npm --prefix frontend install
-npm run tauri:build
+TAURI_SIGNING_PRIVATE_KEY=/path/to/development-updater.key TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' npm run tauri:build
 ```
 
 The resulting `.app` is a local development artifact. A Developer ID signature
@@ -42,6 +42,33 @@ Before publishing a version:
 
 The required Apple credential is an app-specific password or App Store Connect
 API key. Credentials are release secrets and must never be committed.
+
+## Reproducible updater release
+
+The production updater public key is committed at `release/updater.pub`; its
+private half lives outside the repository at
+`~/.config/pretty/sessions-updater.key` with mode `0600`. Back it up securely:
+losing it prevents every installed build from accepting future updates.
+
+Keep the version synchronized in `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml`, and `frontend/package.json`, prepare release notes, then
+run the non-mutating preflight:
+
+```sh
+scripts/release-app.sh --version 0.1.0 --notes-file /path/to/notes.md --dry-run
+```
+
+After exporting Apple notarization credentials, run the same command without
+`--dry-run`. It builds and signs `Sessions.app`, verifies nested runtime
+binaries, validates notarization/stapling/Gatekeeper, and writes
+`release/out/v<version>/latest.json`. It does not publish or install anything.
+
+Upload `Sessions.app.tar.gz` and its `.sig` to the immutable GitHub release tag
+first. Then use the somewhere project's `project_patch` operation to replace
+only `releases/latest.json` with the rendered manifest. Do not deploy a
+one-file directory: a full static deploy can remove the onboarding pages. Read
+the file back from production and install through the app's Settings → Sessions
+updates flow before announcing the release.
 
 ## Standalone binary archives
 

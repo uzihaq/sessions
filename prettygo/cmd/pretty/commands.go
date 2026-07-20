@@ -58,18 +58,19 @@ var toolPresets = map[string]toolPreset{
 var toolPresetOrder = []string{"claude", "codex", "shell"}
 
 type createSessionRequest struct {
-	Cmd         string   `json:"cmd,omitempty"`
-	Args        []string `json:"args,omitempty"`
-	Cwd         string   `json:"cwd,omitempty"`
-	Name        string   `json:"name,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Profile     string   `json:"profile,omitempty"`
-	Worktree    bool     `json:"worktree,omitempty"`
-	Base        string   `json:"base,omitempty"`
-	OnIdle      string   `json:"onIdle,omitempty"`
-	WaitReady   bool     `json:"waitReady,omitempty"`
-	Kind        string   `json:"kind,omitempty"`
-	Force       bool     `json:"force,omitempty"`
+	Cmd         string            `json:"cmd,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Cwd         string            `json:"cwd,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Profile     string            `json:"profile,omitempty"`
+	Worktree    bool              `json:"worktree,omitempty"`
+	Base        string            `json:"base,omitempty"`
+	OnIdle      string            `json:"onIdle,omitempty"`
+	WaitReady   bool              `json:"waitReady,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	Force       bool              `json:"force,omitempty"`
 }
 
 type agentControls struct {
@@ -199,6 +200,35 @@ func pluckDescription(args *[]string) (string, error) {
 	return strings.TrimSpace(description), nil
 }
 
+func pluckTags(args *[]string) (map[string]string, error) {
+	tags := make(map[string]string)
+	for index := 0; index < len(*args); {
+		if (*args)[index] != "--tag" {
+			index++
+			continue
+		}
+		if index+1 >= len(*args) || strings.HasPrefix((*args)[index+1], "--") {
+			return nil, fail(1, "--tag needs key=value (for example --tag product=Sessions)")
+		}
+		raw := (*args)[index+1]
+		key, value, found := strings.Cut(raw, "=")
+		if !found {
+			return nil, fail(1, "invalid tag %q; use key=value (for example --tag product=Sessions)", raw)
+		}
+		key = strings.TrimSpace(key)
+		if _, duplicate := tags[strings.ToLower(key)]; duplicate {
+			return nil, fail(1, "tag key %q was supplied more than once", strings.ToLower(key))
+		}
+		tags[key] = value
+		*args = append((*args)[:index], (*args)[index+2:]...)
+	}
+	normalized, err := state.NormalizeTags(tags)
+	if err != nil {
+		return nil, fail(1, "%s", err)
+	}
+	return normalized, nil
+}
+
 func pluckWorktreeOptions(args *[]string) (bool, string, error) {
 	worktree := removeFirst(args, "--worktree")
 	base, hasBase := pluck(args, "--base")
@@ -222,6 +252,10 @@ func (a *app) cmdNew(args []string) error {
 		return err
 	}
 	body.Description = description
+	body.Tags, err = pluckTags(&args)
+	if err != nil {
+		return err
+	}
 	if value, present := pluck(&args, "--profile"); present {
 		if strings.HasPrefix(value, "-") || value == "" {
 			return fail(1, "--profile needs a name")

@@ -288,6 +288,48 @@ func TestNewNameFlowsThroughPostBodyAndList(t *testing.T) {
 	}
 }
 
+func TestTagsCommandReadsMergesAndClearsTags(t *testing.T) {
+	const id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	tags := map[string]string{"product": "sessions"}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/api/sessions":
+			_ = json.NewEncoder(response).Encode(map[string]any{"sessions": []map[string]any{{"id": id, "name": "native"}}})
+		case request.Method == http.MethodGet && request.URL.Path == "/api/sessions/"+id+"/tags":
+			_ = json.NewEncoder(response).Encode(map[string]any{"tags": tags})
+		case request.Method == http.MethodPut && request.URL.Path == "/api/sessions/"+id+"/tags":
+			var body tagsResponse
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				http.Error(response, err.Error(), http.StatusBadRequest)
+				return
+			}
+			tags = body.Tags
+			_ = json.NewEncoder(response).Encode(body)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("HOME", t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--host", server.URL, "tags", id[:8], "Team= Core ", "--remove", "product"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("tags exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "team=Core\n" || tags["team"] != "Core" || len(tags) != 1 {
+		t.Fatalf("tags output=%q state=%#v", stdout.String(), tags)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"--host", server.URL, "tags", id, "--clear"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("tags --clear exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if stdout.String() != "(no tags)\n" || len(tags) != 0 {
+		t.Fatalf("clear output=%q state=%#v", stdout.String(), tags)
+	}
+}
+
 func TestDescriptionAndDescFlagsFlowThroughNewAndRun(t *testing.T) {
 	tests := []struct {
 		name string

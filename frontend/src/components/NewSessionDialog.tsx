@@ -4,6 +4,7 @@ import { DirectoryBrowser } from './DirectoryBrowser';
 import { fetchResumableSessions, type ResumableSession } from '../api/prettyd';
 import { readNewSessionDefaults, type NewSessionTool } from '../lib/newSessionDefaults';
 import { randomUUID } from '../lib/uuid';
+import { TagEditor } from './TagEditor';
 
 interface ToolDef {
   id: NewSessionTool;
@@ -110,6 +111,7 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
   const [tool, setTool] = useState<NewSessionTool>(initialDefaults.tool);
   const [skipPerms, setSkipPerms] = useState(initialDefaults.skipPerms);
   const [cwd, setCwd] = useState(initialDefaults.cwd);
+  const [tags, setTags] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -160,7 +162,8 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
         args,
         cwd: resumeCwd || undefined,
         cols: initialDefaults.cols,
-        rows: initialDefaults.rows
+        rows: initialDefaults.rows,
+        tags
       });
       onClose();
     } catch (err) {
@@ -212,6 +215,10 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
           <div className="field">
             <span className="field-label">Working directory</span>
             <DirectoryBrowser value={cwd} onChange={setCwd} />
+          </div>
+          <div className="field">
+            <span className="field-label">Tags <span className="field-optional">optional</span></span>
+            <TagEditor value={tags} onChange={setTags} disabled={busy} />
           </div>
           {showSkipPerms ? (
             <label className="field-checkbox">

@@ -12,6 +12,13 @@ import {
 } from '../lib/newSessionDefaults';
 import { ServerSelector } from './ServerSelector';
 import { claimCurrentOriginPairing } from '../lib/hostedBootstrap';
+import {
+  checkForNativeUpdate,
+  installNativeUpdate,
+  isTauri,
+  type NativeUpdateInfo,
+  type NativeUpdateProgress
+} from '../lib/tauriBridge';
 
 interface Props {
   textSize: TextSize;
@@ -72,6 +79,10 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
   const [pairTicket, setPairTicket] = useState('');
   const [pairBusy, setPairBusy] = useState(false);
   const [pairMessage, setPairMessage] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<NativeUpdateInfo | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<NativeUpdateProgress | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [sessionDefaults, setSessionDefaults] = useState<NewSessionDefaults>(readNewSessionDefaults);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -189,6 +200,41 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
     }
   };
 
+  const checkForUpdate = async (): Promise<void> => {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateMessage(null);
+    setUpdateProgress(null);
+    try {
+      const available = await checkForNativeUpdate();
+      setUpdateInfo(available);
+      setUpdateMessage(available ? null : 'Sessions is up to date');
+    } catch (error) {
+      setUpdateInfo(null);
+      setUpdateMessage(error instanceof Error ? error.message : 'Could not check for updates');
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async (): Promise<void> => {
+    if (!updateInfo || updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateMessage('Downloading update…');
+    try {
+      await installNativeUpdate((progress) => {
+        setUpdateProgress(progress);
+        if (progress.totalBytes) {
+          const percent = Math.min(100, Math.round((progress.downloadedBytes / progress.totalBytes) * 100));
+          setUpdateMessage(`Downloading update… ${percent}%`);
+        }
+      });
+    } catch (error) {
+      setUpdateMessage(error instanceof Error ? error.message : 'Could not install update');
+      setUpdateBusy(false);
+    }
+  };
+
   return (
     <div className="settings-menu" ref={wrapRef}>
       <button
@@ -301,6 +347,54 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
           </label>
           {pushMessage ? (
             <div className="settings-menu-status">{pushMessage}</div>
+          ) : null}
+          {isTauri() ? (
+            <>
+              <div className="settings-menu-divider" />
+              <div className="settings-menu-section" aria-label="App updates">
+                <div className="settings-menu-section-title">Sessions updates</div>
+                {updateInfo ? (
+                  <button
+                    type="button"
+                    className="settings-menu-row settings-menu-clickable"
+                    disabled={updateBusy}
+                    onClick={() => void installUpdate()}
+                  >
+                    <span className="settings-menu-icon">↥</span>
+                    <span className="settings-menu-label">Install Sessions {updateInfo.version}</span>
+                    <span className="settings-menu-value">Restart app</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="settings-menu-row settings-menu-clickable"
+                    disabled={updateBusy}
+                    onClick={() => void checkForUpdate()}
+                  >
+                    <span className="settings-menu-icon">↻</span>
+                    <span className="settings-menu-label">Check for updates</span>
+                    <span className="settings-menu-value">{updateBusy ? 'Checking…' : ''}</span>
+                  </button>
+                )}
+                {updateMessage ? (
+                  <div className="settings-menu-status" role="status">{updateMessage}</div>
+                ) : null}
+                {updateBusy && updateProgress?.totalBytes ? (
+                  <progress
+                    className="settings-menu-progress"
+                    value={updateProgress.downloadedBytes}
+                    max={updateProgress.totalBytes}
+                    aria-label="Update download progress"
+                  />
+                ) : null}
+                {updateInfo?.notes ? (
+                  <div className="settings-menu-update-notes">{updateInfo.notes}</div>
+                ) : null}
+                {updateInfo ? (
+                  <div className="settings-menu-update-safe">Sessions keep running while the app restarts.</div>
+                ) : null}
+              </div>
+            </>
           ) : null}
           {/* Server selector — "this machine" + IP picker. Tucked into
               Settings because the user doesn't need to see the host:port

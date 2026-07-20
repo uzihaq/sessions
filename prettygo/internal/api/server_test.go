@@ -209,7 +209,8 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	createBody := map[string]any{
 		"cmd": "/bin/sh", "args": []string{"-l"}, "cwd": daemon.root,
 		"cols": 120, "rows": 40, "name": "acceptance fake",
-		"env": map[string]string{"SAFE_VALUE": "yes", "RUNNER_ID": "evil", "NODE_OPTIONS": "--require bad"},
+		"tags": map[string]string{"Product.Line": " Sessions "},
+		"env":  map[string]string{"SAFE_VALUE": "yes", "RUNNER_ID": "evil", "NODE_OPTIONS": "--require bad"},
 	}
 	encoded, _ := json.Marshal(createBody)
 	created := serve(t, daemon.handler, http.MethodPost, "/api/sessions", bytes.NewReader(encoded), "127.0.0.1:1", http.Header{"Content-Type": {"application/json"}})
@@ -218,7 +219,7 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	}
 	var info state.SessionInfo
 	decodeBody(t, created, &info)
-	if info.ID == "" || info.Name != "acceptance fake" || info.Tool != state.ToolTerminal || info.PID != daemon.launcher.PID {
+	if info.ID == "" || info.Name != "acceptance fake" || info.Tags["product.line"] != "Sessions" || info.Tool != state.ToolTerminal || info.PID != daemon.launcher.PID {
 		t.Fatalf("unexpected create response: %#v", info)
 	}
 
@@ -227,7 +228,7 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"id": "` + info.ID + `"`, `"name": "acceptance fake"`, `"cmd": "/bin/sh"`, `"sockPath"`} {
+	for _, want := range []string{`"id": "` + info.ID + `"`, `"name": "acceptance fake"`, `"product.line": "Sessions"`, `"cmd": "/bin/sh"`, `"sockPath"`} {
 		if !bytes.Contains(metadata, []byte(want)) {
 			t.Errorf("metadata missing %q: %s", want, metadata)
 		}
@@ -252,6 +253,19 @@ func TestSessionsLifecycleAndRouteShapes(t *testing.T) {
 	decodeBody(t, list, &listed)
 	if len(listed.Sessions) != 1 || listed.Sessions[0].ID != info.ID || listed.Sessions[0].Name != "acceptance fake" {
 		t.Fatalf("sessions after create = %#v", listed.Sessions)
+	}
+
+	tags := serve(t, daemon.handler, http.MethodGet, "/api/sessions/"+info.ID+"/tags", nil, "127.0.0.1:1", nil)
+	if tags.Code != http.StatusOK || !strings.Contains(tags.Body.String(), `"product.line":"Sessions"`) {
+		t.Fatalf("get tags: status=%d body=%s", tags.Code, tags.Body.String())
+	}
+	updatedTags := serve(t, daemon.handler, http.MethodPut, "/api/sessions/"+info.ID+"/tags", strings.NewReader(`{"tags":{"Team":" native "}}`), "127.0.0.1:1", nil)
+	if updatedTags.Code != http.StatusOK || !strings.Contains(updatedTags.Body.String(), `"team":"native"`) {
+		t.Fatalf("put tags: status=%d body=%s", updatedTags.Code, updatedTags.Body.String())
+	}
+	invalidTags := serve(t, daemon.handler, http.MethodPut, "/api/sessions/"+info.ID+"/tags", strings.NewReader(`{"tags":{"bad key":"value"}}`), "127.0.0.1:1", nil)
+	if invalidTags.Code != http.StatusBadRequest {
+		t.Fatalf("invalid tags: status=%d body=%s", invalidTags.Code, invalidTags.Body.String())
 	}
 
 	runner := daemon.launcher.Runner(info.ID)

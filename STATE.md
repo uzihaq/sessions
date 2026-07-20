@@ -1,4 +1,4 @@
-# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-19)
+# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-20)
 
 > **New orchestrator (Codex or returning Claude): start here, then read `AGENTS.md`.**
 > This file + `AGENTS.md` + `docs/WHY.md` + the somewhere board = everything the previous
@@ -47,13 +47,16 @@ code-signing · **Sessions.app v1** (Tauri: menu-bar status, scoped windows, qui
 Onboarding site refreshed + live (pretty-pty.somewhere.site). The manual-entry preview shell is superseded,
 not a product surface.
 
-## NEXT: finish Sessions.app v2 distribution (the immediate work)
+## NEXT: ship Sessions.app v2 distribution (the immediate work)
 The app IS the product package. v2 makes "one update updates everything, nothing lost":
 1. **SHIPPED IN CODE:** bundle signed daemon+runner+CLI inside Sessions.app; verify and copy them to
    immutable versioned runtime directories; first-run installs/upgrades `tech.somewhere.sessions.daemon`.
 2. **SHIPPED IN CODE:** record the live-session baseline, wait for health+discovery, verify every ID,
    and roll back to the previous plist/runtime on failure. Real scratch launchd coverage exercises it.
-3. **NEXT:** Tauri updater feed: signed version manifest as a static file on somewhere (metadata only — no data plane).
+3. **SHIPPED IN CODE:** Tauri's signed updater is wired to
+   `https://pretty-pty.somewhere.site/releases/latest.json`; the app exposes an explicit check/install/relaunch
+   flow, the public key is pinned, and release tooling produces a signed immutable GitHub artifact plus manifest.
+   The first live manifest is published only after its corresponding notarized artifact exists.
 4. **Notarization**: build already uses Developer ID + hardened runtime; needs Apple creds
    (APPLE_ID + app-specific password from appleid.apple.com, or App Store Connect API key). Required
    before anyone DOWNLOADS the app (vs building it). USER ACTION: create the app-specific password.
@@ -63,9 +66,16 @@ mini yet. Its later first Sessions.app install remains the joint Node-to-Go cuto
 
 ## Roadmap after v2 (see board + WHY.md)
 **Immediate after macOS ships:** Android app (Tauri2 paired client + FCM; push machinery ready). Later:
-central/fleet search · semantic search (local embeddings, only if FTS insufficient) · session sharing
+semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
 paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
+
+## Shipped in the 2026-07-20 product pass
+- First-class arbitrary key/value session tags across runner metadata, CLI, API, new-session flow, and inline editing.
+- Local Claude + Codex usage ingestion and SQLite aggregation with daily/weekly/monthly/session/tag views,
+  provider and cost-mode filters, honest missing-price reporting, and no `npx` runtime dependency.
+- A polished in-app usage dashboard, fleet-wide search UI over the shipped exact/regex/FTS5 backend, and
+  an active-first fleet view across every configured daemon.
 
 ## OPEN USER DECISIONS (blockers only)
 1. **Public-build permission default** — keep skip-perms (owner default) vs constrain-by-default.

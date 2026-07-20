@@ -25,3 +25,5 @@ tauri = { version = "2.11.0", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json"] }
 url = "2.5"
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls", "zip"] }
+tauri-plugin-process = "2"

@@ -43,6 +43,7 @@ type PreparedSession struct {
 	Name              string
 	Description       string
 	DescriptionSource string
+	Tags              map[string]string
 	Kind              string
 	SpecPath          string
 	Tool              SessionTool
@@ -58,6 +59,7 @@ type SessionMetadata struct {
 	Name              string
 	Description       string
 	DescriptionSource string
+	Tags              map[string]string
 	OnIdle            string
 	Kind              string
 	SpecPath          string
@@ -219,13 +221,17 @@ func (r *Registry) CreateWithLifecycle(
 		delete(launchRequest.Env, "ANTHROPIC_API_KEY")
 	}
 	description := strings.TrimSpace(request.Description)
+	tags, err := NormalizeTags(request.Tags)
+	if err != nil {
+		return SessionInfo{}, err
+	}
 	descriptionSource := ""
 	if description != "" {
 		descriptionSource = DescriptionExplicit
 	}
 	prepared := PreparedSession{
 		Info: runnerInfo, Name: strings.TrimSpace(request.Name), Description: description,
-		DescriptionSource: descriptionSource, Kind: kind, SpecPath: specPath, Tool: tool,
+		DescriptionSource: descriptionSource, Tags: tags, Kind: kind, SpecPath: specPath, Tool: tool,
 		Profile: profile, ConfigDir: configDir,
 		WorktreePath: request.WorktreePath, WorktreeBranch: request.WorktreeBranch,
 		WorktreeBase: request.WorktreeBase, SourceRepo: request.SourceRepo,
@@ -236,6 +242,10 @@ func (r *Registry) CreateWithLifecycle(
 	if prepared.Description != "" {
 		launchRequest.Env["RUNNER_DESCRIPTION"] = prepared.Description
 		launchRequest.Env["RUNNER_DESCRIPTION_SOURCE"] = prepared.DescriptionSource
+	}
+	if len(prepared.Tags) > 0 {
+		encodedTags, _ := json.Marshal(prepared.Tags)
+		launchRequest.Env["RUNNER_TAGS_JSON"] = string(encodedTags)
 	}
 	if prepared.Kind != "" {
 		launchRequest.Env["RUNNER_KIND"] = prepared.Kind
@@ -257,6 +267,7 @@ func (r *Registry) CreateWithLifecycle(
 	}
 	metadata := SessionMetadata{
 		Name: prepared.Name, Description: prepared.Description, DescriptionSource: prepared.DescriptionSource,
+		Tags:   CloneTags(prepared.Tags),
 		OnIdle: strings.TrimSpace(request.OnIdle), Kind: prepared.Kind, SpecPath: prepared.SpecPath,
 		Profile: prepared.Profile, ConfigDir: prepared.ConfigDir,
 	}
@@ -372,9 +383,62 @@ func (r *Registry) Register(ctx context.Context, runner proto.Runner, name, onId
 func (r *Registry) RegisterMetadata(ctx context.Context, runner proto.Runner, metadata RunnerMetadata, onIdle string) (*Session, error) {
 	return r.register(ctx, runner, SessionMetadata{
 		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
+		Tags:   CloneTags(metadata.Tags),
 		OnIdle: onIdle, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 		Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 	})
+}
+
+// UpdateTags replaces one session's complete tag set. The metadata file is
+// written before the in-memory view changes so an acknowledged edit always
+// survives daemon restart and runner re-adoption.
+func (r *Registry) UpdateTags(id string, requested map[string]string) (map[string]string, error) {
+	if !validMetadataID(id) {
+		return nil, fmt.Errorf("session %s not found", id)
+	}
+	tags, err := NormalizeTags(requested)
+	if err != nil {
+		return nil, err
+	}
+	session, live := r.Get(id)
+	path := filepath.Join(r.config.RunnerStateDir, id+".json")
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read session tags: %w", err)
+	}
+	var metadata Metadata
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		return nil, fmt.Errorf("decode session tags: %w", err)
+	}
+	metadata.Tags = CloneTags(tags)
+	if err := WriteMetadata(path, metadata); err != nil {
+		return nil, fmt.Errorf("persist session tags: %w", err)
+	}
+	if live {
+		session.setTags(tags)
+	}
+	return CloneTags(tags), nil
+}
+
+func (r *Registry) Tags(id string) (map[string]string, error) {
+	if !validMetadataID(id) {
+		return nil, fmt.Errorf("session %s not found", id)
+	}
+	if session, ok := r.Get(id); ok {
+		return CloneTags(session.Info().Tags), nil
+	}
+	metadata, err := readRunnerMetadata(filepath.Join(r.config.RunnerStateDir, id+".json"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("session %s not found", id)
+		}
+		return nil, fmt.Errorf("read session tags: %w", err)
+	}
+	return CloneTags(metadata.Tags), nil
+}
+
+func validMetadataID(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\\`)
 }
 
 // SetFirstMessageDescription records a best-effort purpose without replacing
@@ -623,6 +687,7 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 	metadata := Metadata{
 		ID: info.ID, Name: sessionMetadata.Name, Description: sessionMetadata.Description,
 		DescriptionSource: sessionMetadata.DescriptionSource, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
+		Tags:    CloneTags(sessionMetadata.Tags),
 		Profile: sessionMetadata.Profile, ConfigDir: sessionMetadata.ConfigDir,
 		Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
@@ -642,6 +707,7 @@ type RunnerMetadata struct {
 	Name              string
 	Description       string
 	DescriptionSource string
+	Tags              map[string]string
 	Kind              string
 	SpecPath          string
 	Profile           string
@@ -673,6 +739,7 @@ func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 			ClaudeSessionID: metadata.ClaudeSessionID,
 		},
 		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
+		Tags: CloneTags(metadata.Tags),
 		Kind: metadata.Kind, SpecPath: metadata.SpecPath, Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 	}, nil
 }

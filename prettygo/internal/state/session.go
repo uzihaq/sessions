@@ -68,7 +68,7 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 		mirror: terminal,
 		info: SessionInfo{
 			ID: info.ID, Name: metadata.Name, Description: metadata.Description,
-			DescriptionSource: metadata.DescriptionSource, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
+			DescriptionSource: metadata.DescriptionSource, Tags: CloneTags(metadata.Tags), Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 			Cmd: info.Cmd, Args: append([]string{}, info.Args...),
 			Cwd: info.Cwd, Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 			Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt,
@@ -188,7 +188,14 @@ func (s *Session) Info() SessionInfo {
 	defer s.mu.RUnlock()
 	info := s.info
 	info.Args = append([]string{}, s.info.Args...)
+	info.Tags = CloneTags(s.info.Tags)
 	return info
+}
+
+func (s *Session) setTags(tags map[string]string) {
+	s.mu.Lock()
+	s.info.Tags = CloneTags(tags)
+	s.mu.Unlock()
 }
 
 func (s *Session) setFirstMessageDescription(description string) bool {

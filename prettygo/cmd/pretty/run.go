@@ -4,18 +4,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
 
 type runLaneRequest struct {
-	Cmd         string   `json:"cmd"`
-	Args        []string `json:"args"`
-	Cwd         string   `json:"cwd"`
-	Name        string   `json:"name,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Worktree    bool     `json:"worktree,omitempty"`
-	Base        string   `json:"base,omitempty"`
-	Kind        string   `json:"kind"`
-	SpecPath    string   `json:"specPath,omitempty"`
+	Cmd         string            `json:"cmd"`
+	Args        []string          `json:"args"`
+	Cwd         string            `json:"cwd"`
+	Name        string            `json:"name,omitempty"`
+	Description string            `json:"description,omitempty"`
+	Tags        map[string]string `json:"tags,omitempty"`
+	Worktree    bool              `json:"worktree,omitempty"`
+	Base        string            `json:"base,omitempty"`
+	Kind        string            `json:"kind"`
+	SpecPath    string            `json:"specPath,omitempty"`
 }
 
 func (a *app) cmdRun(args []string) error {
@@ -35,6 +38,10 @@ func (a *app) cmdRun(args []string) error {
 	}
 	command := append([]string(nil), args[separator+1:]...)
 	description, err := pluckDescription(&options)
+	if err != nil {
+		return err
+	}
+	tags, err := pluckTags(&options)
 	if err != nil {
 		return err
 	}
@@ -87,7 +94,7 @@ func (a *app) cmdRun(args []string) error {
 	}
 	body := runLaneRequest{
 		Cmd: command[0], Args: command[1:], Cwd: cwd, Name: strings.TrimSpace(name), Description: description,
-		Worktree: worktree, Base: base, Kind: "lane", SpecPath: specPath,
+		Tags: tags, Worktree: worktree, Base: base, Kind: state.KindLane, SpecPath: specPath,
 	}
 	var created map[string]any
 	if err := a.postJSON("/api/lanes", body, &created, 2); err != nil {
