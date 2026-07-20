@@ -71,7 +71,8 @@ semantic search (local embeddings, only if FTS insufficient) · session sharing
 paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
 
 ## Shipped in the 2026-07-20 product pass
-- First-class arbitrary key/value session tags across runner metadata, CLI, API, new-session flow, and inline editing.
+- First-class arbitrary key/value session tags across runner metadata, CLI, API, new-session flow, inline editing,
+  and explicit local default tags inherited by future sessions (always editable before start).
 - Local Claude + Codex usage ingestion and SQLite aggregation with daily/weekly/monthly/session/tag/provider/model
   views, explicit reasoning-token reporting, date/provider/cost filters, honest missing-price reporting, and no
   `npx` runtime dependency. The JSON contract is schema-versioned and existing indexes migrate in place.

@@ -11,6 +11,7 @@ import {
   writeNewSessionDefaults
 } from '../lib/newSessionDefaults';
 import { ServerSelector } from './ServerSelector';
+import { TagEditor } from './TagEditor';
 import { claimCurrentOriginPairing } from '../lib/hostedBootstrap';
 import {
   checkForNativeUpdate,
@@ -333,6 +334,14 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
                   onChange={(e) => saveSessionDefaults({ rows: e.currentTarget.valueAsNumber })}
                 />
               </label>
+            </div>
+            <div className="settings-menu-field settings-menu-default-tags">
+              <span>Default tags</span>
+              <TagEditor
+                value={sessionDefaults.tags}
+                onChange={(tags) => saveSessionDefaults({ tags })}
+              />
+              <span className="settings-menu-field-hint">Inherited by future sessions and always editable before start.</span>
             </div>
           </div>
           <label className="settings-menu-row settings-menu-toggle">

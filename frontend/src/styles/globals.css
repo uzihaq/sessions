@@ -1329,6 +1329,8 @@ button:active:not(:disabled),
   border-radius: var(--radius-sm);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
   padding: 8px;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
 }
 .settings-menu-row {
   display: flex;
@@ -1399,6 +1401,17 @@ button:active:not(:disabled),
 }
 .settings-menu-default-toggle {
   padding: 2px 4px;
+}
+.settings-menu-default-tags .tag-editor {
+  padding: 7px;
+}
+.settings-menu-default-tags .field-hint {
+  display: none;
+}
+.settings-menu-field-hint {
+  color: var(--fg-faint);
+  font-size: 10px;
+  line-height: 1.4;
 }
 /* The server selector lives inside the settings popover — let its
  * dropdown stretch to fill the row width. */

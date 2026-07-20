@@ -111,7 +111,7 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
   const [tool, setTool] = useState<NewSessionTool>(initialDefaults.tool);
   const [skipPerms, setSkipPerms] = useState(initialDefaults.skipPerms);
   const [cwd, setCwd] = useState(initialDefaults.cwd);
-  const [tags, setTags] = useState<Record<string, string>>({});
+  const [tags, setTags] = useState<Record<string, string>>(initialDefaults.tags);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -217,7 +217,7 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
             <DirectoryBrowser value={cwd} onChange={setCwd} />
           </div>
           <div className="field">
-            <span className="field-label">Tags <span className="field-optional">optional</span></span>
+            <span className="field-label">Tags <span className="field-optional">optional · defaults are editable</span></span>
             <TagEditor value={tags} onChange={setTags} disabled={busy} />
           </div>
           {showSkipPerms ? (

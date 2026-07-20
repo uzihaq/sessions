@@ -6,6 +6,7 @@ export interface NewSessionDefaults {
   cwd: string;
   cols: number;
   rows: number;
+  tags: Record<string, string>;
 }
 
 export const NEW_SESSION_DEFAULTS_KEY = 'pretty-pty:new-session-defaults';
@@ -15,7 +16,8 @@ export const DEFAULT_NEW_SESSION_DEFAULTS: NewSessionDefaults = {
   skipPerms: true,
   cwd: '',
   cols: 300,
-  rows: 50
+  rows: 50,
+  tags: {}
 };
 
 export const NEW_SESSION_DIMENSIONS = {
@@ -43,6 +45,21 @@ function normalizeDimension(
   return Math.max(min, Math.min(max, Math.trunc(value)));
 }
 
+const TAG_KEY = /^[a-z0-9][a-z0-9._-]*$/;
+
+function normalizeTags(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const tags: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    if (Object.keys(tags).length >= 32) break;
+    const key = rawKey.trim().toLowerCase();
+    const tagValue = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!TAG_KEY.test(key) || key.length > 64 || !tagValue || tagValue.length > 256) continue;
+    tags[key] = tagValue;
+  }
+  return tags;
+}
+
 export function normalizeNewSessionDefaults(value: unknown): NewSessionDefaults {
   const record = isRecord(value) ? value : {};
   return {
@@ -62,7 +79,8 @@ export function normalizeNewSessionDefaults(value: unknown): NewSessionDefaults 
       DEFAULT_NEW_SESSION_DEFAULTS.rows,
       NEW_SESSION_DIMENSIONS.minRows,
       NEW_SESSION_DIMENSIONS.maxRows
-    )
+    ),
+    tags: normalizeTags(record.tags)
   };
 }
 
