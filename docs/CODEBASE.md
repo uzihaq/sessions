@@ -52,8 +52,9 @@ reattach to a living session instead of restarting it.
 ### `cmd/prettyd`
 
 The daemon validates its bind address, refuses wildcard hosts, opens the
-append-only ledger, restores LAN settings, and starts discovery before serving
-HTTP (`prettygo/cmd/prettyd/main.go`). Its assembly point makes the ownership
+append-only ledger, restores LAN settings for normal installs, and starts discovery before serving
+HTTP. An explicitly isolated `PRETTYD_STATE_DIR` scratch daemon does not restore the user's LAN listener
+(`prettygo/cmd/prettyd/main.go`). Its assembly point makes the ownership
 boundaries visible: session state is delegated to `internal/session`, runner
 plumbing to `internal/state`, and transport to `internal/api`.
 
@@ -78,7 +79,7 @@ tracks this executable command table rather than a copied list.
 
 ## Internal packages
 
-There are 18 production packages under `prettygo/internal/`. The neighboring
+There are 19 production packages under `prettygo/internal/`. The neighboring
 `prettygo/internal/interop/` directory is a compatibility test fixture, not a
 production package (`prettygo/internal/interop/cutover_test.go`).
 
@@ -212,6 +213,20 @@ attached session's replay/event state (`prettygo/internal/state/config.go`,
 Runner artifacts have defined suffixes in `prettygo/internal/state/paths.go`,
 and the in-memory replay plus persisted event log are bounded. This is
 low-level runtime state; product lifecycle policy stays in `internal/session`.
+
+### `usage`
+
+`usage` incrementally indexes the local Claude and Codex JSONL stores into a
+private SQLite ledger without adding a Node runtime dependency
+(`prettygo/internal/usage/scanner.go`, `prettygo/internal/usage/store.go`). It
+deduplicates streamed provider records, retains parser offsets, rebuilds an
+index when parsing or pricing semantics change, and reports reasoning as a
+subset of output tokens. Aggregation exposes schema-versioned daily, weekly,
+monthly, session, tag, provider, and model views; session tags are joined from
+current runner metadata at query time (`prettygo/internal/usage/report.go`).
+Pricing is an explicit pinned `ccusage`-compatible table: recorded costs remain
+distinguishable from estimates, and unknown models remain visibly unpriced
+(`prettygo/internal/usage/pricing.go`).
 
 ### `verdict`
 

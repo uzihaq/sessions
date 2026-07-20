@@ -17,16 +17,16 @@ import (
 )
 
 type parserState struct {
-	SessionID      string `json:"sessionId,omitempty"`
-	Model          string `json:"model,omitempty"`
-	Previous       Tokens `json:"previous,omitempty"`
-	Fast           bool   `json:"fast,omitempty"`
-	PricingVersion int    `json:"pricingVersion,omitempty"`
+	SessionID    string `json:"sessionId,omitempty"`
+	Model        string `json:"model,omitempty"`
+	Previous     Tokens `json:"previous,omitempty"`
+	Fast         bool   `json:"fast,omitempty"`
+	IndexVersion int    `json:"indexVersion,omitempty"`
 }
 
-// Increment when pricing semantics change so already-indexed events are
-// repriced from their source logs on the next sync.
-const pricingSchemaVersion = 2
+// Increment when parser or pricing semantics change so already-indexed events
+// are rebuilt from their source logs on the next sync.
+const usageIndexVersion = 3
 
 type entry struct {
 	key, source, provider, sessionID, model string
@@ -138,14 +138,14 @@ func (s *Service) syncFile(ctx context.Context, db *sql.DB, provider, path strin
 	_ = json.Unmarshal([]byte(encodedState), &state)
 	rewrittenInPlace := knownSource && info.Size() == oldSize && info.ModTime().UnixNano() != oldMtime
 	pricingModeChanged := provider == "codex" && knownSource && state.Fast != fast
-	pricingChanged := knownSource && state.PricingVersion != pricingSchemaVersion
-	if info.Size() < oldSize || offset > info.Size() || rewrittenInPlace || pricingModeChanged || pricingChanged {
+	indexChanged := knownSource && state.IndexVersion != usageIndexVersion
+	if info.Size() < oldSize || offset > info.Size() || rewrittenInPlace || pricingModeChanged || indexChanged {
 		if _, err := db.ExecContext(ctx, `DELETE FROM usage_entries WHERE source_path = ?`, path); err != nil {
 			return err
 		}
 		offset, oldSize, state = 0, 0, parserState{}
 	}
-	if knownSource && info.Size() == oldSize && !rewrittenInPlace && !pricingModeChanged && !pricingChanged {
+	if knownSource && info.Size() == oldSize && !rewrittenInPlace && !pricingModeChanged && !indexChanged {
 		return nil
 	}
 	file, err := os.Open(path)
@@ -190,7 +190,7 @@ func (s *Service) syncFile(ctx context.Context, db *sql.DB, provider, path strin
 		}
 	}
 	state.Fast = fast
-	state.PricingVersion = pricingSchemaVersion
+	state.IndexVersion = usageIndexVersion
 	stateJSON, _ := json.Marshal(state)
 	_, err = db.ExecContext(ctx, `INSERT INTO usage_sources(path, provider, offset_bytes, size_bytes, mtime_ns, parser_state)
 VALUES(?, ?, ?, ?, ?, ?)
@@ -204,18 +204,19 @@ func upsertEntry(ctx context.Context, db *sql.DB, value entry) error {
 	_, err := db.ExecContext(ctx, `INSERT INTO usage_entries(
 event_key, source_path, source_offset, provider, provider_session_id, timestamp_ms, model,
 input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-recorded_cost_usd, calculated_cost_usd, pricing_found)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+reasoning_tokens, recorded_cost_usd, calculated_cost_usd, pricing_found)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(event_key) DO UPDATE SET
 source_path=excluded.source_path, source_offset=excluded.source_offset, timestamp_ms=excluded.timestamp_ms,
 model=excluded.model, input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
 cache_creation_tokens=excluded.cache_creation_tokens, cache_read_tokens=excluded.cache_read_tokens,
+reasoning_tokens=excluded.reasoning_tokens,
 recorded_cost_usd=excluded.recorded_cost_usd, calculated_cost_usd=excluded.calculated_cost_usd,
 pricing_found=excluded.pricing_found
 WHERE (excluded.input_tokens + excluded.output_tokens + excluded.cache_creation_tokens + excluded.cache_read_tokens) >=
       (usage_entries.input_tokens + usage_entries.output_tokens + usage_entries.cache_creation_tokens + usage_entries.cache_read_tokens)`,
 		value.key, value.source, value.offset, value.provider, value.sessionID, value.timestampMS, value.model,
-		value.tokens.Input, value.tokens.Output, value.tokens.CacheCreation, value.tokens.CacheRead,
+		value.tokens.Input, value.tokens.Output, value.tokens.CacheCreation, value.tokens.CacheRead, value.tokens.Reasoning,
 		value.recorded, value.calculated, value.pricingFound)
 	return err
 }
@@ -242,6 +243,7 @@ func parseClaudeLine(path string, offset int64, raw []byte, fallback time.Time) 
 		Input: integer(usage, "input_tokens", "inputTokens"), Output: integer(usage, "output_tokens", "outputTokens"),
 		CacheCreation: integer(usage, "cache_creation_input_tokens", "cacheCreationInputTokens"),
 		CacheRead:     integer(usage, "cache_read_input_tokens", "cacheReadInputTokens"),
+		Reasoning:     integer(usage, "reasoning_tokens", "reasoningTokens", "reasoning_output_tokens", "reasoningOutputTokens"),
 	}
 	if tokens.Total() == 0 {
 		return nil
@@ -330,13 +332,14 @@ func codexTokens(value map[string]any) Tokens {
 	cached := integer(value, "cached_input_tokens", "cachedInputTokens")
 	return Tokens{
 		Input: max(0, input-cached), Output: integer(value, "output_tokens", "outputTokens", "completion_tokens", "completionTokens"),
-		CacheRead: cached,
+		CacheRead: cached, Reasoning: integer(value, "reasoning_output_tokens", "reasoningOutputTokens"),
 	}
 }
 
 func subtractTokens(current, previous Tokens) Tokens {
 	return Tokens{Input: max(0, current.Input-previous.Input), Output: max(0, current.Output-previous.Output),
-		CacheCreation: max(0, current.CacheCreation-previous.CacheCreation), CacheRead: max(0, current.CacheRead-previous.CacheRead)}
+		CacheCreation: max(0, current.CacheCreation-previous.CacheCreation), CacheRead: max(0, current.CacheRead-previous.CacheRead),
+		Reasoning: max(0, current.Reasoning-previous.Reasoning)}
 }
 
 func object(value any) (map[string]any, bool) {

@@ -49,7 +49,11 @@ func main() {
 	})
 	defer manager.Close()
 	handler := api.New(config, manager, manager.Push())
-	handler.RestoreLAN(log.Printf)
+	// An explicitly isolated scratch daemon must not restore the user's
+	// persisted LAN listener on a second port.
+	if os.Getenv("PRETTYD_STATE_DIR") == "" {
+		handler.RestoreLAN(log.Printf)
+	}
 	defer func() {
 		if err := handler.CloseLAN(); err != nil {
 			log.Printf("close LAN listener: %v", err)

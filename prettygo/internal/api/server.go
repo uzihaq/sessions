@@ -81,9 +81,11 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
 		}),
 	}
-	usageRoot := config.UserStateRoot
+	// Follow StateRoot so PRETTYD_STATE_DIR keeps scratch daemons isolated.
+	// In normal installs StateRoot and UserStateRoot are identical.
+	usageRoot := config.StateRoot
 	if usageRoot == "" {
-		usageRoot = config.StateRoot
+		usageRoot = config.UserStateRoot
 	}
 	claudeRoots := []string{
 		filepath.Join(config.DefaultCwd, ".claude", "projects"),

@@ -8,9 +8,11 @@ type MobileTabStatus = 'working' | 'finished' | 'idle';
 interface Props {
   sessions: SessionInfo[];
   activeId: string | null;
+  layoutMode: 'tabs' | 'fleet' | 'search' | 'usage';
   statusBySession: Record<string, MobileTabStatus>;
   iconBySession: Record<string, string>;
   onSwitch: (id: string) => void;
+  onLayoutChange: (mode: 'tabs' | 'fleet' | 'search' | 'usage') => void;
   onNew: () => void;
   onResume: () => void;
 }
@@ -27,9 +29,11 @@ interface Props {
 export function MobileNav({
   sessions,
   activeId,
+  layoutMode,
   statusBySession,
   iconBySession,
   onSwitch,
+  onLayoutChange,
   onNew,
   onResume
 }: Props): JSX.Element {
@@ -104,6 +108,7 @@ export function MobileNav({
       return;
     }
     haptic(10);
+    onLayoutChange('tabs');
     setSheetOpen(true);
   };
   const rowLabel = (s: SessionInfo): string => getTabLabel(s.id) ?? sessionLabel(s);
@@ -125,7 +130,7 @@ export function MobileNav({
         <button
           ref={laneButtonRef}
           type="button"
-          className="mn-btn mn-hero"
+          className={`mn-btn mn-hero${layoutMode === 'tabs' ? ' is-active' : ''}`}
           onClick={onHeroClick}
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
@@ -134,6 +139,9 @@ export function MobileNav({
           {activeIsWorking ? <span className="mn-status-dot working" aria-hidden /> : null}
           <div className="mn-hero-name">{activeLabel}</div>
         </button>
+        <MobileDestination label="Fleet" glyph="◫" active={layoutMode === 'fleet'} onClick={() => onLayoutChange('fleet')} />
+        <MobileDestination label="Search" glyph="⌕" active={layoutMode === 'search'} onClick={() => onLayoutChange('search')} />
+        <MobileDestination label="Usage" glyph="◒" active={layoutMode === 'usage'} onClick={() => onLayoutChange('usage')} />
       </nav>
 
       {sheetOpen ? (
@@ -196,5 +204,14 @@ export function MobileNav({
         </div>
       ) : null}
     </>
+  );
+}
+
+function MobileDestination({ label, glyph, active, onClick }: { label: string; glyph: string; active: boolean; onClick: () => void }): JSX.Element {
+  return (
+    <button type="button" className={`mn-btn mn-destination${active ? ' is-active' : ''}`} onClick={onClick} aria-label={`Open ${label}`}>
+      <span className="mn-destination-icon" aria-hidden>{glyph}</span>
+      <span>{label}</span>
+    </button>
   );
 }

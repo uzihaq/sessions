@@ -72,9 +72,11 @@ paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTE
 
 ## Shipped in the 2026-07-20 product pass
 - First-class arbitrary key/value session tags across runner metadata, CLI, API, new-session flow, and inline editing.
-- Local Claude + Codex usage ingestion and SQLite aggregation with daily/weekly/monthly/session/tag views,
-  provider and cost-mode filters, honest missing-price reporting, and no `npx` runtime dependency.
-- A polished in-app usage dashboard, fleet-wide search UI over the shipped exact/regex/FTS5 backend, and
+- Local Claude + Codex usage ingestion and SQLite aggregation with daily/weekly/monthly/session/tag/provider/model
+  views, explicit reasoning-token reporting, date/provider/cost filters, honest missing-price reporting, and no
+  `npx` runtime dependency. The JSON contract is schema-versioned and existing indexes migrate in place.
+- A polished in-app usage dashboard with saved local views and expandable cost/token drill-down, fleet-wide search
+  UI over the shipped exact/regex/FTS5 backend, compact product navigation for narrow windows and phones, and
   an active-first fleet view across every configured daemon.
 
 ## OPEN USER DECISIONS (blockers only)

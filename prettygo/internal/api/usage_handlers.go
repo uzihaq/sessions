@@ -38,8 +38,8 @@ func usageOptions(request *http.Request) (usage.ReportOptions, error) {
 		Provider:  strings.ToLower(strings.TrimSpace(query.Get("provider"))),
 		Dimension: strings.ToLower(strings.TrimSpace(query.Get("dimension"))),
 	}
-	if options.Group != "" && !usageValueAllowed(options.Group, "daily", "weekly", "monthly", "session", "tag") {
-		return usage.ReportOptions{}, &usageQueryError{"group must be daily, weekly, monthly, session, or tag"}
+	if options.Group != "" && !usageValueAllowed(options.Group, "daily", "weekly", "monthly", "session", "tag", "provider", "model") {
+		return usage.ReportOptions{}, &usageQueryError{"group must be daily, weekly, monthly, session, tag, provider, or model"}
 	}
 	if options.Mode != "" && !usageValueAllowed(options.Mode, usage.ModeAuto, usage.ModeCalculate, usage.ModeDisplay) {
 		return usage.ReportOptions{}, &usageQueryError{"mode must be auto, calculate, or display"}
@@ -63,6 +63,9 @@ func usageOptions(request *http.Request) (usage.ReportOptions, error) {
 			return usage.ReportOptions{}, &usageQueryError{"until must use YYYY-MM-DD"}
 		}
 		options.Until = options.Until.AddDate(0, 0, 1)
+	}
+	if !options.Since.IsZero() && !options.Until.IsZero() && !options.Since.Before(options.Until) {
+		return usage.ReportOptions{}, &usageQueryError{"since must be on or before until"}
 	}
 	return options, nil
 }

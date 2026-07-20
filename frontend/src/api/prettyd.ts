@@ -205,6 +205,7 @@ export interface UsageTokens {
   outputTokens: number;
   cacheCreationTokens: number;
   cacheReadTokens: number;
+  reasoningTokens: number;
 }
 
 export interface UsageRow {
@@ -224,8 +225,10 @@ export interface UsageRow {
 }
 
 export interface UsageReport {
+  schemaVersion: number;
+  machine: string;
   generatedAt: string;
-  group: 'daily' | 'weekly' | 'monthly' | 'session' | 'tag';
+  group: 'daily' | 'weekly' | 'monthly' | 'session' | 'tag' | 'provider' | 'model';
   mode: 'auto' | 'calculate' | 'display';
   dimension?: string;
   pricing: { source: string; revision: string; url: string; note: string };

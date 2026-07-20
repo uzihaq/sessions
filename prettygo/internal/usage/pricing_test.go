@@ -36,6 +36,12 @@ func TestPriceMatchesCCUsageFastAndLongContextSemantics(t *testing.T) {
 			fast:   true,
 			want:   0.02,
 		},
+		{
+			name:   "claude sonnet cache buckets",
+			model:  "claude-sonnet-4-6",
+			tokens: Tokens{Input: 1_000, Output: 100, CacheCreation: 2_000, CacheRead: 10_000, Reasoning: 50},
+			want:   0.015,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -15,6 +15,7 @@ type Options struct {
 	ClaudeRoots    []string
 	CodexRoots     []string
 	RunnerStateDir string
+	Machine        string
 	Now            func() time.Time
 }
 
@@ -23,8 +24,11 @@ type Tokens struct {
 	Output        int64 `json:"outputTokens"`
 	CacheCreation int64 `json:"cacheCreationTokens"`
 	CacheRead     int64 `json:"cacheReadTokens"`
+	Reasoning     int64 `json:"reasoningTokens"`
 }
 
+// Reasoning is a reported subset of output tokens, not an additional billable
+// bucket, so it is deliberately excluded from Total and pricing arithmetic.
 func (t Tokens) Total() int64 { return t.Input + t.Output + t.CacheCreation + t.CacheRead }
 
 type ScanStats struct {
@@ -67,12 +71,14 @@ type ReportRow struct {
 }
 
 type Report struct {
-	GeneratedAt string            `json:"generatedAt"`
-	Group       string            `json:"group"`
-	Mode        string            `json:"mode"`
-	Dimension   string            `json:"dimension,omitempty"`
-	Pricing     PricingProvenance `json:"pricing"`
-	Scan        ScanStats         `json:"scan"`
-	Rows        []ReportRow       `json:"rows"`
-	Totals      ReportRow         `json:"totals"`
+	SchemaVersion int               `json:"schemaVersion"`
+	Machine       string            `json:"machine"`
+	GeneratedAt   string            `json:"generatedAt"`
+	Group         string            `json:"group"`
+	Mode          string            `json:"mode"`
+	Dimension     string            `json:"dimension,omitempty"`
+	Pricing       PricingProvenance `json:"pricing"`
+	Scan          ScanStats         `json:"scan"`
+	Rows          []ReportRow       `json:"rows"`
+	Totals        ReportRow         `json:"totals"`
 }

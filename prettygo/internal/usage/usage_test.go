@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,7 @@ func TestReportIndexesClaudeAndCodexIncrementallyWithTags(t *testing.T) {
 	codexPath := filepath.Join(codexRoot, "2026", "07", "20", "rollout.jsonl")
 	codex := `{"timestamp":"2026-07-20T09:00:00Z","type":"session_meta","payload":{"id":"codex-session"}}
 {"timestamp":"2026-07-20T09:00:01Z","type":"turn_context","payload":{"model":"gpt-5.2-codex"}}
-{"timestamp":"2026-07-20T09:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":250,"output_tokens":125}}}}
+{"timestamp":"2026-07-20T09:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":250,"output_tokens":125,"reasoning_output_tokens":25}}}}
 `
 	if err := os.WriteFile(codexPath, []byte(codex), 0o600); err != nil {
 		t.Fatal(err)
@@ -46,7 +47,8 @@ func TestReportIndexesClaudeAndCodexIncrementallyWithTags(t *testing.T) {
 
 	service := NewService(Options{Path: filepath.Join(root, "usage.sqlite3"), ClaudeRoots: []string{claudeRoot},
 		CodexRoots: []string{codexRoot}, RunnerStateDir: runnerRoot,
-		Now: func() time.Time { return time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC) },
+		Machine: "test-mac",
+		Now:     func() time.Time { return time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC) },
 	})
 	defer service.Close()
 	report, err := service.Report(context.Background(), ReportOptions{Group: "daily", Mode: ModeAuto})
@@ -56,8 +58,14 @@ func TestReportIndexesClaudeAndCodexIncrementallyWithTags(t *testing.T) {
 	if len(report.Rows) != 1 || report.Totals.Entries != 2 {
 		t.Fatalf("daily report = %#v", report)
 	}
+	if report.SchemaVersion != 1 || report.Machine != "test-mac" {
+		t.Fatalf("report identity = schema %d machine %q", report.SchemaVersion, report.Machine)
+	}
 	if report.Totals.Tokens.Input != 870 || report.Totals.Tokens.CacheRead != 290 || report.Totals.Tokens.Output != 155 {
 		t.Fatalf("daily tokens = %#v", report.Totals.Tokens)
+	}
+	if report.Totals.Tokens.Reasoning != 25 || report.Totals.Tokens.Total() != 1_325 {
+		t.Fatalf("reasoning token subset = %#v", report.Totals.Tokens)
 	}
 	if report.Totals.RecordedCostUSD != .15 || report.Totals.CostUSD <= .15 {
 		t.Fatalf("daily costs = recorded %.6f selected %.6f", report.Totals.RecordedCostUSD, report.Totals.CostUSD)
@@ -97,12 +105,20 @@ func TestReportIndexesClaudeAndCodexIncrementallyWithTags(t *testing.T) {
 	if len(sessionReport.Rows) != 2 || sessionReport.Rows[0].SessionID != "sessions-id" || sessionReport.Rows[0].Tags["team"] != "native" {
 		t.Fatalf("session report = %#v", sessionReport.Rows)
 	}
+	providerReport, err := service.Report(context.Background(), ReportOptions{Group: "provider", Mode: ModeCalculate})
+	if err != nil || len(providerReport.Rows) != 2 || providerReport.Rows[0].Provider == "" {
+		t.Fatalf("provider report err=%v rows=%#v", err, providerReport.Rows)
+	}
+	modelReport, err := service.Report(context.Background(), ReportOptions{Group: "model", Mode: ModeCalculate})
+	if err != nil || len(modelReport.Rows) != 2 || len(modelReport.Rows[0].Models) != 1 {
+		t.Fatalf("model report err=%v rows=%#v", err, modelReport.Rows)
+	}
 
 	file, err := os.OpenFile(codexPath, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, writeErr := file.WriteString(`{"timestamp":"2026-07-20T09:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"cached_input_tokens":50,"output_tokens":25}}}}` + "\n")
+	_, writeErr := file.WriteString(`{"timestamp":"2026-07-20T09:05:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":200,"cached_input_tokens":50,"output_tokens":25,"reasoning_output_tokens":10}}}}` + "\n")
 	closeErr := file.Close()
 	if writeErr != nil {
 		t.Fatal(writeErr)
@@ -114,8 +130,56 @@ func TestReportIndexesClaudeAndCodexIncrementallyWithTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if incremental.Scan.FilesRead != 1 || incremental.Scan.LinesRead != 1 || incremental.Totals.Entries != 3 {
+	if incremental.Scan.FilesRead != 1 || incremental.Scan.LinesRead != 1 || incremental.Totals.Entries != 3 || incremental.Totals.Tokens.Reasoning != 35 {
 		t.Fatalf("incremental report scan=%#v total=%#v", incremental.Scan, incremental.Totals)
+	}
+}
+
+func TestUsageGroupingUsesLocalCalendarBoundaries(t *testing.T) {
+	previous := time.Local
+	time.Local = time.FixedZone("Pacific test", -7*60*60)
+	defer func() { time.Local = previous }()
+
+	stamp := time.Date(2026, 7, 20, 6, 30, 0, 0, time.UTC) // Sunday 23:30 locally.
+	daily, _ := usageGroupKey(ReportOptions{Group: "daily"}, stamp, "codex", "session", "gpt", sessionBinding{})
+	weekly, _ := usageGroupKey(ReportOptions{Group: "weekly"}, stamp, "codex", "session", "gpt", sessionBinding{})
+	monthly, _ := usageGroupKey(ReportOptions{Group: "monthly"}, stamp, "codex", "session", "gpt", sessionBinding{})
+	if daily != "2026-07-19" || weekly != "2026-07-13" || monthly != "2026-07" {
+		t.Fatalf("local groups = daily %q weekly %q monthly %q", daily, weekly, monthly)
+	}
+}
+
+func TestUsageDatabaseMigratesReasoningColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE usage_entries (
+event_key TEXT PRIMARY KEY, source_path TEXT NOT NULL, source_offset INTEGER NOT NULL,
+provider TEXT NOT NULL, provider_session_id TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+model TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+cache_creation_tokens INTEGER NOT NULL, cache_read_tokens INTEGER NOT NULL,
+recorded_cost_usd REAL, calculated_cost_usd REAL NOT NULL, pricing_found INTEGER NOT NULL
+);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(Options{Path: path})
+	defer service.Close()
+	db, err = service.database(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('usage_entries') WHERE name = 'reasoning_tokens'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("reasoning_tokens columns = %d", count)
 	}
 }
 

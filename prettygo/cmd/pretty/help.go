@@ -108,10 +108,10 @@ var commandTable = []commandSpec{
 		examples: []string{"pretty search 'migration plan'", "pretty search 'failed|timed out' --regex --role assistant", `pretty search '"migration plan" OR rollback' --ranked`, "pretty search needle --session 0123abcd --json"}, run: (*app).cmdSearch,
 	},
 	{
-		name: "usage", usage: "usage [daily|weekly|monthly|session|tag] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]",
+		name: "usage", usage: "usage [daily|weekly|monthly|session|tag|provider|model] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]",
 		summary: "report local Claude and Codex token usage", group: dailyCommandGroup, localJSON: true,
-		longHelp: "Incrementally index the local Claude Code and Codex JSONL stores, then report token usage and estimated cost by day, week, month, session, or one session-tag dimension. auto uses a recorded cost when present and otherwise calculates with pinned ccusage pricing semantics; calculate always prices tokens; display shows recorded costs only. No usage data leaves the daemon.",
-		examples: []string{"pretty usage", "pretty usage weekly --since 2026-07-01", "pretty usage session --mode calculate", "pretty usage tag --dimension product", "pretty --json usage monthly"}, run: (*app).cmdUsage,
+		longHelp: "Incrementally index the local Claude Code and Codex JSONL stores, then report token usage and estimated cost by day, week, month, session, provider, model, or one session-tag dimension. Reasoning tokens are reported separately but remain a subset of output tokens. auto uses a recorded cost when present and otherwise calculates with pinned ccusage pricing semantics; calculate always prices tokens; display shows recorded costs only. No usage data leaves the daemon.",
+		examples: []string{"pretty usage", "pretty usage weekly --since 2026-07-01", "pretty usage session --mode calculate", "pretty usage tag --dimension product", "pretty usage model", "pretty --json usage monthly"}, run: (*app).cmdUsage,
 	},
 	{
 		name: "status", usage: "status <id>",

@@ -31,7 +31,7 @@ func (s *Service) Report(ctx context.Context, options ReportOptions) (Report, er
 	if options.Mode == "" {
 		options.Mode = ModeAuto
 	}
-	if !oneOf(options.Group, "daily", "weekly", "monthly", "session", "tag") {
+	if !oneOf(options.Group, "daily", "weekly", "monthly", "session", "tag", "provider", "model") {
 		return Report{}, fmt.Errorf("invalid usage group %q", options.Group)
 	}
 	if options.Group == "tag" && strings.TrimSpace(options.Dimension) == "" {
@@ -51,7 +51,7 @@ func (s *Service) Report(ctx context.Context, options ReportOptions) (Report, er
 	bindings := s.sessionBindings()
 	query := `SELECT provider, provider_session_id, timestamp_ms, model,
 input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
-recorded_cost_usd, calculated_cost_usd, pricing_found
+reasoning_tokens, recorded_cost_usd, calculated_cost_usd, pricing_found
 FROM usage_entries WHERE 1=1`
 	args := make([]any, 0, 3)
 	if !options.Since.IsZero() {
@@ -82,11 +82,12 @@ FROM usage_entries WHERE 1=1`
 		var pricingFound bool
 		if err := rows.Scan(&provider, &providerSessionID, &timestampMS, &model,
 			&tokens.Input, &tokens.Output, &tokens.CacheCreation, &tokens.CacheRead,
+			&tokens.Reasoning,
 			&recorded, &calculated, &pricingFound); err != nil {
 			return Report{}, err
 		}
 		binding := bindings[provider+":"+providerSessionID]
-		key, start := usageGroupKey(options, time.UnixMilli(timestampMS), provider, providerSessionID, binding)
+		key, start := usageGroupKey(options, time.UnixMilli(timestampMS), provider, providerSessionID, model, binding)
 		group := aggregates[key]
 		if group == nil {
 			group = &aggregate{row: ReportRow{Key: key, Start: start}, models: make(map[string]struct{}), providers: make(map[string]struct{})}
@@ -100,6 +101,7 @@ FROM usage_entries WHERE 1=1`
 		group.row.Tokens.Output += tokens.Output
 		group.row.Tokens.CacheCreation += tokens.CacheCreation
 		group.row.Tokens.CacheRead += tokens.CacheRead
+		group.row.Tokens.Reasoning += tokens.Reasoning
 		if recorded.Valid {
 			group.row.RecordedCostUSD += recorded.Float64
 		}
@@ -133,7 +135,7 @@ FROM usage_entries WHERE 1=1`
 	if err := rows.Err(); err != nil {
 		return Report{}, err
 	}
-	report := Report{GeneratedAt: s.options.Now().UTC().Format(time.RFC3339), Group: options.Group,
+	report := Report{SchemaVersion: 1, Machine: s.options.Machine, GeneratedAt: s.options.Now().UTC().Format(time.RFC3339), Group: options.Group,
 		Mode: options.Mode, Dimension: strings.ToLower(strings.TrimSpace(options.Dimension)), Pricing: provenance, Scan: scan,
 		Rows: make([]ReportRow, 0, len(aggregates)), Totals: ReportRow{Key: "total", Models: []string{}},
 	}
@@ -151,7 +153,7 @@ FROM usage_entries WHERE 1=1`
 		addRow(&report.Totals, group.row)
 	}
 	sort.Slice(report.Rows, func(left, right int) bool {
-		if options.Group == "session" || options.Group == "tag" {
+		if options.Group == "session" || options.Group == "tag" || options.Group == "provider" || options.Group == "model" {
 			if report.Rows[left].CostUSD == report.Rows[right].CostUSD {
 				return report.Rows[left].Key < report.Rows[right].Key
 			}
@@ -172,7 +174,7 @@ FROM usage_entries WHERE 1=1`
 	return report, nil
 }
 
-func usageGroupKey(options ReportOptions, timestamp time.Time, provider, providerSessionID string, binding sessionBinding) (string, string) {
+func usageGroupKey(options ReportOptions, timestamp time.Time, provider, providerSessionID, model string, binding sessionBinding) (string, string) {
 	local := timestamp.In(time.Local)
 	switch options.Group {
 	case "weekly":
@@ -194,6 +196,13 @@ func usageGroupKey(options ReportOptions, timestamp time.Time, provider, provide
 			value = "(untagged)"
 		}
 		return value, ""
+	case "provider":
+		return provider, ""
+	case "model":
+		if strings.TrimSpace(model) == "" {
+			return "(unknown model)", ""
+		}
+		return model, ""
 	default:
 		start := local.Format("2006-01-02")
 		return start, start
@@ -242,6 +251,7 @@ func addRow(total *ReportRow, row ReportRow) {
 	total.Tokens.Output += row.Tokens.Output
 	total.Tokens.CacheCreation += row.Tokens.CacheCreation
 	total.Tokens.CacheRead += row.Tokens.CacheRead
+	total.Tokens.Reasoning += row.Tokens.Reasoning
 	total.CostUSD += row.CostUSD
 	total.RecordedCostUSD += row.RecordedCostUSD
 	total.CalculatedCostUSD += row.CalculatedCostUSD

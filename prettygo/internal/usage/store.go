@@ -25,6 +25,12 @@ func NewService(options Options) *Service {
 	if options.Now == nil {
 		options.Now = time.Now
 	}
+	if options.Machine == "" {
+		options.Machine, _ = os.Hostname()
+		if options.Machine == "" {
+			options.Machine = "this-machine"
+		}
+	}
 	return &Service{options: options}
 }
 
@@ -67,6 +73,7 @@ CREATE TABLE IF NOT EXISTS usage_entries (
   output_tokens INTEGER NOT NULL,
   cache_creation_tokens INTEGER NOT NULL,
   cache_read_tokens INTEGER NOT NULL,
+  reasoning_tokens INTEGER NOT NULL DEFAULT 0,
   recorded_cost_usd REAL,
   calculated_cost_usd REAL NOT NULL,
   pricing_found INTEGER NOT NULL
@@ -79,6 +86,11 @@ CREATE INDEX IF NOT EXISTS usage_entries_source ON usage_entries(source_path);
 			s.openErr = fmt.Errorf("initialize usage ledger: %w", err)
 			return
 		}
+		if err = ensureColumn(ctx, db, "usage_entries", "reasoning_tokens", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+			_ = db.Close()
+			s.openErr = fmt.Errorf("migrate usage ledger: %w", err)
+			return
+		}
 		if err := os.Chmod(s.options.Path, 0o600); err != nil {
 			_ = db.Close()
 			s.openErr = fmt.Errorf("protect usage ledger: %w", err)
@@ -87,6 +99,35 @@ CREATE INDEX IF NOT EXISTS usage_entries_source ON usage_entries(source_path);
 		s.db = db
 	})
 	return s.db, s.openErr
+}
+
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, kind string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.ExecContext(ctx, "ALTER TABLE "+table+" ADD COLUMN "+column+" "+definition)
+	return err
 }
 
 func (s *Service) Close() error {

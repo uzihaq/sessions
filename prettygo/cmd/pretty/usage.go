@@ -24,8 +24,8 @@ func (a *app) cmdUsage(args []string) error {
 	if len(args) != 0 {
 		return fail(1, "unknown usage option: %s\n%s", args[0], usageUsageText)
 	}
-	if !oneOfString(group, "daily", "weekly", "monthly", "session", "tag") {
-		return fail(1, "usage report must be daily, weekly, monthly, session, or tag")
+	if !oneOfString(group, "daily", "weekly", "monthly", "session", "tag", "provider", "model") {
+		return fail(1, "usage report must be daily, weekly, monthly, session, tag, provider, or model")
 	}
 	if !hasMode {
 		mode = usage.ModeAuto
@@ -70,14 +70,14 @@ func writeUsageTable(output io.Writer, report usage.Report) error {
 		return err
 	}
 	writer := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "PERIOD\tINPUT\tOUTPUT\tCACHE WRITE\tCACHE READ\tTOTAL\tCOST")
+	fmt.Fprintln(writer, "PERIOD\tINPUT\tOUTPUT\tREASONING\tCACHE WRITE\tCACHE READ\tTOTAL\tCOST")
 	for _, row := range report.Rows {
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t$%.4f\n", row.Key,
-			commaInt(row.Tokens.Input), commaInt(row.Tokens.Output), commaInt(row.Tokens.CacheCreation),
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t$%.4f\n", row.Key,
+			commaInt(row.Tokens.Input), commaInt(row.Tokens.Output), commaInt(row.Tokens.Reasoning), commaInt(row.Tokens.CacheCreation),
 			commaInt(row.Tokens.CacheRead), commaInt(row.Tokens.Total()), row.CostUSD)
 	}
-	fmt.Fprintf(writer, "TOTAL\t%s\t%s\t%s\t%s\t%s\t$%.4f\n", commaInt(report.Totals.Tokens.Input),
-		commaInt(report.Totals.Tokens.Output), commaInt(report.Totals.Tokens.CacheCreation),
+	fmt.Fprintf(writer, "TOTAL\t%s\t%s\t%s\t%s\t%s\t%s\t$%.4f\n", commaInt(report.Totals.Tokens.Input),
+		commaInt(report.Totals.Tokens.Output), commaInt(report.Totals.Tokens.Reasoning), commaInt(report.Totals.Tokens.CacheCreation),
 		commaInt(report.Totals.Tokens.CacheRead), commaInt(report.Totals.Tokens.Total()), report.Totals.CostUSD)
 	if err := writer.Flush(); err != nil {
 		return err
@@ -110,4 +110,4 @@ func oneOfString(value string, candidates ...string) bool {
 	return false
 }
 
-const usageUsageText = "usage: pretty usage [daily|weekly|monthly|session|tag] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]"
+const usageUsageText = "usage: pretty usage [daily|weekly|monthly|session|tag|provider|model] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]"

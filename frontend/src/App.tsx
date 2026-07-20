@@ -158,13 +158,10 @@ function ConnectedApp(): JSX.Element {
 
   const isMobile = useIsMobile();
   const [textSize, setTextSize] = useState(readTextSize());
-  // On phones the layout toggle is hidden and mode is forced to "tabs"
-  // — Grid is too cramped to be useful on a 390px viewport, and the
-  // active-session full-screen view is what users actually want when
-  // they're on the move. The persisted localStorage choice still
-  // applies on desktop.
+  // Grid is too cramped for a compact viewport. Fleet, search, and usage are
+  // useful on phones and narrow Mac windows, so the mobile nav keeps them.
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(readStoredLayout);
-  const effectiveLayout: LayoutMode = isMobile ? 'tabs' : layoutMode;
+  const effectiveLayout: LayoutMode = isMobile && layoutMode === 'grid' ? 'tabs' : layoutMode;
   useEffect(() => {
     try { window.localStorage.setItem(LAYOUT_KEY, layoutMode); } catch { /* ignore */ }
   }, [layoutMode]);
@@ -422,9 +419,11 @@ function ConnectedApp(): JSX.Element {
       <MobileNav
         sessions={sessions}
         activeId={activeId}
+        layoutMode={effectiveLayout === 'grid' ? 'tabs' : effectiveLayout}
         statusBySession={statusBySession}
         iconBySession={iconBySession}
-        onSwitch={setActive}
+        onSwitch={(id) => { setActive(id); setLayoutMode('tabs'); }}
+        onLayoutChange={setLayoutMode}
         onNew={() => setDialogOpen("new")}
         onResume={() => setDialogOpen("resume")}
       />
