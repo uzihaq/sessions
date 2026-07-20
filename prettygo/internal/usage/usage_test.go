@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,68 @@ recorded_cost_usd REAL, calculated_cost_usd REAL NOT NULL, pricing_found INTEGER
 	}
 	if count != 1 {
 		t.Fatalf("reasoning_tokens columns = %d", count)
+	}
+}
+
+func TestStructuredUsageIsVisibleBeforeBackfillAndDeduplicatesProviderLogs(t *testing.T) {
+	root := t.TempDir()
+	claudeRoot := filepath.Join(root, ".claude", "projects", "project")
+	codexRoot := filepath.Join(root, ".codex", "sessions", "2026", "07", "20")
+	for _, path := range []string{claudeRoot, codexRoot} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := NewService(Options{
+		Path: filepath.Join(root, "usage.sqlite3"), ClaudeRoots: []string{filepath.Dir(claudeRoot)},
+		CodexRoots: []string{filepath.Join(root, ".codex", "sessions")}, Machine: "test-mac",
+	})
+	defer service.Close()
+
+	claudeLive := json.RawMessage(`{"timestamp":"2026-07-20T08:00:00Z","session_id":"claude-live","costUSD":0.12,"message":{"id":"message-live","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30}}}`)
+	if err := service.RecordStructured(context.Background(), state.SessionInfo{ID: "sessions-claude", Tool: state.ToolClaude, ClaudeSessionID: "claude-live"}, claudeLive); err != nil {
+		t.Fatal(err)
+	}
+	codexLive := json.RawMessage(`{"type":"codex","subtype":"token_count","source":"codex-app-server","timestamp":"2026-07-20T09:00:02Z","conversationId":"codex-live","turnId":"turn-live","usage":{"last":{"inputTokens":1000,"cachedInputTokens":250,"outputTokens":125,"reasoningOutputTokens":25,"totalTokens":1125},"total":{"inputTokens":1000,"cachedInputTokens":250,"outputTokens":125,"reasoningOutputTokens":25,"totalTokens":1125}}}`)
+	if err := service.RecordStructured(context.Background(), state.SessionInfo{ID: "sessions-codex", Tool: state.ToolCodex, ConversationID: "codex-live", Model: "gpt-5.2-codex"}, codexLive); err != nil {
+		t.Fatal(err)
+	}
+	db, err := service.database(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var immediate int
+	if err := db.QueryRow(`SELECT count(*) FROM usage_entries WHERE source_path LIKE 'live://%'`).Scan(&immediate); err != nil {
+		t.Fatal(err)
+	}
+	if immediate != 2 {
+		t.Fatalf("live usage entries = %d, want 2", immediate)
+	}
+
+	claudeLog := `{"timestamp":"2026-07-20T08:00:00Z","sessionId":"claude-live","requestId":"request-live","costUSD":0.12,"message":{"id":"message-live","model":"claude-sonnet-4-6","usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":30}}}` + "\n"
+	if err := os.WriteFile(filepath.Join(claudeRoot, "claude-live.jsonl"), []byte(claudeLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codexLog := `{"timestamp":"2026-07-20T09:00:00Z","type":"session_meta","payload":{"id":"codex-live"}}
+{"timestamp":"2026-07-20T09:00:01Z","type":"turn_context","payload":{"turn_id":"turn-live","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-07-20T09:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":250,"output_tokens":125,"reasoning_output_tokens":25}}}}
+`
+	if err := os.WriteFile(filepath.Join(codexRoot, "rollout-live.jsonl"), []byte(codexLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := service.Report(context.Background(), ReportOptions{Group: "daily", Mode: ModeCalculate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Totals.Entries != 2 || report.Totals.Tokens.Input != 850 || report.Totals.Tokens.Output != 145 || report.Totals.Tokens.Reasoning != 25 {
+		t.Fatalf("live plus backfill report = %#v", report.Totals)
+	}
+	var liveSources int
+	if err := db.QueryRow(`SELECT count(*) FROM usage_entries WHERE source_path LIKE 'live://%'`).Scan(&liveSources); err != nil {
+		t.Fatal(err)
+	}
+	if liveSources != 0 {
+		t.Fatalf("provider backfill did not enrich live rows: %d live sources remain", liveSources)
 	}
 }
 

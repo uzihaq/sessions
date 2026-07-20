@@ -216,10 +216,11 @@ low-level runtime state; product lifecycle policy stays in `internal/session`.
 
 ### `usage`
 
-`usage` incrementally indexes the local Claude and Codex JSONL stores into a
-private SQLite ledger without adding a Node runtime dependency
-(`prettygo/internal/usage/scanner.go`, `prettygo/internal/usage/store.go`). It
-deduplicates streamed provider records, retains parser offsets, rebuilds an
+`usage` records live structured Claude and Codex token events at the session-manager boundary, then incrementally
+indexes the local provider JSONL stores into the same private SQLite ledger without adding a Node runtime dependency.
+Stable provider/turn and provider/message keys make backfill enrich rather than double-count live rows
+(`prettygo/internal/usage/live.go`, `prettygo/internal/usage/scanner.go`,
+`prettygo/internal/usage/store.go`). It retains parser offsets, rebuilds an
 index when parsing or pricing semantics change, and reports reasoning as a
 subset of output tokens. Aggregation exposes schema-versioned daily, weekly,
 monthly, session, tag, provider, and model views; session tags are joined from

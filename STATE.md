@@ -75,7 +75,9 @@ paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTE
   and explicit local default tags inherited by future sessions (always editable before start).
 - Local Claude + Codex usage ingestion and SQLite aggregation with daily/weekly/monthly/session/tag/provider/model
   views, explicit reasoning-token reporting, date/provider/cost filters, honest missing-price reporting, and no
-  `npx` runtime dependency. The JSON contract is schema-versioned and existing indexes migrate in place.
+  `npx` runtime dependency. The JSON contract is schema-versioned and existing indexes migrate in place. Structured
+  sessions write usage live at the manager boundary; provider-log backfill shares stable event keys and cannot count
+  those turns twice.
 - A polished in-app usage dashboard with saved local views and expandable cost/token drill-down, fleet-wide search
   UI over the shipped exact/regex/FTS5 backend, compact product navigation for narrow windows and phones, and
   an active-first fleet view across every configured daemon.

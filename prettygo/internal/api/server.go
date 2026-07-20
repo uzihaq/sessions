@@ -64,6 +64,10 @@ type pushService interface {
 }
 
 func New(config state.Config, registry sessionService, pushes ...pushService) *Server {
+	return NewWithUsage(config, registry, nil, pushes...)
+}
+
+func NewWithUsage(config state.Config, registry sessionService, localUsage *usage.Service, pushes ...pushService) *Server {
 	var notifications pushService
 	if len(pushes) > 0 {
 		notifications = pushes[0]
@@ -81,27 +85,10 @@ func New(config state.Config, registry sessionService, pushes ...pushService) *S
 			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
 		}),
 	}
-	// Follow StateRoot so PRETTYD_STATE_DIR keeps scratch daemons isolated.
-	// In normal installs StateRoot and UserStateRoot are identical.
-	usageRoot := config.StateRoot
-	if usageRoot == "" {
-		usageRoot = config.UserStateRoot
+	if localUsage == nil {
+		localUsage = usage.NewLocalService(config)
 	}
-	claudeRoots := []string{
-		filepath.Join(config.DefaultCwd, ".claude", "projects"),
-		filepath.Join(config.DefaultCwd, ".config", "claude", "projects"),
-	}
-	if configured := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); configured != "" {
-		claudeRoots = append(claudeRoots, filepath.Join(configured, "projects"))
-	}
-	codexRoot := filepath.Join(config.DefaultCwd, ".codex")
-	if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
-		codexRoot = configured
-	}
-	server.usage = usage.NewService(usage.Options{
-		Path: filepath.Join(usageRoot, "usage.sqlite3"), ClaudeRoots: claudeRoots,
-		CodexRoots: []string{filepath.Join(codexRoot, "sessions")}, RunnerStateDir: config.RunnerStateDir,
-	})
+	server.usage = localUsage
 	server.lan = newLANListener(config, server)
 	// Create the token while the daemon is starting, including when the open
 	// escape hatch is present. This keeps a fresh install secure without an

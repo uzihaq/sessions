@@ -15,6 +15,7 @@ import (
 	"github.com/uzihaq/pretty-pty/prettygo/internal/ledger"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/session"
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
+	"github.com/uzihaq/pretty-pty/prettygo/internal/usage"
 )
 
 var anyHosts = map[string]struct{}{"0.0.0.0": {}, "::": {}, "::0": {}, "*": {}}
@@ -44,11 +45,18 @@ func main() {
 			log.Printf("close lane ledger: %v", err)
 		}
 	}()
+	usageService := usage.NewLocalService(config)
+	defer func() {
+		if err := usageService.Close(); err != nil {
+			log.Printf("close usage ledger: %v", err)
+		}
+	}()
 	manager := session.NewManager(config, state.NewLaunchdLauncher(config), session.ManagerOptions{
 		Boundaries: ledgerStore.Boundaries(), Observations: ledgerStore.Observations(), LedgerReader: ledgerStore,
+		UsageRecorder: usageService,
 	})
 	defer manager.Close()
-	handler := api.New(config, manager, manager.Push())
+	handler := api.NewWithUsage(config, manager, usageService, manager.Push())
 	// An explicitly isolated scratch daemon must not restore the user's
 	// persisted LAN listener on a second port.
 	if os.Getenv("PRETTYD_STATE_DIR") == "" {

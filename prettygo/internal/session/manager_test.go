@@ -21,6 +21,30 @@ import (
 	"github.com/uzihaq/pretty-pty/prettygo/internal/state"
 )
 
+type recordingUsage struct {
+	calls int
+	info  state.SessionInfo
+	raw   json.RawMessage
+}
+
+func (r *recordingUsage) RecordStructured(_ context.Context, info state.SessionInfo, raw json.RawMessage) error {
+	r.calls++
+	r.info = info
+	r.raw = append(r.raw[:0], raw...)
+	return nil
+}
+
+func TestManagerForwardsOnlyStructuredUsageCandidates(t *testing.T) {
+	recorder := &recordingUsage{}
+	manager := &Manager{usage: recorder}
+	info := state.SessionInfo{ID: "session-live", Tool: state.ToolCodex}
+	manager.recordStructuredUsage(info, json.RawMessage(`{"type":"assistant"}`))
+	manager.recordStructuredUsage(info, json.RawMessage(`{"type":"codex","usage":{"last":{}}}`))
+	if recorder.calls != 1 || recorder.info.ID != info.ID || !strings.Contains(string(recorder.raw), `"usage"`) {
+		t.Fatalf("usage recorder = calls %d info %#v raw %s", recorder.calls, recorder.info, recorder.raw)
+	}
+}
+
 func TestCodexAppServerStructuredHistoryAndLifecycleAreAuthoritative(t *testing.T) {
 	root := t.TempDir()
 	config := testConfig(root)

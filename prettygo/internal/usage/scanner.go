@@ -18,6 +18,7 @@ import (
 
 type parserState struct {
 	SessionID    string `json:"sessionId,omitempty"`
+	TurnID       string `json:"turnId,omitempty"`
 	Model        string `json:"model,omitempty"`
 	Previous     Tokens `json:"previous,omitempty"`
 	Fast         bool   `json:"fast,omitempty"`
@@ -26,7 +27,7 @@ type parserState struct {
 
 // Increment when parser or pricing semantics change so already-indexed events
 // are rebuilt from their source logs on the next sync.
-const usageIndexVersion = 3
+const usageIndexVersion = 4
 
 type entry struct {
 	key, source, provider, sessionID, model string
@@ -255,9 +256,8 @@ func parseClaudeLine(path string, offset int64, raw []byte, fallback time.Time) 
 	model := text(message, "model")
 	stamp := parseTimestamp(text(value, "timestamp"), fallback)
 	messageID := text(message, "id")
-	requestID := text(value, "requestId", "request_id")
-	key := fmt.Sprintf("claude:%s:%s:%s", sessionID, requestID, messageID)
-	if messageID == "" && requestID == "" {
+	key := liveClaudeKey(sessionID, messageID)
+	if messageID == "" {
 		key = fmt.Sprintf("claude:%s:%d", path, offset)
 	}
 	var recorded *float64
@@ -283,6 +283,7 @@ func parseCodexLine(path string, offset int64, raw []byte, fallback time.Time, s
 		return nil
 	}
 	if typeName == "turn_context" {
+		state.TurnID = text(payload, "turn_id", "turnId")
 		if model := text(payload, "model"); model != "" {
 			state.Model = model
 		}
@@ -322,7 +323,11 @@ func parseCodexLine(path string, offset int64, raw []byte, fallback time.Time, s
 	}
 	stamp := parseTimestamp(text(value, "timestamp"), fallback)
 	calculated, found := price(state.Model, tokens, fast)
-	return &entry{key: fmt.Sprintf("codex:%s:%d", path, offset), source: path, provider: "codex",
+	key := fmt.Sprintf("codex:%s:%d", path, offset)
+	if state.TurnID != "" {
+		key = liveCodexKey(sessionID, state.TurnID)
+	}
+	return &entry{key: key, source: path, provider: "codex",
 		sessionID: sessionID, model: state.Model, offset: offset, timestampMS: stamp.UnixMilli(),
 		tokens: tokens, calculated: calculated, pricingFound: found}
 }

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -72,10 +73,15 @@ type ManagerOptions struct {
 	Boundaries         ledger.BoundaryWriter
 	Observations       ledger.ObservationWriter
 	LedgerReader       LedgerReader
+	UsageRecorder      UsageRecorder
 	Notify             func(PushPayload)
 	NotifyWaitingDelay time.Duration
 	NotifyCooldown     time.Duration
 	ListCodexModels    func(context.Context, string) ([]codexapp.Model, error)
+}
+
+type UsageRecorder interface {
+	RecordStructured(context.Context, state.SessionInfo, json.RawMessage) error
 }
 
 type DiscoverOptions struct{ Force bool }
@@ -117,6 +123,7 @@ type Manager struct {
 	boundaries   ledger.BoundaryWriter
 	observations ledger.ObservationWriter
 	ledgerReader LedgerReader
+	usage        UsageRecorder
 	notify       func(PushPayload)
 	listModels   func(context.Context, string) ([]codexapp.Model, error)
 
@@ -205,6 +212,7 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 		push: NewPushService(root), guard: MassKillGuard{Limit: selected.MassKillLimit},
 		options: selected, started: time.Now(), ctx: ctx, cancel: cancel,
 		boundaries: selected.Boundaries, observations: selected.Observations, ledgerReader: selected.LedgerReader,
+		usage:    selected.UsageRecorder,
 		runtimes: make(map[string]*runtimeSession), hooks: loadGlobalHooks(config.GlobalHooksPath),
 		laneDeaths: make(map[string]laneDeathBurst), notifications: make(map[string]*sessionNotificationState),
 	}
@@ -1016,6 +1024,7 @@ func (r *runtimeSession) observe() {
 					})
 				})
 			}
+			r.manager.recordStructuredUsage(r.session.Info(), event.ClaudeEvent)
 			select {
 			case r.structuredEventArrived <- struct{}{}:
 			default:
@@ -1039,6 +1048,7 @@ func (r *runtimeSession) observe() {
 				r.mu.Unlock()
 				r.setWorking(working)
 			}
+			r.manager.recordStructuredUsage(r.session.Info(), event.CodexEvent)
 			select {
 			case r.structuredEventArrived <- struct{}{}:
 			default:
@@ -1056,6 +1066,15 @@ func (r *runtimeSession) observe() {
 			r.manager.dropRuntime(id, r)
 			return
 		}
+	}
+}
+
+func (m *Manager) recordStructuredUsage(info state.SessionInfo, raw json.RawMessage) {
+	if m.usage == nil || !bytes.Contains(raw, []byte(`"usage"`)) {
+		return
+	}
+	if err := m.usage.RecordStructured(context.Background(), info, raw); err != nil {
+		log.Printf("[usage] record live structured event for %s: %v", info.ID, err)
 	}
 }
 
