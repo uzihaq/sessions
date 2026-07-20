@@ -34,6 +34,13 @@ thin Kotlin client rather than changing the runtime boundary.
 
 ## Later
 
+- Local usage and cost analytics with arbitrary per-session key/value tags
+  (`product`, `product_line`, `client`, `team`, `cost_center`, or anything the
+  user defines). Follow `ccusage`'s proven local-log normalization and pinned
+  LiteLLM pricing model without adding a runtime npm dependency; build the
+  product around a polished dashboard with tag-based comparisons, trends, and
+  per-session drill-down. The relative priority of this item versus Android and
+  the other post-release work is still to be chosen.
 - iOS client focused on APNs, widgets, and Live Activities.
 - Central keyword search across configured machines.
 - Session sharing after the pairing and per-device credential ladder.
