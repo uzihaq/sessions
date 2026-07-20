@@ -45,7 +45,7 @@ func HistoryEvent(event Event, at time.Time) (json.RawMessage, error) {
 		value["subtype"] = "item_started"
 		value["conversationId"] = event.ConversationID
 		value["turnId"] = event.TurnID
-		value["item"] = event.Item
+		value["item"] = historyItem(event.Item)
 		if event.StartedAtMS > 0 {
 			value["timestamp"] = historyTimestamp(time.UnixMilli(event.StartedAtMS))
 		}
@@ -53,7 +53,7 @@ func HistoryEvent(event Event, at time.Time) (json.RawMessage, error) {
 		value["subtype"] = "item_completed"
 		value["conversationId"] = event.ConversationID
 		value["turnId"] = event.TurnID
-		value["item"] = event.Item
+		value["item"] = historyItem(event.Item)
 		if event.CompletedAtMS > 0 {
 			value["timestamp"] = historyTimestamp(time.UnixMilli(event.CompletedAtMS))
 		}
@@ -65,6 +65,12 @@ func HistoryEvent(event Event, at time.Time) (json.RawMessage, error) {
 				"content": []map[string]any{{"type": "text", "text": event.Item.Text}},
 			}
 		}
+	case PlanUpdated:
+		value["subtype"] = "plan_updated"
+		value["conversationId"] = event.ConversationID
+		value["turnId"] = event.TurnID
+		value["explanation"] = event.Explanation
+		value["plan"] = event.Plan
 	case TokenCount:
 		value["subtype"] = "token_count"
 		value["conversationId"] = event.ConversationID
@@ -82,6 +88,21 @@ func HistoryEvent(event Event, at time.Time) (json.RawMessage, error) {
 		value["subtype"] = "unknown"
 	}
 	return marshalHistory(value)
+}
+
+// historyItem preserves the complete provider item payload. ThreadItem keeps
+// its item-specific fields in Raw so the protocol parser can stay generated
+// from a small common subset; serializing the struct directly would discard
+// command output, file diffs, MCP results, reasoning summaries, and other GUI
+// material before it reached the session history stream.
+func historyItem(item ThreadItem) any {
+	if len(item.Raw) > 0 {
+		var value map[string]any
+		if json.Unmarshal(item.Raw, &value) == nil && value != nil {
+			return value
+		}
+	}
+	return item
 }
 
 // HistoryLifecycle returns the authoritative working state carried by a

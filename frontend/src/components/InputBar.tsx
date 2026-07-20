@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { uploadFile } from '../api/prettyd';
+import type { SessionTool } from '../types';
 
 interface Props {
   // Sender from useTerminal — writes through the live WS. xterm echoes
@@ -20,6 +21,8 @@ interface Props {
   // recoverable without copy/pasting from the red bubble. The version
   // changes per failed attempt.
   recoverDraft?: { id: string; text: string; version: number } | null;
+  provider?: SessionTool;
+  structuredKind?: string;
 }
 
 // Quote a path for safe shell-style insertion. Single quotes wrap the
@@ -44,14 +47,32 @@ const QUICK_KEYS: QuickKey[] = [
   { glyph: '⌃C',  label: 'Cancel',    bytes: '\x03', title: 'Ctrl-C — cancel / quit running process (SIGINT)' }
 ];
 
+const CODEX_APP_SERVER_QUICK_KEYS: QuickKey[] = [
+  {
+    glyph: 'esc',
+    label: 'Stop turn',
+    bytes: '\x1b',
+    title: 'Interrupt the active Codex turn without ending the conversation'
+  }
+];
+
 // Bottom composer for the Pretty view. xterm itself accepts input fine
 // when focused, but in Pretty mode the user can't see the cursor — they
 // need an obvious "type here" target. Keystrokes go through the same WS
 // as xterm's onData; the PTY echoes them and the parser sees them on the
 // next snapshot. No "live-type diff" machinery from pretty-tmux: with a
 // real PTY, the echoed text just appears.
-export function InputBar({ send, connected, sessionId, onSubmitted, recoverDraft }: Props): JSX.Element {
+export function InputBar({
+  send,
+  connected,
+  sessionId,
+  onSubmitted,
+  recoverDraft,
+  provider = 'claude-code',
+  structuredKind
+}: Props): JSX.Element {
   const [text, setText] = useState('');
+  const quickKeys = structuredKind === 'codex-app-server' ? CODEX_APP_SERVER_QUICK_KEYS : QUICK_KEYS;
   // 'idle' | 'sent' — sent briefly turns the Send button green so the
   // user can see the bytes left this client. The button text stays
   // "Send" the entire time; the green flash IS the feedback. (No ✓
@@ -250,7 +271,7 @@ export function InputBar({ send, connected, sessionId, onSubmitted, recoverDraft
         </div>
       ) : null}
       <div className="input-quick-row" role="toolbar" aria-label="Quick keys">
-        {QUICK_KEYS.map((k) => (
+        {quickKeys.map((k) => (
           <button
             key={k.label}
             type="button"
@@ -278,7 +299,9 @@ export function InputBar({ send, connected, sessionId, onSubmitted, recoverDraft
           }}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          placeholder={connected ? 'Type a message — Enter sends, Shift+Enter for newline' : 'Disconnected'}
+          placeholder={connected
+            ? `Message ${provider === 'codex' ? 'Codex' : 'Claude'} — Enter sends, Shift+Enter for newline`
+            : 'Disconnected'}
           disabled={!connected}
           rows={Math.min(6, Math.max(1, text.split('\n').length))}
           autoCapitalize="sentences"

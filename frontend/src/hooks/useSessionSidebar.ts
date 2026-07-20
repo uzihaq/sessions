@@ -38,6 +38,8 @@ export interface SessionSidebarState {
   // "1.9k" — tokens consumed in the current (in-progress or just-
   // completed) assistant turn.
   tokens: string;
+  // Codex app-server context utilization, e.g. "32% of 258k".
+  context: string;
   // "9m 50s" frozen from the last completed turn, shown while idle.
   finalElapsed: string;
   // Description of what Claude is doing right now — derived from the
@@ -82,6 +84,106 @@ function formatElapsed(ms: number): string {
   return `${m}m ${sec}s`;
 }
 
+function itemTaskLabel(item: unknown): string {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+  const record = item as Record<string, unknown>;
+  const type = typeof record.type === 'string' ? record.type : '';
+  if (!type || type === 'agentMessage' || type === 'reasoning' || type === 'userMessage') return '';
+  if (type === 'commandExecution' && typeof record.command === 'string') {
+    return `Command: ${record.command.replace(/\s+/g, ' ').slice(0, 90)}`;
+  }
+  if (type === 'fileChange' && Array.isArray(record.changes)) {
+    const paths = record.changes
+      .map((change) => change && typeof change === 'object' ? (change as Record<string, unknown>).path : '')
+      .filter((path): path is string => typeof path === 'string' && path.length > 0);
+    return paths.length > 0 ? `Editing ${paths.slice(0, 2).join(', ')}${paths.length > 2 ? '…' : ''}` : 'Editing files';
+  }
+  if (type === 'mcpToolCall') {
+    const server = typeof record.server === 'string' ? record.server : '';
+    const toolName = typeof record.tool === 'string' ? record.tool : '';
+    return [server, toolName].filter(Boolean).join(' · ') || 'MCP tool';
+  }
+  if (type === 'webSearch' && typeof record.query === 'string') return `Searching: ${record.query}`;
+  return type.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (char) => char.toUpperCase());
+}
+
+function codexContextLabel(used: number, window: number): string {
+  if (used <= 0 || window <= 0) return '';
+  const percent = Math.min(100, Math.round((used / window) * 100));
+  return `${percent}% of ${formatTokens(window)}`;
+}
+
+function codexSidebarState(
+  events: ClaudeSessionEvent[],
+  daemonWorking: boolean,
+  parserName: string,
+  parserIcon: string
+): SessionSidebarState {
+  let turnStartedAt: number | null = null;
+  let lastCompletedElapsed: number | null = null;
+  let lifecycleWorking = false;
+  let sawLifecycle = false;
+  let tokens = 0;
+  let context = '';
+  let currentTask = '';
+  let currentTaskID = '';
+
+  for (const event of events) {
+    const timestamp = event.timestamp ? Date.parse(event.timestamp) : NaN;
+    if (event.subtype === 'turn_started') {
+      sawLifecycle = true;
+      lifecycleWorking = true;
+      if (!Number.isNaN(timestamp)) turnStartedAt = timestamp;
+      currentTask = '';
+      currentTaskID = '';
+    } else if (event.subtype === 'item_started') {
+      const label = itemTaskLabel(event.item);
+      const id = event.item && typeof event.item.id === 'string' ? event.item.id : '';
+      if (label) {
+        currentTask = label;
+        currentTaskID = id;
+      }
+    } else if (event.subtype === 'item_completed') {
+      const id = event.item && typeof event.item.id === 'string' ? event.item.id : '';
+      if (id && id === currentTaskID) {
+        currentTask = '';
+        currentTaskID = '';
+      }
+    } else if (event.subtype === 'token_count') {
+      const last = event.usage?.last;
+      const total = event.usage?.total;
+      tokens = last?.totalTokens ?? last?.outputTokens ?? tokens;
+      // `total` is the cumulative thread bill; context pressure is the
+      // provider's latest request footprint. Using the cumulative value would
+      // eventually show 100% even after app-server compacts the conversation.
+      const contextUsed = last?.totalTokens ?? total?.totalTokens ?? 0;
+      const contextWindow = event.usage?.modelContextWindow ?? 0;
+      context = codexContextLabel(contextUsed, contextWindow);
+    } else if (event.subtype === 'turn_completed') {
+      sawLifecycle = true;
+      lifecycleWorking = false;
+      currentTask = '';
+      currentTaskID = '';
+      if (turnStartedAt != null && !Number.isNaN(timestamp)) {
+        lastCompletedElapsed = Math.max(0, timestamp - turnStartedAt);
+      }
+    }
+  }
+
+  const isWorking = (sawLifecycle ? lifecycleWorking : false) || daemonWorking;
+  return {
+    parserName,
+    parserIcon,
+    isWorking,
+    timer: isWorking && turnStartedAt != null ? formatElapsed(Date.now() - turnStartedAt) : '',
+    tokens: formatTokens(tokens),
+    context,
+    finalElapsed: !isWorking && lastCompletedElapsed != null ? formatElapsed(lastCompletedElapsed) : '',
+    currentTask: isWorking ? currentTask : '',
+    checklist: []
+  };
+}
+
 // Stop reasons that indicate a turn has fully completed. "tool_use" is
 // NOT in this set — Claude emits an assistant event with that stop
 // reason whenever it calls a tool, but the turn isn't done until the
@@ -95,7 +197,7 @@ const TERMINAL_STOP_REASONS = new Set([
 
 interface Args {
   session: SessionInfo | null;
-  claudeEvents: ClaudeSessionEvent[];
+  events: ClaudeSessionEvent[];
   // Daemon-reported "this session is producing output right now" flag.
   // Filled in from SessionInfo.working. Augments the JSONL-based
   // awaiting state for the brief gap between Claude rendering a reply
@@ -103,7 +205,7 @@ interface Args {
   daemonWorking: boolean;
 }
 
-export function useSessionSidebar({ session, claudeEvents, daemonWorking }: Args): SessionSidebarState {
+export function useSessionSidebar({ session, events, daemonWorking }: Args): SessionSidebarState {
   return useMemo((): SessionSidebarState => {
     const ident = tool(session?.tool ?? 'terminal');
 
@@ -115,10 +217,18 @@ export function useSessionSidebar({ session, claudeEvents, daemonWorking }: Args
         isWorking: daemonWorking,
         timer: '',
         tokens: '',
+        context: '',
         finalElapsed: '',
         currentTask: '',
         checklist: []
       };
+    }
+
+    if (
+      session.tool === 'codex' &&
+      events.some((event) => event.source === 'codex-app-server' || event.type === 'codex')
+    ) {
+      return codexSidebarState(events, daemonWorking, ident.name, ident.icon);
     }
 
     // Walk events oldest-first to accumulate sidebar state.
@@ -137,7 +247,7 @@ export function useSessionSidebar({ session, claudeEvents, daemonWorking }: Args
     // Latest TodoWrite payload — survives across turns until next write.
     let latestTodos: SidebarChecklistItem[] = [];
 
-    for (const e of claudeEvents) {
+    for (const e of events) {
       const ts = e.timestamp ? Date.parse(e.timestamp) : NaN;
       if (e.type === 'user') {
         // Skip tool_result entries — those are loop feedback from Claude,
@@ -243,9 +353,10 @@ export function useSessionSidebar({ session, claudeEvents, daemonWorking }: Args
       isWorking,
       timer,
       tokens: formatTokens(currentTurnTokens),
+      context: '',
       finalElapsed,
       currentTask: isWorking ? currentTask : '',
       checklist: latestTodos
     };
-  }, [session, claudeEvents, daemonWorking]);
+  }, [session, events, daemonWorking]);
 }

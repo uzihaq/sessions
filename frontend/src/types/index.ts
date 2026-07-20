@@ -8,7 +8,10 @@ export type SessionTool = 'claude-code' | 'codex' | 'terminal';
 
 export interface SessionInfo {
   id: string;
+  name?: string;
+  description?: string;
   tags?: Record<string, string>;
+  kind?: string;
   cmd: string;
   args: string[];
   cwd: string;
@@ -19,8 +22,8 @@ export interface SessionInfo {
   tool: SessionTool;
   working: boolean;
   lastDataAt: number;
-  // When the user last sent a real message (ms epoch, from the Claude
-  // JSONL) — null for non-Claude sessions or before the first message.
+  // When the user last sent a real structured message (ms epoch) — null
+  // for shell sessions or before the first provider message.
   lastUserMessageAt: number | null;
   exited: boolean;
   exitCode: number | null;
@@ -33,6 +36,14 @@ export interface SessionInfo {
   // pretty-PTY itself (manual override always wins).
   claudeCustomTitle?: string;
   claudeAiTitle?: string;
+  // Structured-provider controls resolved by the daemon at spawn time.
+  // These are display truth for the current durable session; changing them
+  // requires an explicit provider control path, never a browser-only toggle.
+  model?: string;
+  effort?: string;
+  fast?: boolean;
+  conversationId?: string;
+  remoteEndpoint?: string;
 }
 
 export interface CreateSessionRequest {
@@ -114,9 +125,37 @@ export type MuxClientMsg =
   | { type: 'snapshot'; requestId: string; sessionId: string; cols?: number }
   | { type: 'events'; requestId: string; sessionId: string; since?: number; tail?: number };
 
-// Anthropic's persisted session event. Conservatively typed — we read
-// `type` and `message.*` for chat purposes; everything else is opaque.
-export interface ClaudeSessionEvent {
+export interface StructuredPlanStep {
+  step: string;
+  status: string;
+}
+
+export interface StructuredThreadItem extends Record<string, unknown> {
+  id?: string;
+  type?: string;
+  text?: string;
+  phase?: string | null;
+  status?: string;
+}
+
+export interface StructuredTokenUsageBreakdown {
+  cachedInputTokens?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+  totalTokens?: number;
+}
+
+export interface StructuredTokenUsage {
+  last?: StructuredTokenUsageBreakdown;
+  total?: StructuredTokenUsageBreakdown;
+  modelContextWindow?: number | null;
+}
+
+// Canonical session event stream. Claude JSONL records and Codex app-server
+// notifications share this transport; provider-specific additions stay
+// optional so newer event types remain forward-compatible in older clients.
+export interface StructuredSessionEvent {
   type: string;            // 'user' | 'assistant' | 'system' | …
   uuid?: string;
   parentUuid?: string | null;
@@ -129,5 +168,22 @@ export interface ClaudeSessionEvent {
     stop_reason?: string;
     usage?: unknown;
   };
+  source?: string;
+  subtype?: string;
+  conversationId?: string;
+  turnId?: string;
+  itemId?: string;
+  delta?: string;
+  item?: StructuredThreadItem;
+  usage?: StructuredTokenUsage;
+  status?: string;
+  error?: { message?: string } | null;
+  explanation?: string | null;
+  plan?: StructuredPlanStep[];
   [key: string]: unknown;
 }
+
+// Wire fields retain their historical claudeEvent naming for protocol v2.
+// Keep this alias until the next protocol-version bump; UI code should use
+// StructuredSessionEvent.
+export type ClaudeSessionEvent = StructuredSessionEvent;

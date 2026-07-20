@@ -3,7 +3,7 @@ import { useDispatch } from '../hooks/useDispatch';
 import { renderContent } from '../lib/contentRender';
 import { copyOnClickAtPointer } from '../lib/copyText';
 import type { SessionSidebarState } from '../hooks/useSessionSidebar';
-import type { ClaudeSessionEvent } from '../types';
+import type { ClaudeSessionEvent, SessionTool } from '../types';
 import { InputBar } from './InputBar';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
 import StatusSidebar from './StatusSidebar';
@@ -15,11 +15,9 @@ import type { DispatchMessage } from '../hooks/useDispatch';
 
 interface Props {
   sessionId: string;
-  // Structured session events sourced from Claude's persisted JSONL.
-  // Authoritative chat log — stable UUIDs, structured content. Empty
-  // for non-Claude sessions or briefly during initial mount before
-  // the watcher attaches.
-  claudeEvents: ClaudeSessionEvent[];
+  // Provider-neutral structured history. Claude supplies JSONL records;
+  // Codex supplies normalized rollout or app-server notifications.
+  events: ClaudeSessionEvent[];
   // Live byte sender — used by InputBar to dispatch the actual
   // keystrokes through the WS, and by retry() in useDispatch.
   send: (data: string) => void;
@@ -36,14 +34,14 @@ interface Props {
   // Switches the parent SessionView to the raw terminal when the
   // snapshot classifier sees a prompt/menu instead of a composer.
   onOpenTerminal: () => void;
+  provider: SessionTool;
+  structuredKind?: string;
 }
 
-// Remote view — a chat-app abstraction OVER the terminal. Owns its own
-// message log (per-session, persisted to localStorage), reconciles
-// against parser.blocks to detect send-confirmed and append assistant
-// turns. The terminal is just an observable; once a message is in our
-// log it never moves, never re-renders from somewhere else, and never
-// causes the layout to bounce.
+// Provider-neutral conversation view over the durable session transport.
+// Provider history is authoritative; localStorage holds only optimistic send
+// state until a matching user event confirms delivery. The raw terminal stays
+// mounted as an independent fallback and never owns this projection.
 //
 // Update cadence is intentionally relaxed — the user explicitly said
 // it doesn't need to be live as long as it's accurate. The sidebar
@@ -53,7 +51,7 @@ interface Props {
 
 export function RemoteView({
   sessionId,
-  claudeEvents,
+  events,
   send,
   connected,
   hasEarlierClaudeEvents,
@@ -61,14 +59,18 @@ export function RemoteView({
   onLoadEarlierClaudeEvents,
   sidebar,
   cwd,
-  onOpenTerminal
+  onOpenTerminal,
+  provider,
+  structuredKind
 }: Props): JSX.Element {
+  const providerName = provider === 'codex' ? 'Codex' : 'Claude';
+  const providerIcon = provider === 'codex' ? 'openai-icon.svg' : 'claude.png';
   // Event-derived user contents — passed to useDispatch so pendings get
-  // flipped to 'sent' when JSONL confirms them (instead of timing out
-  // as 'failed'). Computed once per claudeEvents change; the Set is
+  // flipped to 'sent' when provider history confirms them (instead of timing out
+  // as 'failed'). Computed once per events change; the Set is
   // stable across renders when its contents don't change so useDispatch's
   // effect doesn't re-run unnecessarily.
-  const eventMessages = useMemo(() => eventsToMessages(claudeEvents), [claudeEvents]);
+  const eventMessages = useMemo(() => eventsToMessages(events), [events]);
   // Occurrence COUNT per trimmed user content in the JSONL — a count, not
   // a set, so useDispatch can tell a genuinely-new re-send ("continue"
   // again) from a historical duplicate and not false-confirm it.
@@ -87,6 +89,9 @@ export function RemoteView({
     eventUserContentCounts,
     send
   });
+  const hasRecoverableLocalState = dispatchMessages.some(
+    (message) => message.status === 'pending' || message.status === 'failed'
+  );
 
   // JSONL events are the authoritative chat record. Merge in only the
   // dispatch log's still-unconfirmed (pending/failed) user entries — sends
@@ -284,15 +289,12 @@ export function RemoteView({
 
   return (
     <div className="remote-view">
-      {/* Refresh — wipes Remote's owned log and re-bootstraps from the
-          parser's current blocks. Recovery valve for when Remote and
-          Terminal disagree (accumulated dispatch artifacts). Tucked
-          top-right; not pretty, but discoverable. Uses an inline
-          two-step confirm so window.confirm isn't needed (it's
-          suppressed in Tauri/WebViews). */}
-      {clearConfirm ? (
+      {/* Recovery valve for pending/failed local send artifacts. Provider
+          history is never cleared. Uses inline confirmation because native
+          WebViews suppress window.confirm. */}
+      {hasRecoverableLocalState && clearConfirm ? (
         <div className="remote-refresh-confirm">
-          <span className="remote-refresh-confirm-label">Clear log?</span>
+          <span className="remote-refresh-confirm-label">Clear local sends?</span>
           <button
             type="button"
             className="remote-refresh-confirm-yes"
@@ -308,16 +310,16 @@ export function RemoteView({
             Cancel
           </button>
         </div>
-      ) : (
+      ) : hasRecoverableLocalState ? (
         <button
           type="button"
           className="remote-refresh"
           onClick={handleRefresh}
-          title="Clear local chat log and re-derive from terminal scrollback"
+          title="Clear pending or failed local sends; provider history remains unchanged"
         >
-          refresh
+          reset sends
         </button>
-      )}
+      ) : null}
       <div
         className="remote-scroll"
         ref={scrollRef}
@@ -326,7 +328,7 @@ export function RemoteView({
         {messages.length === 0 ? (
           <div className="remote-empty">
             <img
-              src={`${import.meta.env.BASE_URL}claude.png`}
+              src={`${import.meta.env.BASE_URL}${providerIcon}`}
               alt=""
               aria-hidden
               className="remote-empty-watermark"
@@ -334,7 +336,7 @@ export function RemoteView({
             />
             <p>No messages yet.</p>
             <p className="remote-empty-hint">
-              Type below to dispatch your first message to Claude.
+              Type below to start this {providerName} conversation.
             </p>
           </div>
         ) : null}
@@ -376,6 +378,7 @@ export function RemoteView({
         isWorking={sidebar.isWorking}
         timer={sidebar.timer}
         tokens={sidebar.tokens}
+        context={sidebar.context}
         finalElapsed={sidebar.finalElapsed}
         currentTask={sidebar.currentTask}
         checklist={sidebar.checklist}
@@ -403,6 +406,8 @@ export function RemoteView({
           sessionId={sessionId}
           onSubmitted={recordSent}
           recoverDraft={recoverDraft}
+          provider={provider}
+          structuredKind={structuredKind}
         />
       </div>
     </div>
@@ -542,11 +547,51 @@ function RemoteMessageInner({
           style={lockStyle}
           onClick={(e) => copyOnClickAtPointer(e, m.content)}
         >
-          {m.hadThinking ? (
+          {m.streaming ? (
+            <div className="remote-bubble-live" role="status">
+              <span className="remote-bubble-live-dot" aria-hidden />
+              <span>Codex is working</span>
+            </div>
+          ) : null}
+          {m.hadThinking && !m.reasoningSummary ? (
             <div className="remote-bubble-thinking" aria-label="reasoning">
               <span aria-hidden>💭</span>
               <span>reasoned before replying</span>
             </div>
+          ) : null}
+          {m.reasoningSummary ? (
+            <details
+              className="remote-bubble-disclosure remote-bubble-reasoning"
+              data-no-copy
+              onClick={(e) => e.stopPropagation()}
+            >
+              <summary>Reasoning summary</summary>
+              <div
+                className="md-content"
+                dangerouslySetInnerHTML={{ __html: renderContent(m.reasoningSummary, cwd) }}
+              />
+            </details>
+          ) : null}
+          {m.updates && m.updates.length > 0 ? (
+            <details
+              className="remote-bubble-disclosure remote-bubble-updates"
+              data-no-copy
+              onClick={(e) => e.stopPropagation()}
+            >
+              <summary>{m.updates.length} progress {m.updates.length === 1 ? 'update' : 'updates'}</summary>
+              <div className="remote-bubble-updates-list">
+                {m.updates.map((update, index) => (
+                  <div
+                    key={`${m.id}-update-${index}`}
+                    className="md-content"
+                    dangerouslySetInnerHTML={{ __html: renderContent(update, cwd) }}
+                  />
+                ))}
+              </div>
+            </details>
+          ) : null}
+          {m.plan && m.plan.length > 0 ? (
+            <PlanPanel steps={m.plan} explanation={m.planExplanation} />
           ) : null}
           {m.content ? (
             <div
@@ -556,6 +601,15 @@ function RemoteMessageInner({
           ) : null}
           {m.toolCalls && m.toolCalls.length > 0 ? (
             <ToolCallsPanel calls={m.toolCalls} />
+          ) : null}
+          {m.errorResponse ? (
+            <div className="remote-bubble-error">
+              <span className="remote-bubble-error-icon" aria-hidden>⚠</span>
+              <span>{m.errorResponse}</span>
+            </div>
+          ) : null}
+          {!m.streaming && m.turnStatus && m.turnStatus !== 'completed' ? (
+            <div className={`remote-turn-status is-${m.turnStatus}`}>{m.turnStatus}</div>
           ) : null}
         </div>
       )}
@@ -584,6 +638,12 @@ const RemoteMessage = memo(RemoteMessageInner, (a, b) => {
     ma.queued === mb.queued &&
     ma.interrupted === mb.interrupted &&
     ma.hadThinking === mb.hadThinking &&
+    ma.reasoningSummary === mb.reasoningSummary &&
+    ma.updates === mb.updates &&
+    ma.plan === mb.plan &&
+    ma.planExplanation === mb.planExplanation &&
+    ma.streaming === mb.streaming &&
+    ma.turnStatus === mb.turnStatus &&
     ma.toolCalls === mb.toolCalls
   );
 });
@@ -601,6 +661,11 @@ function ToolCallsPanel({
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
+  const providerActivity = calls.some((call) => !!call.kind);
+  const runningCount = calls.filter((call) => {
+    const status = call.status?.toLowerCase() ?? '';
+    return status === 'inprogress' || status === 'running' || status === 'pending';
+  }).length;
   return (
     <div
       className={`remote-bubble-tools${expanded ? ' is-expanded' : ''}`}
@@ -612,8 +677,13 @@ function ToolCallsPanel({
         className="remote-bubble-tools-toggle"
         onClick={() => setExpanded((v) => !v)}
       >
-        {expanded ? '▾' : '▸'} Used {calls.length} {calls.length === 1 ? 'tool' : 'tools'}
-        {!expanded ? (
+        {expanded ? '▾' : '▸'} {providerActivity ? 'Activity' : `Used ${calls.length} ${calls.length === 1 ? 'tool' : 'tools'}`}
+        {providerActivity ? (
+          <span className="remote-bubble-tools-summary">
+            {' · '}{calls.length} {calls.length === 1 ? 'item' : 'items'}{runningCount > 0 ? ` · ${runningCount} running` : ''}
+          </span>
+        ) : null}
+        {!expanded && !providerActivity ? (
           <span className="remote-bubble-tools-summary">
             {' · '}
             {Array.from(new Set(calls.map((t) => t.name))).slice(0, 4).join(', ')}
@@ -638,6 +708,11 @@ function ToolCallsPanel({
                   {t.inputPreview ? (
                     <span className="remote-bubble-tool-input">{t.inputPreview}</span>
                   ) : null}
+                  {t.status ? (
+                    <span className={`remote-bubble-tool-status is-${t.status.toLowerCase()}`}>
+                      {t.status}
+                    </span>
+                  ) : null}
                   <span className="remote-bubble-tool-caret" aria-hidden>{isOpen ? '▾' : '▸'}</span>
                 </button>
                 {isOpen ? (
@@ -654,8 +729,15 @@ function ToolCallsPanel({
                         <pre>{t.resultFull}</pre>
                       </details>
                     ) : (
-                      <div className="remote-bubble-tool-empty">(no output captured)</div>
+                      <div className="remote-bubble-tool-empty">
+                        {t.status && ['inprogress', 'running', 'pending'].includes(t.status.toLowerCase())
+                          ? '(running…)'
+                          : '(no output captured)'}
+                      </div>
                     )}
+                    {t.durationMs != null ? (
+                      <div className="remote-bubble-tool-meta">{t.durationMs} ms</div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -664,5 +746,38 @@ function ToolCallsPanel({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function PlanPanel({
+  steps,
+  explanation
+}: {
+  steps: NonNullable<DispatchMessage['plan']>;
+  explanation?: string;
+}): JSX.Element {
+  const done = steps.filter((step) => step.status.toLowerCase() === 'completed').length;
+  return (
+    <details
+      className="remote-bubble-plan"
+      open={done < steps.length}
+      data-no-copy
+      onClick={(event) => event.stopPropagation()}
+    >
+      <summary>Plan · {done}/{steps.length}</summary>
+      {explanation ? <p className="remote-bubble-plan-explanation">{explanation}</p> : null}
+      <div className="remote-bubble-plan-steps">
+        {steps.map((step, index) => {
+          const status = step.status.toLowerCase();
+          const marker = status === 'completed' ? '✓' : status === 'inprogress' || status === 'in_progress' ? '●' : '○';
+          return (
+            <div key={`${index}-${step.step}`} className={`remote-bubble-plan-step is-${status}`}>
+              <span aria-hidden>{marker}</span>
+              <span>{step.step}</span>
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }

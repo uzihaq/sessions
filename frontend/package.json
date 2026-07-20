@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test:markdown": "node scripts/markdown-smoke.cjs",
+    "test:structured-events": "node scripts/structured-events-smoke.mjs",
+    "test:structured-view": "node scripts/structured-view-smoke.mjs",
     "test:window-scope": "node scripts/window-scope-smoke.mjs"
   },
   "dependencies": {

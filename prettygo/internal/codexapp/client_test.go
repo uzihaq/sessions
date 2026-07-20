@@ -46,6 +46,9 @@ func TestConversationTurnStreamsStructuredEventsAndAutoApproves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := client.InterruptTurn(ctx, conversationID); err != nil {
+		t.Fatal(err)
+	}
 	// Deliberately await the result before draining Events. The event queue must
 	// not deadlock or drop the pre-response notifications sent by the fake.
 	result, err := stream.Result(ctx)
@@ -77,6 +80,7 @@ func TestConversationTurnStreamsStructuredEventsAndAutoApproves(t *testing.T) {
 		"codexapp.TurnStarted",
 		"codexapp.ItemStarted",
 		"codexapp.AgentMessageDelta",
+		"codexapp.PlanUpdated",
 		"codexapp.AgentMessageDelta",
 		"codexapp.ItemCompleted",
 		"codexapp.TokenCount",
@@ -416,9 +420,36 @@ func serveTestTurn(reader io.Reader, writer io.WriteCloser) error {
 	}); err != nil {
 		return err
 	}
+	interrupt, err := readTestRequest(decoder, "turn/interrupt")
+	if err != nil {
+		return err
+	}
+	var interruptParams struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+	}
+	if err := json.Unmarshal(interrupt.Params, &interruptParams); err != nil {
+		return err
+	}
+	if interruptParams.ThreadID != "thread-1" || interruptParams.TurnID != "turn-1" {
+		return fmt.Errorf("unexpected turn/interrupt params: %+v", interruptParams)
+	}
+	if err := encode.Encode(map[string]any{"id": interrupt.ID, "result": map[string]any{}}); err != nil {
+		return err
+	}
 
 	finalPhase := "final"
 	for _, message := range []map[string]any{
+		{
+			"method": "turn/plan/updated",
+			"params": map[string]any{
+				"threadId": "thread-1", "turnId": "turn-1", "explanation": "Ship the GUI",
+				"plan": []any{
+					map[string]any{"step": "Inspect", "status": "completed"},
+					map[string]any{"step": "Build", "status": "inProgress"},
+				},
+			},
+		},
 		{
 			"method": "item/agentMessage/delta",
 			"params": map[string]any{"threadId": "thread-1", "turnId": "turn-1", "itemId": "agent-1", "delta": "OK"},

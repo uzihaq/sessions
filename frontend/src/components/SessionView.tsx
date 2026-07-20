@@ -23,9 +23,9 @@ interface Props {
 // View modes:
 //   • terminal — raw xterm, sized to whatever screen we're viewing on.
 //     For TUI work (slash-command pickers, vim, raw shell output).
-//   • remote   — chat-app abstraction. Sources its message log from
-//     Claude's persisted JSONL event stream. Stable UUIDs, structured
-//     content, no TUI parsing. Default for Claude Code sessions.
+//   • remote   — provider-neutral conversation GUI. Sources its message
+//     log from Claude JSONL or Codex's normalized/app-server event stream.
+//     Stable identities, structured activity, no TUI scraping.
 //
 // The old `pretty`, `split`, and `reflowed` modes were retired: Remote
 // supersedes them for chat reading, and a viewport-sized Terminal view
@@ -70,14 +70,12 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredView);
   const session = useSessions((s) => s.sessions.find((x) => x.id === sessionId)) ?? null;
 
-  // Only Claude Code sessions have a Pretty/Remote source (the JSONL
-  // event stream). codex / shell have no conversation log, so the Remote
-  // view would be a permanently-empty Claude-branded pane — force Terminal
-  // for them and hide the Pretty toggle. Assume Claude until the session
-  // loads so a claude session doesn't flicker through Terminal on first
-  // paint.
-  const supportsPretty = !session || session.tool === 'claude-code';
-  const effectiveView: ViewMode = supportsPretty ? viewMode : 'terminal';
+  // Claude and Codex both expose structured conversation history. Codex TUI
+  // rollouts use the normalized event adapter; codex-app-server sessions add
+  // live deltas, plans, commands, file diffs, reasoning summaries, and usage.
+  // Raw shell sessions remain terminal-only.
+  const supportsConversation = !session || session.tool === 'claude-code' || session.tool === 'codex';
+  const effectiveView: ViewMode = supportsConversation ? viewMode : 'terminal';
 
   // Sticky "have we ever needed xterm for this session?" Once true,
   // stays true so toggling Pretty↔Terminal doesn't tear down xterm.
@@ -98,7 +96,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
   const term = useTerminal(sessionId, hasMountedTerminal, isActive);
   const sidebar = useSessionSidebar({
     session,
-    claudeEvents: term.claudeEvents,
+    events: term.claudeEvents,
     daemonWorking: session?.working ?? false
   });
 
@@ -144,7 +142,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
   // want, and the next picker triggers a fresh switch.
   const lastPickerSeenRef = useRef(false);
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || session?.tool !== 'claude-code') return;
     if (effectiveView !== 'remote') return;
     let alive = true;
     const tick = async (): Promise<void> => {
@@ -168,7 +166,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
     void tick();
     const id = window.setInterval(() => { void tick(); }, 2000);
     return () => { alive = false; window.clearInterval(id); };
-  }, [sessionId, isActive, effectiveView]);
+  }, [sessionId, session?.tool, isActive, effectiveView]);
 
   // Auto-clear the picker notice after 4s.
   useEffect(() => {
@@ -207,6 +205,18 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
           <ParserIcon icon={sidebar.parserIcon} size={18} />
           <span>{sidebar.parserName}</span>
         </span>
+        {session?.kind === 'codex-app-server' ? (
+          <span className="session-runtime-badge">app-server</span>
+        ) : null}
+        {session?.model ? (
+          <span className="session-control-pill" title="Model fixed for this durable session">{session.model}</span>
+        ) : null}
+        {session?.effort ? (
+          <span className="session-control-pill" title="Reasoning effort">{session.effort}</span>
+        ) : null}
+        {session?.fast ? (
+          <span className="session-control-pill is-fast" title="Priority service tier">fast</span>
+        ) : null}
         {term.exitInfo ? (
           <span className="status-exit">
             exited code={term.exitInfo.code ?? '∅'} signal={term.exitInfo.signal ?? '∅'}
@@ -225,14 +235,14 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
           >
             Terminal
           </button>
-          {supportsPretty ? (
+          {supportsConversation ? (
             <button
               type="button"
               className={`view-toggle-btn${effectiveView === 'remote' ? ' is-active' : ''}`}
               onClick={() => setViewMode('remote')}
-              title="Chat-style abstraction with its own message log"
+              title="Structured conversation, activity, plans, and usage"
             >
-              Pretty
+              Conversation
             </button>
           ) : null}
         </div>
@@ -252,7 +262,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
         <div className="session-remote-pane">
           <RemoteView
             sessionId={sessionId}
-            claudeEvents={term.claudeEvents}
+            events={term.claudeEvents}
             send={sendInput}
             connected={term.status === 'open'}
             hasEarlierClaudeEvents={term.hasEarlierClaudeEvents}
@@ -261,6 +271,8 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
             sidebar={sidebar}
             cwd={session?.cwd}
             onOpenTerminal={() => setViewMode('terminal')}
+            provider={session?.tool ?? 'claude-code'}
+            structuredKind={session?.kind}
           />
         </div>
       </div>

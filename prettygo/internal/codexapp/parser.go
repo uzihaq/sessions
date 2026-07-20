@@ -115,6 +115,31 @@ func parseServerEvent(method string, params json.RawMessage) (parsedServerEvent,
 			Item:           notification.Item,
 		}}, nil
 
+	case "turn/plan/updated":
+		var notification struct {
+			ThreadID    string         `json:"threadId"`
+			TurnID      string         `json:"turnId"`
+			Explanation *string        `json:"explanation"`
+			Plan        []TurnPlanStep `json:"plan"`
+		}
+		if err := json.Unmarshal(params, &notification); err != nil {
+			return parsedServerEvent{}, err
+		}
+		if err := validateEventIDs(notification.ThreadID, notification.TurnID); err != nil {
+			return parsedServerEvent{}, err
+		}
+		for _, step := range notification.Plan {
+			if step.Step == "" || step.Status == "" {
+				return parsedServerEvent{}, errors.New("app-server plan step is incomplete")
+			}
+		}
+		return parsedServerEvent{event: PlanUpdated{
+			ConversationID: notification.ThreadID,
+			TurnID:         notification.TurnID,
+			Explanation:    notification.Explanation,
+			Plan:           notification.Plan,
+		}}, nil
+
 	case "thread/tokenUsage/updated":
 		var notification ThreadTokenUsageUpdatedNotification
 		if err := json.Unmarshal(params, &notification); err != nil {

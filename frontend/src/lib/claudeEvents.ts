@@ -170,6 +170,304 @@ function indexToolResultsFromUser(ev: ClaudeSessionEvent): Map<string, string> {
 
 const RESULT_PREVIEW_LEN = 120;
 
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as UnknownRecord
+    : null;
+}
+
+function recordString(record: UnknownRecord | null, key: string): string {
+  const value = record?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function recordNumber(record: UnknownRecord | null, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function compactText(value: string, max = RESULT_PREVIEW_LEN): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
+}
+
+function prettyUnknown(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+}
+
+function humanItemType(type: string): string {
+  if (!type) return 'Activity';
+  const spaced = type.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[-_]+/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+function codexToolCall(item: UnknownRecord, previous?: ToolCall): ToolCall | null {
+  const id = recordString(item, 'id');
+  const kind = recordString(item, 'type');
+  if (!id || !kind || kind === 'agentMessage' || kind === 'reasoning' || kind === 'userMessage') {
+    return null;
+  }
+
+  const status = recordString(item, 'status') || previous?.status;
+  const durationMs = recordNumber(item, 'durationMs') ?? previous?.durationMs;
+  let name = humanItemType(kind);
+  let inputPreview = '';
+  let inputFull = '';
+  let resultFull = '';
+
+  if (kind === 'commandExecution') {
+    name = 'Command';
+    const command = recordString(item, 'command');
+    const cwd = recordString(item, 'cwd');
+    inputPreview = compactText(command);
+    inputFull = [cwd ? `cwd: ${cwd}` : '', command ? `$ ${command}` : ''].filter(Boolean).join('\n');
+    const output = recordString(item, 'aggregatedOutput');
+    const exitCode = recordNumber(item, 'exitCode');
+    resultFull = [
+      output,
+      exitCode != null ? `exit code: ${exitCode}` : '',
+      durationMs != null ? `duration: ${durationMs} ms` : ''
+    ].filter(Boolean).join(output ? '\n\n' : '\n');
+  } else if (kind === 'fileChange') {
+    name = 'File changes';
+    const changes = Array.isArray(item['changes']) ? item['changes'] : [];
+    const rows = changes.map((raw) => asRecord(raw)).filter((row): row is UnknownRecord => row !== null);
+    inputPreview = rows.slice(0, 3).map((row) => {
+      const changeKind = recordString(row, 'kind');
+      const path = recordString(row, 'path');
+      return [changeKind, path].filter(Boolean).join(' ');
+    }).filter(Boolean).join(' · ');
+    if (rows.length > 3) inputPreview += ` · +${rows.length - 3} more`;
+    inputFull = rows.map((row) => [recordString(row, 'kind'), recordString(row, 'path')].filter(Boolean).join(' ')).join('\n');
+    resultFull = rows.map((row) => {
+      const header = [recordString(row, 'kind'), recordString(row, 'path')].filter(Boolean).join(' ');
+      return [header, recordString(row, 'diff')].filter(Boolean).join('\n');
+    }).join('\n\n');
+  } else if (kind === 'mcpToolCall') {
+    const server = recordString(item, 'server');
+    const tool = recordString(item, 'tool');
+    name = [server, tool].filter(Boolean).join(' · ') || 'MCP tool';
+    inputFull = prettyUnknown(item['arguments']);
+    inputPreview = compactText(inputFull);
+    resultFull = prettyUnknown(item['result'] ?? item['error']);
+  } else if (kind === 'dynamicToolCall') {
+    const namespace = recordString(item, 'namespace');
+    const tool = recordString(item, 'tool');
+    name = [namespace, tool].filter(Boolean).join(' · ') || 'Tool';
+    inputFull = prettyUnknown(item['arguments']);
+    inputPreview = compactText(inputFull);
+    resultFull = prettyUnknown(item['contentItems'] ?? item['success']);
+  } else if (kind === 'collabAgentToolCall') {
+    name = humanItemType(recordString(item, 'tool') || 'Agent task');
+    inputFull = recordString(item, 'prompt');
+    inputPreview = compactText(inputFull || prettyUnknown(item['receiverThreadIds']));
+    resultFull = prettyUnknown(item['agentsStates']);
+  } else if (kind === 'webSearch') {
+    name = 'Web search';
+    inputPreview = recordString(item, 'query');
+    inputFull = prettyUnknown(item['action'] ?? item['query']);
+  } else if (kind === 'imageView') {
+    name = 'Viewed image';
+    inputPreview = recordString(item, 'path');
+    inputFull = inputPreview;
+  } else if (kind === 'imageGeneration') {
+    name = 'Generated image';
+    inputPreview = recordString(item, 'savedPath') || recordString(item, 'status');
+    resultFull = recordString(item, 'result');
+  } else if (kind === 'plan') {
+    name = 'Plan';
+    inputFull = recordString(item, 'text');
+    inputPreview = compactText(inputFull);
+  } else {
+    const likelyInput = item['arguments'] ?? item['input'] ?? item['query'] ?? item['path'] ?? item['prompt'];
+    const likelyResult = item['result'] ?? item['output'] ?? item['error'];
+    inputFull = prettyUnknown(likelyInput);
+    inputPreview = compactText(inputFull);
+    resultFull = prettyUnknown(likelyResult);
+  }
+
+  const resultPreview = resultFull ? compactText(resultFull) : (status ? humanItemType(status) : '');
+  return {
+    id,
+    name,
+    inputPreview: inputPreview || previous?.inputPreview || '',
+    inputFull: inputFull || previous?.inputFull,
+    resultPreview: resultPreview || previous?.resultPreview,
+    resultFull: resultFull || previous?.resultFull,
+    kind,
+    status,
+    durationMs
+  };
+}
+
+interface CodexTurnProjection {
+  message: DispatchMessage;
+  itemText: Map<string, string>;
+  itemPhase: Map<string, string>;
+  itemOrder: string[];
+  tools: Map<string, ToolCall>;
+  reasoning: string[];
+  completed: boolean;
+}
+
+function isCodexAppServerHistory(events: ClaudeSessionEvent[]): boolean {
+  return events.some((event) => event.source === 'codex-app-server' || event.type === 'codex');
+}
+
+function codexEventsToMessages(events: ClaudeSessionEvent[]): DispatchMessage[] {
+  const out: DispatchMessage[] = [];
+  const turns = new Map<string, CodexTurnProjection>();
+  let latestTurnID = '';
+
+  const ensureTurn = (turnID: string, at: number): CodexTurnProjection | null => {
+    if (!turnID) return null;
+    const existing = turns.get(turnID);
+    if (existing) return existing;
+    const projection: CodexTurnProjection = {
+      message: {
+        id: `codex-turn-${turnID}`,
+        role: 'assistant',
+        content: '',
+        status: 'sent',
+        createdAt: at,
+        blockId: turnID,
+        streaming: true,
+        turnStatus: 'inProgress'
+      },
+      itemText: new Map(),
+      itemPhase: new Map(),
+      itemOrder: [],
+      tools: new Map(),
+      reasoning: [],
+      completed: false
+    };
+    turns.set(turnID, projection);
+    out.push(projection.message);
+    return projection;
+  };
+
+  const refreshTurn = (projection: CodexTurnProjection): void => {
+    let finalText = '';
+    const updates: string[] = [];
+    for (const itemID of projection.itemOrder) {
+      const text = projection.itemText.get(itemID)?.trim() ?? '';
+      if (!text) continue;
+      if (projection.itemPhase.get(itemID) === 'commentary') updates.push(text);
+      else finalText = text;
+    }
+    projection.message.content = finalText;
+    projection.message.updates = updates.length > 0 ? updates : undefined;
+    projection.message.toolCalls = projection.tools.size > 0
+      ? Array.from(projection.tools.values())
+      : undefined;
+    projection.message.hadThinking = projection.reasoning.length > 0 || undefined;
+    projection.message.reasoningSummary = projection.reasoning.length > 0
+      ? projection.reasoning.join('\n\n')
+      : undefined;
+    projection.message.streaming = !projection.completed;
+  };
+
+  const rememberItemText = (projection: CodexTurnProjection, itemID: string, text: string): void => {
+    if (!itemID) return;
+    if (!projection.itemOrder.includes(itemID)) projection.itemOrder.push(itemID);
+    projection.itemText.set(itemID, text);
+  };
+
+  for (const event of events) {
+    const at = timestampMs(event.timestamp);
+    if (event.type === 'user' && event.message?.role === 'user') {
+      const { text, hasImage } = extractUserContent(event.message.content);
+      const content = text || (hasImage ? '[image attached]' : '');
+      if (!content || isSystemUserPseudoMessage(content)) continue;
+      out.push({
+        id: event.uuid ?? `codex-user-${out.length}`,
+        role: 'user',
+        content,
+        status: 'sent',
+        createdAt: at,
+        confirmedAt: at,
+        blockId: event.uuid
+      });
+      continue;
+    }
+
+    const subtype = event.subtype ?? '';
+    const turnID = event.turnId || latestTurnID;
+    if (subtype === 'turn_started') {
+      if (event.turnId) latestTurnID = event.turnId;
+      ensureTurn(event.turnId ?? '', at);
+      continue;
+    }
+
+    if (event.turnId) latestTurnID = event.turnId;
+    const projection = ensureTurn(event.turnId || latestTurnID, at);
+    if (!projection) continue;
+
+    if (subtype === 'agent_message_delta') {
+      const itemID = event.itemId ?? '';
+      const next = (projection.itemText.get(itemID) ?? '') + (event.delta ?? '');
+      rememberItemText(projection, itemID, next);
+      refreshTurn(projection);
+      continue;
+    }
+
+    if (subtype === 'item_started' || subtype === 'item_completed') {
+      const item = asRecord(event.item);
+      if (!item) continue;
+      const itemID = recordString(item, 'id');
+      const itemType = recordString(item, 'type');
+      if (itemType === 'agentMessage') {
+        const text = recordString(item, 'text');
+        if (text || !projection.itemText.has(itemID)) rememberItemText(projection, itemID, text);
+        const phase = recordString(item, 'phase');
+        if (phase) projection.itemPhase.set(itemID, phase);
+      } else if (itemType === 'reasoning') {
+        const summaries = Array.isArray(item['summary'])
+          ? item['summary'].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          : [];
+        projection.reasoning = summaries;
+      } else {
+        const call = codexToolCall(item, projection.tools.get(itemID));
+        if (call) projection.tools.set(call.id, call);
+      }
+      refreshTurn(projection);
+      continue;
+    }
+
+    if (subtype === 'plan_updated') {
+      projection.message.plan = Array.isArray(event.plan)
+        ? event.plan.filter((step) => typeof step?.step === 'string' && typeof step?.status === 'string')
+        : undefined;
+      projection.message.planExplanation = typeof event.explanation === 'string'
+        ? event.explanation
+        : undefined;
+      refreshTurn(projection);
+      continue;
+    }
+
+    if (subtype === 'turn_completed') {
+      projection.completed = true;
+      projection.message.turnStatus = event.status || 'completed';
+      projection.message.streaming = false;
+      const error = event.error?.message;
+      if (error) projection.message.errorResponse = error;
+      refreshTurn(projection);
+    }
+  }
+
+  return out.filter((message) => {
+    if (message.role === 'user') return true;
+    return !!(
+      message.content || message.toolCalls?.length || message.updates?.length ||
+      message.reasoningSummary || message.plan?.length || message.streaming || message.errorResponse
+    );
+  });
+}
+
 // Public entry. Walks the event stream in order and produces the
 // RemoteView message list. Handles every Claude JSONL event type we've
 // seen in the wild; unknown types pass through silently (forward-
@@ -186,6 +484,7 @@ const RESULT_PREVIEW_LEN = 120;
 // doing in real time. That entry's `id` is the last tool_use_id so
 // React keeps it stable across re-renders.
 export function eventsToMessages(events: ClaudeSessionEvent[]): DispatchMessage[] {
+  if (isCodexAppServerHistory(events)) return codexEventsToMessages(events);
   // First pass: index every tool_result by tool_use_id. They live on
   // user events but logically belong to the assistant's tool_use that
   // requested them.

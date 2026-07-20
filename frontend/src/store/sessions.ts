@@ -32,6 +32,11 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
       old.cwd === f.cwd &&
       old.cmd === f.cmd &&
       old.tool === f.tool &&
+      old.kind === f.kind &&
+      old.model === f.model &&
+      old.effort === f.effort &&
+      old.fast === f.fast &&
+      old.conversationId === f.conversationId &&
       old.cols === f.cols &&
       old.rows === f.rows &&
       old.pid === f.pid &&
@@ -96,6 +101,11 @@ interface CachedSession {
   createdAt: number;
   pid: number;
   tool: SessionInfo['tool'];
+  kind?: string;
+  model?: string;
+  effort?: string;
+  fast?: boolean;
+  conversationId?: string;
   // Cache Claude-side titles so the PWA cold-start renders the correct
   // tab label without a flash-of-wrong-name before live data arrives.
   claudeCustomTitle?: string;
@@ -144,6 +154,11 @@ function writeCache(sessions: SessionInfo[], activeId: string | null): void {
       createdAt: s.createdAt,
       pid: s.pid,
       tool: s.tool,
+      kind: s.kind,
+      model: s.model,
+      effort: s.effort,
+      fast: s.fast,
+      conversationId: s.conversationId,
       // Persist titles so they survive a PWA cold-start without flashing.
       claudeCustomTitle: s.claudeCustomTitle,
       claudeAiTitle: s.claudeAiTitle

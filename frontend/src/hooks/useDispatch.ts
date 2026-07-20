@@ -51,6 +51,15 @@ export interface ToolCall {
   inputFull?: string;
   resultPreview?: string;  // first ~120 chars of the tool's output
   resultFull?: string;     // full output for the expandable panel
+  // Provider-neutral lifecycle details used by Codex app-server activity.
+  kind?: string;
+  status?: string;
+  durationMs?: number;
+}
+
+export interface MessagePlanStep {
+  step: string;
+  status: string;
 }
 
 export interface DispatchMessage {
@@ -82,6 +91,15 @@ export interface DispatchMessage {
   // recent Claude versions anyway) but a "💭 thought for …" badge
   // tells the user Claude reasoned before answering.
   hadThinking?: boolean;
+  // Codex app-server exposes safe reasoning summaries and commentary as
+  // first-class UI material. They stay separate from the final answer so a
+  // streaming progress update never overwrites the durable response.
+  reasoningSummary?: string;
+  updates?: string[];
+  plan?: MessagePlanStep[];
+  planExplanation?: string;
+  streaming?: boolean;
+  turnStatus?: string;
   // True if the user message is a "[Request interrupted by user]"
   // sentinel — Claude's own log of the user pressing Esc mid-stream.
   // Rendered with a distinct style so it's clear this wasn't typed.

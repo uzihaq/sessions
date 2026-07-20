@@ -543,6 +543,47 @@ func (c *Client) SendUserTurn(ctx context.Context, conversationID, text string) 
 	return state.stream(), nil
 }
 
+// InterruptTurn asks app-server to stop the active turn without terminating
+// the durable conversation or its runner. This is the structured equivalent
+// of Escape in the Codex TUI and is safe for the Sessions chat surface.
+func (c *Client) InterruptTurn(ctx context.Context, conversationID string) error {
+	if conversationID == "" {
+		return errors.New("conversation id is required")
+	}
+	c.mu.Lock()
+	state := c.turns[conversationID]
+	c.mu.Unlock()
+	if state == nil {
+		return fmt.Errorf("conversation %q has no active turn", conversationID)
+	}
+	turnID := ""
+	for turnID == "" {
+		turnID = state.currentTurnID()
+		if turnID != "" {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for conversation %q active turn: %w", conversationID, ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+		c.mu.Lock()
+		stillActive := c.turns[conversationID] == state
+		c.mu.Unlock()
+		if !stillActive {
+			return fmt.Errorf("conversation %q has no active turn", conversationID)
+		}
+	}
+	params := struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+	}{ThreadID: conversationID, TurnID: turnID}
+	if err := c.call(ctx, "turn/interrupt", params, nil); err != nil {
+		return fmt.Errorf("interrupt Codex turn: %w", err)
+	}
+	return nil
+}
+
 func validApprovalPolicy(policy string) bool {
 	return policy == ApprovalUntrusted || policy == ApprovalOnRequest || policy == ApprovalNever
 }
@@ -759,6 +800,11 @@ func (c *Client) handleNotification(method string, params json.RawMessage) {
 			state.emit(event)
 		}
 	case ItemCompleted:
+		state := c.turn(event.ConversationID, event.TurnID)
+		if state != nil {
+			state.emit(event)
+		}
+	case PlanUpdated:
 		state := c.turn(event.ConversationID, event.TurnID)
 		if state != nil {
 			state.emit(event)

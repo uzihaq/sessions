@@ -304,6 +304,15 @@ func (r *codexAppRunner) handleFrame(c *client, frame proto.Frame) error {
 }
 
 func (r *codexAppRunner) handleInput(data string) {
+	if isCodexInterruptInput(data) {
+		r.mu.Lock()
+		active := r.active
+		r.mu.Unlock()
+		if active {
+			go r.interruptTurn()
+		}
+		return
+	}
 	r.mu.Lock()
 	parts := strings.Split(data, "\r")
 	for index, part := range parts {
@@ -320,6 +329,18 @@ func (r *codexAppRunner) handleInput(data string) {
 		go r.runTurn(text)
 	}
 	r.mu.Unlock()
+}
+
+func isCodexInterruptInput(data string) bool {
+	return data == "\x1b" || data == "\x03"
+}
+
+func (r *codexAppRunner) interruptTurn() {
+	ctx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
+	defer cancel()
+	if err := r.client.InterruptTurn(ctx, r.conversationID); err != nil {
+		r.logger.Printf("interrupt Codex turn failed: %v", err)
+	}
 }
 
 func cleanComposerInput(value string) string {

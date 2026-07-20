@@ -38,12 +38,11 @@ interface UseTerminalResult {
   // Imperative re-fit (FitAddon) of xterm to its container. Fired when a
   // tab becomes active, since fits are gated to the visible session.
   fitTerminalRef: { current: () => void };
-  // Stream of Claude Code's structured session events, captured from
-  // the same WS we use for raw bytes. The server tails
-  // ~/.claude/projects/<encoded-cwd>/<id>.jsonl and forwards each
-  // typed event. RemoteView consumes this instead of the parser-
-  // derived blocks — UUIDs are stable, content is structured, no
-  // regex required. Empty for non-Claude sessions.
+  // Structured provider events captured from the same WS as raw bytes.
+  // Claude sessions are sourced from JSONL; Codex sessions use normalized
+  // rollouts or the app-server history stream. RemoteView consumes these
+  // instead of parsing a TUI snapshot. The wire retains its historical
+  // claudeEvent naming until the next protocol-version bump.
   claudeEvents: ClaudeSessionEvent[];
   hasEarlierClaudeEvents: boolean;
   loadingEarlierClaudeEvents: boolean;

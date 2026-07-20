@@ -44,6 +44,26 @@ type ItemCompleted struct {
 
 func (ItemCompleted) isCodexAppEvent() {}
 
+// TurnPlanStep is one app-server plan row. Status is intentionally kept as
+// the provider string so new states remain forward-compatible in history and
+// can still be rendered by newer Sessions clients.
+type TurnPlanStep struct {
+	Step   string `json:"step"`
+	Status string `json:"status"`
+}
+
+// PlanUpdated carries the authoritative turn-level plan projection exposed by
+// app-server. It is separate from plan ThreadItems: the latter are narrative
+// plan content, while this event has per-step lifecycle state for a GUI.
+type PlanUpdated struct {
+	ConversationID string         `json:"conversationId"`
+	TurnID         string         `json:"turnId"`
+	Explanation    *string        `json:"explanation,omitempty"`
+	Plan           []TurnPlanStep `json:"plan"`
+}
+
+func (PlanUpdated) isCodexAppEvent() {}
+
 type TokenCount struct {
 	ConversationID string     `json:"conversationId"`
 	TurnID         string     `json:"turnId"`
@@ -128,6 +148,12 @@ func (s *turnState) acceptTurnID(turnID string) bool {
 		s.turnID = turnID
 	}
 	return s.turnID == turnID
+}
+
+func (s *turnState) currentTurnID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.turnID
 }
 
 func (s *turnState) emit(event Event) {

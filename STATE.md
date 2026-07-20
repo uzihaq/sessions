@@ -81,6 +81,10 @@ paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTE
 - A polished in-app usage dashboard with saved local views and expandable cost/token drill-down, fleet-wide search
   UI over the shipped exact/regex/FTS5 backend, compact product navigation for narrow windows and phones, and
   an active-first fleet view across every configured daemon.
+- A provider-neutral conversation GUI now treats Codex app-server events as the primary display contract instead of
+  forcing Codex into Terminal: live answer deltas, progress commentary, reasoning summaries, plan state, commands,
+  MCP/tool activity, unified file diffs, context usage, model/effort identity, and safe turn interruption. Terminal
+  remains one click away and the independent runner still owns the conversation.
 
 ## OPEN USER DECISIONS (blockers only)
 1. **Public-build permission default** — keep skip-perms (owner default) vs constrain-by-default.

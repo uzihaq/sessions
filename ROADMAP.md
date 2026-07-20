@@ -9,12 +9,19 @@ native client and the daemon-served browser client.
 Sessions.app proves the lifetime boundary: it provides tray status and scoped
 windows, while quitting the app leaves the daemon and every runner alive. Its
 release build now bundles the signed Go runtime and implements idempotent
-launchd installation plus session-baseline rollback. The remaining release
-work is:
+launchd installation, session-baseline rollback, and the signed updater flow.
+The remaining release work is:
 
-1. Add a signed Tauri updater feed hosted as static metadata on somewhere.
+1. Prepare the clean versioned release commit and notes, then run the release preflight.
 2. Notarize the app before distributing it outside the development machine.
-3. Exercise the finished updater through the same channel customers will use.
+3. Publish the first manifest only after its notarized artifact exists, then exercise the updater through the same channel customers will use.
+
+The native conversation surface now treats structured provider history as its
+UI boundary. Codex app-server sessions display streaming answers, progress,
+plans, reasoning summaries, tool and command activity, file diffs, context
+usage, and safe interruption while retaining Terminal as a fallback. See
+[`prettygo/internal/codexapp/history.go`](prettygo/internal/codexapp/history.go)
+and [`frontend/src/components/RemoteView.tsx`](frontend/src/components/RemoteView.tsx).
 
 The MacBook remains the development channel. The production mini is not part
 of this phase and must remain untouched. Its first Sessions.app installation is a
@@ -34,17 +41,9 @@ thin Kotlin client rather than changing the runtime boundary.
 
 ## Later
 
-- Local usage and cost analytics with arbitrary per-session key/value tags
-  (`product`, `product_line`, `client`, `team`, `cost_center`, or anything the
-  user defines). Follow `ccusage`'s proven local-log normalization and pinned
-  LiteLLM pricing model without adding a runtime npm dependency; build the
-  product around a polished dashboard with tag-based comparisons, trends, and
-  per-session drill-down. The relative priority of this item versus Android and
-  the other post-release work is still to be chosen.
 - iOS client focused on APNs, widgets, and Live Activities.
-- Central keyword search across configured machines.
 - Session sharing after the pairing and per-device credential ladder.
-- Unified diff review in the native app.
+- Standalone cross-turn diff review and inline comments back to an agent; event-level Codex diffs already render in the conversation activity feed.
 - Customer-owned always-on machines through somewhere.
 - Local semantic search only if FTS5 proves insufficient in real use.
 

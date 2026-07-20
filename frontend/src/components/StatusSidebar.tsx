@@ -13,6 +13,7 @@ export interface SidebarProps {
   isWorking: boolean;
   timer: string;          // "7m 35s" — empty when idle
   tokens: string;         // "1.9k" — empty when idle
+  context: string;        // "32% of 258k" — Codex app-server only
   finalElapsed: string;   // "9m 50s" frozen from the last completed turn, empty if no recent run
   currentTask: string;    // latest tool call name + preview
   checklist: SidebarChecklistItem[];
@@ -24,6 +25,7 @@ export default function StatusSidebar({
   isWorking,
   timer,
   tokens,
+  context,
   finalElapsed,
   currentTask,
   checklist
@@ -46,6 +48,9 @@ export default function StatusSidebar({
             {tokens ? (
               <span className="sidebar-metric"><span className="sidebar-metric-label">tokens</span>{tokens}</span>
             ) : null}
+            {context ? (
+              <span className="sidebar-metric"><span className="sidebar-metric-label">context</span>{context}</span>
+            ) : null}
           </>
         ) : finalElapsed ? (
           <span className="sidebar-metric"><span className="sidebar-metric-label">last run</span>{finalElapsed}</span>
@@ -56,6 +61,9 @@ export default function StatusSidebar({
           <span className="sidebar-metric sidebar-metric-task" title={currentTask}>
             <span className="sidebar-metric-label">doing</span>{currentTask}
           </span>
+        ) : null}
+        {!isWorking && context ? (
+          <span className="sidebar-metric"><span className="sidebar-metric-label">context</span>{context}</span>
         ) : null}
       </section>
 

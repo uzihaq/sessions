@@ -52,3 +52,37 @@ func TestHistoryEventsPreserveSourceMessagesAndLifecycle(t *testing.T) {
 		t.Fatalf("completed lifecycle = working:%v authoritative:%v", working, authoritative)
 	}
 }
+
+func TestHistoryEventPreservesCompleteThreadItemForGUI(t *testing.T) {
+	raw := json.RawMessage(`{
+		"id":"command-1",
+		"type":"commandExecution",
+		"command":"go test ./...",
+		"cwd":"/tmp/project",
+		"status":"completed",
+		"aggregatedOutput":"ok\n",
+		"exitCode":0,
+		"durationMs":125
+	}`)
+	var item ThreadItem
+	if err := json.Unmarshal(raw, &item); err != nil {
+		t.Fatal(err)
+	}
+	event, err := HistoryEvent(ItemCompleted{
+		ConversationID: "thread-1",
+		TurnID:         "turn-1",
+		Item:           item,
+	}, time.Unix(3, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value struct {
+		Item map[string]any `json:"item"`
+	}
+	if err := json.Unmarshal(event, &value); err != nil {
+		t.Fatal(err)
+	}
+	if value.Item["command"] != "go test ./..." || value.Item["aggregatedOutput"] != "ok\n" || value.Item["exitCode"] != float64(0) {
+		t.Fatalf("GUI item fields were not preserved: %#v", value.Item)
+	}
+}
