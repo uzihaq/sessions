@@ -1,4 +1,4 @@
-# pretty-PTY — STATE / ORCHESTRATOR HANDOFF (2026-07-19)
+# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-19)
 
 > **New orchestrator (Codex or returning Claude): start here, then read `AGENTS.md`.**
 > This file + `AGENTS.md` + `docs/WHY.md` + the somewhere board = everything the previous
@@ -27,9 +27,9 @@ transfer needed — the durable record IS the handoff.
   verify **soak-d2 survives** → push → remove worktree + kill lane. Never merge on the lane's word alone.
 
 ## Current reality
-- Product = the Go runtime plus Pretty.app on branch **`go-rewrite`**. MacBook = dev (launchd
+- Product = the Go runtime plus Sessions.app on branch **`go-rewrite`**. MacBook = dev (launchd
   `tech.pretty-pty.dev.daemon`, localhost:8787). Mac mini (100.86.76.84) = prod, still OLD node daemon,
-  **UNTOUCHED** — cutover is a JOINT step, now planned as the mini's first Pretty.app install (see below).
+  **UNTOUCHED** — cutover is a JOINT step, now planned as the mini's first Sessions.app install (see below).
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/pretty/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
@@ -43,32 +43,33 @@ Tailscale) · `pretty remote enable` (Tailscale Serve) · **QR pairing** (`prett
 before upload, recovery phrase) · **account profiles** (`--profile`, multi-login via
 CLAUDE_CONFIG_DIR/CODEX_HOME) · **`pretty new --worktree`** (+ worktrees list/clean) · **push
 notifications** (done/waiting/lost, `pretty notify`) · docs-from-source suite · teaching errors ·
-code-signing · **Pretty.app v1** (Tauri: menu-bar status, scoped windows, quit never kills sessions).
+code-signing · **Sessions.app v1** (Tauri: menu-bar status, scoped windows, quit never kills sessions).
 Onboarding site refreshed + live (pretty-pty.somewhere.site). The manual-entry preview shell is superseded,
 not a product surface.
 
-## NEXT: Pretty.app v2 = the release vehicle (the immediate work)
+## NEXT: finish Sessions.app v2 distribution (the immediate work)
 The app IS the product package. v2 makes "one update updates everything, nothing lost":
-1. Bundle signed daemon+runner+CLI inside the .app; first-run installs/upgrades the launchd service.
-2. Tauri updater feed: signed version manifest as a static file on somewhere (metadata only — no data plane).
-3. **Notarization**: build already uses Developer ID + hardened runtime; needs Apple creds
+1. **SHIPPED IN CODE:** bundle signed daemon+runner+CLI inside Sessions.app; verify and copy them to
+   immutable versioned runtime directories; first-run installs/upgrades `tech.somewhere.sessions.daemon`.
+2. **SHIPPED IN CODE:** record the live-session baseline, wait for health+discovery, verify every ID,
+   and roll back to the previous plist/runtime on failure. Real scratch launchd coverage exercises it.
+3. **NEXT:** Tauri updater feed: signed version manifest as a static file on somewhere (metadata only — no data plane).
+4. **Notarization**: build already uses Developer ID + hardened runtime; needs Apple creds
    (APPLE_ID + app-specific password from appleid.apple.com, or App Store Connect API key). Required
    before anyone DOWNLOADS the app (vs building it). USER ACTION: create the app-specific password.
-4. Post-update health ritual as CODE: daemon back? sessions adopted? counts match pre-update? → then "updated".
 **USER SEQUENCE LOCKED 2026-07-19:** ship the macOS app first, then build Android. Do not cut over the
-mini yet. Its later first Pretty.app install remains the joint Node-to-Go cutover (interop-proven by
+mini yet. Its later first Sessions.app install remains the joint Node-to-Go cutover (interop-proven by
 `TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
 
 ## Roadmap after v2 (see board + WHY.md)
 **Immediate after macOS ships:** Android app (Tauri2 paired client + FCM; push machinery ready). Later:
 central/fleet search · semantic search (local embeddings, only if FTS insufficient) · session sharing
-(pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: pretty FREE,
-paid = somewhere platform; pretty is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
+(pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
+paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
 
 ## OPEN USER DECISIONS (blockers only)
-1. **Product name** — "Somewhere Sessions" vs "pretty by Somewhere". Renames the app in one config line.
-2. **Public-build permission default** — keep skip-perms (owner default) vs constrain-by-default.
-3. **Notarization creds** (user creates the app-specific password when ready to distribute).
+1. **Public-build permission default** — keep skip-perms (owner default) vs constrain-by-default.
+2. **Notarization creds** (user creates the app-specific password when ready to distribute).
 
 The mini timing is not an open implementation question: no cutover now. Revisit jointly only after the
 macOS app ships.
@@ -77,6 +78,6 @@ macOS app ships.
 - Build (auto-signs): `cd prettygo && export PATH=$PATH:/opt/homebrew/bin && make binaries`
 - Reload dev daemon: `launchctl kickstart -k gui/$(id -u)/tech.pretty-pty.dev.daemon` (then verify soak-d2).
 - Build the app: `cd <repo> && npm install && npx tauri build`
-  → `src-tauri/target/release/bundle/macos/Pretty-PTY.app`
+  → `src-tauri/target/release/bundle/macos/Sessions.app`
 - Gate a lane: from its worktree `prettygo/`: `GOFLAGS=-buildvcs=false go build ./... && go vet ./... &&
   go test ./...` then `bash scripts/gen-cli-docs.sh` if the CLI changed.

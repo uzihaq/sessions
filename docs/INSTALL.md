@@ -1,6 +1,6 @@
-# Install Pretty
+# Install Sessions
 
-Pretty.app is the primary macOS package. Its bundled-runtime installer and
+Sessions.app is the primary macOS package. Its bundled-runtime installer and
 updater are still under construction, so the current instructions below are
 for developers and early-access headless installs—not the finished consumer
 app. Do not use them to change the production mini.

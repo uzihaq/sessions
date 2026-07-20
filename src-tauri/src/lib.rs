@@ -1,7 +1,9 @@
-// Pretty.app v1 is a native window and tray layer. The v2 lifecycle manager is
+// Sessions v1 is a native window and tray layer. The v2 lifecycle manager is
 // kept separate from this UI code: it may install or kickstart prettyd, but the
 // app process never owns prettyd or a runner, so quitting it cannot affect a
 // durable session.
+
+mod lifecycle;
 
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex, thread, time::Duration};
@@ -58,6 +60,10 @@ struct TrayState {
     servers: Mutex<Vec<TrayServer>>,
     snapshot: Mutex<TraySnapshot>,
     server_targets: Mutex<HashMap<String, WindowSpec>>,
+}
+
+struct RuntimeState {
+    status: Mutex<lifecycle::RuntimeStatus>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -131,7 +137,7 @@ fn parse_scoped_window(query: &str, title: String) -> Result<WindowSpec, String>
             .collect();
 
     let title = if title.trim().is_empty() {
-        "Pretty-PTY".to_string()
+        "Sessions".to_string()
     } else {
         title
     };
@@ -200,7 +206,7 @@ fn main_window_spec() -> WindowSpec {
     WindowSpec {
         label: "main".to_string(),
         query: String::new(),
-        title: "Pretty-PTY".to_string(),
+        title: "Sessions".to_string(),
         width: 1200.0,
         height: 800.0,
     }
@@ -320,6 +326,15 @@ fn set_tray_servers(app: AppHandle, servers: Vec<TrayServer>) -> Result<(), Stri
     .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn runtime_status(app: AppHandle) -> Result<lifecycle::RuntimeStatus, String> {
+    app.state::<RuntimeState>()
+        .status
+        .lock()
+        .map(|status| status.clone())
+        .map_err(|error| error.to_string())
+}
+
 fn tray_tooltip(snapshot: TraySnapshot) -> String {
     let suffix = if snapshot.reachable {
         String::new()
@@ -327,7 +342,7 @@ fn tray_tooltip(snapshot: TraySnapshot) -> String {
         " — daemon unreachable".to_string()
     };
     format!(
-        "Pretty — ● {} working, ○ {} idle, ⚠ {} needing attention{}",
+        "Sessions — ● {} working, ○ {} idle, ⚠ {} needing attention{}",
         snapshot.working, snapshot.idle, snapshot.attention, suffix
     )
 }
@@ -394,7 +409,20 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         false,
         None::<&str>,
     )?;
-    let open = MenuItem::with_id(app, "open-main", "Open Pretty", true, None::<&str>)?;
+    let runtime = app
+        .state::<RuntimeState>()
+        .status
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    let runtime = MenuItem::with_id(
+        app,
+        "runtime-status",
+        runtime.menu_label(),
+        false,
+        None::<&str>,
+    )?;
+    let open = MenuItem::with_id(app, "open-main", "Open Sessions", true, None::<&str>)?;
 
     let mut targets = HashMap::new();
     let mut new_window = SubmenuBuilder::new(app, "New window for…");
@@ -414,7 +442,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             let query = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("server", &server.id)
                 .finish();
-            if let Ok(spec) = parse_scoped_window(&query, format!("{} — Pretty", server.name)) {
+            if let Ok(spec) = parse_scoped_window(&query, format!("{} — Sessions", server.name)) {
                 targets.insert(menu_id, spec);
             }
             new_window = new_window.item(&item);
@@ -433,8 +461,8 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
     let quit = MenuItem::with_id(
         app,
-        "quit-pretty",
-        "Quit Pretty (sessions keep running)",
+        "quit-sessions",
+        "Quit Sessions (work keeps running)",
         true,
         None::<&str>,
     )?;
@@ -442,6 +470,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     menu.append(&working)?;
     menu.append(&idle)?;
     menu.append(&attention)?;
+    menu.append(&runtime)?;
     menu.append(&tauri::menu::PredefinedMenuItem::separator(app)?)?;
     menu.append(&open)?;
     menu.append(&new_window)?;
@@ -466,13 +495,13 @@ fn refresh_tray(app: &AppHandle) -> tauri::Result<()> {
 fn handle_tray_menu(app: &AppHandle, id: &str) {
     let result = match id {
         "open-main" => open_window(app, main_window_spec()),
-        "new-tool-codex" => parse_scoped_window("tool=codex", "Codex — Pretty".to_string())
+        "new-tool-codex" => parse_scoped_window("tool=codex", "Codex — Sessions".to_string())
             .and_then(|spec| open_window(app, spec)),
-        "new-tool-claude" => parse_scoped_window("tool=claude", "Claude — Pretty".to_string())
+        "new-tool-claude" => parse_scoped_window("tool=claude", "Claude — Sessions".to_string())
             .and_then(|spec| open_window(app, spec)),
-        "new-tool-shell" => parse_scoped_window("tool=shell", "Shell — Pretty".to_string())
+        "new-tool-shell" => parse_scoped_window("tool=shell", "Shell — Sessions".to_string())
             .and_then(|spec| open_window(app, spec)),
-        "quit-pretty" => {
+        "quit-sessions" => {
             app.exit(0);
             Ok(())
         }
@@ -532,9 +561,18 @@ pub fn run() {
         .manage(TrayState::default())
         .invoke_handler(tauri::generate_handler![
             open_scoped_window,
-            set_tray_servers
+            set_tray_servers,
+            runtime_status
         ])
         .setup(|app| {
+            let runtime_status = lifecycle::install_for_app(app.handle());
+            if runtime_status.state == "error" {
+                log::error!("Sessions background service: {}", runtime_status.detail);
+            }
+            app.manage(RuntimeState {
+                status: Mutex::new(runtime_status),
+            });
+
             let geometry_path = app.path().app_config_dir()?.join("window-geometry.json");
             app.manage(WindowGeometryStore::load(geometry_path));
 

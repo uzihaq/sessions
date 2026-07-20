@@ -1,15 +1,17 @@
-# Release Pretty
+# Release Sessions
 
-Pretty.app is the primary macOS release vehicle. Standalone Go archives remain
+Sessions.app is the primary macOS release vehicle. Standalone Go archives remain
 a secondary headless/developer distribution, not the product's main install or
 update story.
 
 ## Current state
 
-The checked-in Tauri application is a signed v1 window and tray shell. It does
-not yet bundle the Go runtime, install the daemon, update itself, or perform the
-post-update adoption check. Do not distribute it as the finished product until
-the v2 gate in [`NATIVE_APP.md`](NATIVE_APP.md) is complete.
+The checked-in Tauri application builds as `Sessions.app`. It bundles signed Go
+binaries and implements idempotent first install, health/discovery checks,
+live-session baseline verification, and rollback for daemon upgrades. It does
+not yet update the app bundle itself or publish a signed updater feed. Do not
+distribute it as the finished product until the remaining v2 gate in
+[`NATIVE_APP.md`](NATIVE_APP.md) is complete.
 
 Developer builds may use:
 

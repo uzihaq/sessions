@@ -39,19 +39,19 @@ export function ConnectScreen({
     return (
       <main className="connect-screen" data-testid="connect-screen">
         <section className="connect-panel" aria-labelledby="connect-title">
-          <div className="connect-brand">pretty-PTY</div>
+          <div className="connect-brand">Sessions</div>
           <p className="connect-kicker">native window → local daemon</p>
-          <h1 id="connect-title">Pretty isn&apos;t running yet.</h1>
+          <h1 id="connect-title">Sessions isn&apos;t running yet.</h1>
           <p className="connect-lede">
-            The app is only a window onto the local Pretty daemon. Your sessions
+            The app is only a window onto the local background service. Your sessions
             stay separate from the app and keep running when you quit it.
           </p>
           <section className="connect-setup" aria-labelledby="setup-title">
-            <h2 id="setup-title">Start Pretty on this Mac</h2>
+            <h2 id="setup-title">Background service</h2>
             <ol>
               <li>
-                <span>Install and start the local daemon.</span>
-                <code>pretty install</code>
+                <span>Sessions installs and starts its signed local runtime automatically.</span>
+                <code>~/Library/Logs/Sessions/prettyd.log</code>
               </li>
             </ol>
           </section>
@@ -115,11 +115,11 @@ export function ConnectScreen({
   return (
     <main className="connect-screen" data-testid="connect-screen">
       <section className="connect-panel" aria-labelledby="connect-title">
-        <div className="connect-brand">pretty-PTY</div>
+        <div className="connect-brand">Sessions</div>
         <p className="connect-kicker">your browser → your daemon</p>
         <h1 id="connect-title">Open your sessions from here.</h1>
         <p className="connect-lede">
-          This is the complete Pretty app. Pick a daemon and this browser talks
+          This is the complete Sessions app. Pick a daemon and this browser talks
           straight to it — no relay, proxy, hosted terminal data, or analytics.
         </p>
 
@@ -205,7 +205,7 @@ export function ConnectScreen({
               />
             </label>
             <button type="submit" className="connect-submit" disabled={busy || !endpoint.trim()}>
-              {busy ? 'Checking daemon…' : 'Connect to Pretty'}
+              {busy ? 'Checking daemon…' : 'Connect to Sessions'}
             </button>
           </form>
         </div>
@@ -219,7 +219,7 @@ export function ConnectScreen({
           <h2 id="setup-title">First time?</h2>
           <ol>
             <li>
-              <span>Install and start Pretty on the Mac that owns your sessions.</span>
+              <span>Install and start Sessions on the Mac that owns your sessions.</span>
               <code>brew install uzihaq/tap/pretty &amp;&amp; pretty install</code>
             </li>
             <li>

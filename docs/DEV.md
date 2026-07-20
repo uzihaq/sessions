@@ -2,7 +2,7 @@
 
 1. **The production mini is hands-off.** Do not edit its checkout, start test
    daemons, run launchctl, rehearse cutover, or deploy to it. Its eventual
-   Pretty.app first install is a separate joint operation with the user.
+   Sessions.app first install is a separate joint operation with the user.
 2. **Build from `go-rewrite`.** Every change uses an isolated worktree and a
    focused branch from the current Go product branch. The old
    `pty-runner-architecture` branch is historical production state, not a base
@@ -14,8 +14,9 @@
    `tech.pretty-pty.dev.daemon`. Record the live-session baseline before a
    reload and verify `soak-d2` plus the full baseline afterward.
 5. **Keep app and daemon lifetimes separate.** Tauri development may open,
-   close, rebuild, or replace Pretty.app. It must not terminate a daemon or
-   runner as a side effect.
+   close, rebuild, or replace Sessions.app. It must not terminate a daemon or
+   runner as a side effect. Debug builds use the externally managed development
+   daemon; release builds reconcile only `tech.somewhere.sessions.daemon`.
 6. **Use explicit lifecycle commands.** `pretty kill` is the sanctioned way to
    close a selected session. Recovery and worktree cleanup remain opt-in and
    refuse ambiguous or unsafe operations.

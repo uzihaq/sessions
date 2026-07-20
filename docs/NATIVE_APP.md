@@ -1,13 +1,13 @@
 # Native application contract
 
-Pretty.app is the primary product package. It distributes and manages the
+Sessions.app is the primary product package. It distributes and manages the
 local runtime without collapsing the process lifetimes that make sessions
 durable.
 
 ## Lifetime boundary
 
 ```text
-Pretty.app (Tauri window, tray, installer, updater)
+Sessions.app (Tauri window, tray, installer, updater)
         |
         | install, configure, health-check
         v
@@ -26,9 +26,12 @@ runner <session> -> provider contract, PTY, or headless command
 - Updating the daemon must not restart runners. The replacement daemon adopts
   them through the existing protocol and state contract.
 
-The current v1 shell implements tray status, persistent window geometry, and
-server/tool/session-scoped windows in `src-tauri/src/lib.rs`. It intentionally
-does not own daemon lifecycle yet.
+The current shell implements tray status, persistent window geometry, and
+server/tool/session-scoped windows in `src-tauri/src/lib.rs`. The release build
+also embeds signed Go binaries and runs the lifecycle boundary in
+`src-tauri/src/lifecycle.rs`: exact bundled bytes are copied into an immutable,
+versioned directory under `~/Library/Application Support/Sessions/runtime/`,
+then launchd owns the selected `prettyd` version.
 
 ## macOS v2 release gate
 
@@ -36,13 +39,14 @@ A distributable build is complete only when all of these are true:
 
 1. The app bundle contains signed arm64 `pretty`, `prettyd`, and `runner`
    binaries at stable resource paths.
-2. First run installs or upgrades a per-user daemon plist using those exact
-   bundled paths.
+2. First run verifies and stages those exact signed bytes, then installs or
+   upgrades a per-user daemon plist using the immutable staged paths.
 3. An upgrade records the live-session baseline before touching the daemon.
 4. The daemon returns healthy with discovery complete after the swap.
 5. Every pre-update runner is visible again and the session count has not
    dropped.
-6. Failure restores the previous daemon binary and verifies the same baseline.
+6. Failure restores the previous daemon plist and immutable runtime, then
+   verifies the same baseline.
 7. The app and nested binaries pass strict code-signing verification, hardened
    runtime inspection, notarization, stapling, and Gatekeeper assessment.
 8. The updater consumes a signed manifest. The manifest and artifacts are

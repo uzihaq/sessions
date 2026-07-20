@@ -1,4 +1,4 @@
-# Pretty architecture
+# Sessions architecture
 
 Pretty is a native client around a local, durable agent-session runtime. The
 macOS app is the primary package; the Go daemon, runner, and CLI remain separate
@@ -7,7 +7,7 @@ processes inside that package so an app quit or update cannot destroy work.
 ## Product and process model
 
 ```text
-Pretty.app / browser / pretty CLI
+Sessions.app / browser / pretty CLI
               |
               | local HTTP + multiplexed WebSocket
               v
@@ -21,14 +21,14 @@ runner <id> -> structured provider / PTY / headless command
 
 | Component | Lifetime | Responsibility |
 | --- | --- | --- |
-| `Pretty.app` | user interface | Native windows, tray, install/update control, and health reporting |
+| `Sessions.app` | user interface | Native windows, tray, install/update control, and health reporting |
 | `pretty` | one command | API client, orchestration, diagnostics, install, pairing, and remote setup |
 | `prettyd` | background service | HTTP/WS, discovery, session coordination, lane ledger, notifications, and embedded browser UI |
 | `runner` | one per session | Owns provider state or PTY, local socket, replay log, and child process |
 
 The app manages the installed runtime but does not own its lifetime. launchd
 owns the daemon, and each runner is supervised separately below it. Quitting or
-updating Pretty.app must leave both running. Replacing the daemon must preserve
+updating Sessions.app must leave both running. Replacing the daemon must preserve
 the live-runner baseline and let the new daemon rediscover every session before
 the update reports success.
 

@@ -11,14 +11,18 @@ each claim when behavior changes. Protocol compatibility requirements live in
 `src-tauri/` is the primary macOS client and release package. It uses Tauri 2
 around the shared React build. `src-tauri/src/lib.rs` owns native window and
 tray behavior: scoped server/tool/session windows, persisted window geometry,
-and local status polling. The checked-in shell does not yet install or update
-the daemon; that v2 work must follow the lifetime and rollback contract in
-[`NATIVE_APP.md`](NATIVE_APP.md).
+local status polling, and lifecycle status exposed to the frontend.
+`scripts/build-app-runtime.sh` builds and signs the three arm64 Go binaries,
+while `src-tauri/src/lifecycle.rs` verifies their manifest, stages immutable
+runtime versions, installs `tech.somewhere.sessions.daemon`, waits for health
+and discovery, verifies the live-session baseline, and rolls back on failure.
+The app-bundle updater itself remains the next release layer; its contract lives
+in [`NATIVE_APP.md`](NATIVE_APP.md).
 
 The native process is a management plane, not the owner of session work. Its
-eventual installer may write and kickstart the per-user daemon service, but
-launchd owns that service afterward and independently supervised runners stay
-alive through app quits, daemon reloads, and app upgrades. Android follows the
+installer writes and kickstarts the per-user daemon service, but launchd owns
+that service afterward and independently supervised runners stay alive through
+app quits, daemon reloads, and app upgrades. Android follows the
 macOS release as a paired client and does not host the Go runtime.
 
 ## Process model

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    pretty_app_lib::run();
+    sessions_app_lib::run();
 }

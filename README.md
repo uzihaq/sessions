@@ -1,7 +1,7 @@
-# pretty-PTY
+# Sessions
 
-pretty-PTY keeps Claude Code, Codex, shells, and other terminal programs alive
-behind Pretty.app, a local web UI, and a CLI. Each session has its own supervised runner,
+Sessions keeps Claude Code, Codex, shells, and other terminal programs alive
+behind Sessions.app, a local web UI, and a CLI. Each session has its own supervised runner,
 hosting either a PTY or a structured provider conversation, so work survives a
 daemon restart and can be reopened from another browser.
 
@@ -11,19 +11,19 @@ daemon restart and can be reopened from another browser.
   their structured CLI contracts. It makes no direct model API calls.
 - **Local by default:** the daemon listens on `127.0.0.1:8787`; remote access is
   opt-in and goes directly over your Tailscale network.
-- **No default phone-home:** no Pretty account, analytics, telemetry, or relay.
+- **No default phone-home:** no Sessions account, analytics, telemetry, or relay.
   Opt-in backup, web push, and Tailscale use their configured services.
-- **Native package:** Pretty.app is the primary macOS distribution and keeps
+- **Native package:** Sessions.app is the primary macOS distribution and keeps
   its Go daemon and runner processes independent. The current early-access
   install exposes the same three `CGO_ENABLED=0` binaries directly.
 - **Auditable:** source available under the [MIT license](LICENSE).
 
-Pretty does not replace Claude Code or Codex. Install and authenticate the
+Sessions does not replace Claude Code or Codex. Install and authenticate the
 agent CLI you want to run separately.
 
 ## Install (current early access)
 
-Pretty.app is being completed as the primary installer and updater. Until its
+Sessions.app is being completed as the primary installer and updater. Until its
 v2 release gate is complete, the standalone Go package remains the honest
 early-access path:
 
@@ -145,7 +145,7 @@ and the [runbooks](docs/RUNBOOKS.md).
 
 ## Development
 
-The Go runtime is in `prettygo/`; Pretty.app is in `src-tauri/`. The TypeScript
+The Go runtime is in `prettygo/`; Sessions.app is in `src-tauri/`. The TypeScript
 daemon remains only as mini-cutover and rollback evidence.
 
 ```sh

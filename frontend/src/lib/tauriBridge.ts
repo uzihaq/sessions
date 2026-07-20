@@ -71,3 +71,15 @@ export async function syncTrayServers(servers: TrayServer[]): Promise<void> {
     servers: servers.map(({ id, name }) => ({ id, name }))
   });
 }
+
+export interface NativeRuntimeStatus {
+  state: 'ready' | 'development' | 'client-only' | 'disabled' | 'error';
+  detail: string;
+  serviceLabel: string;
+  runtimeVersion: string | null;
+}
+
+export async function getNativeRuntimeStatus(): Promise<NativeRuntimeStatus | null> {
+  if (!isTauri()) return null;
+  return invoke<NativeRuntimeStatus>('runtime_status');
+}

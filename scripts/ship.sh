@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the Tauri app and drop it into /Applications, replacing whatever
 # is already there. Designed to be the one-command "publish my latest
-# changes to my installed Pretty-PTY" loop while there's no auto-updater.
+# changes to my installed Sessions" loop while there's no auto-updater.
 #
 # DEFAULT BEHAVIOR: does NOT touch the running app. The bundle on disk
 # gets replaced; macOS keeps the running process alive against the OLD
@@ -27,7 +27,8 @@ for arg in "$@"; do
 done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_NAME="Pretty-PTY"
+APP_NAME="Sessions"
+PROCESS_NAME="sessions-app"
 DST="/Applications/${APP_NAME}.app"
 SRC="${ROOT}/src-tauri/target/release/bundle/macos/${APP_NAME}.app"
 
@@ -50,7 +51,7 @@ fi
 # Detect whether the app is currently running (LaunchServices view, not
 # pgrep — avoids matching the build process or shell history).
 is_running() {
-  pgrep -x "${APP_NAME}" >/dev/null 2>&1
+  pgrep -x "${PROCESS_NAME}" >/dev/null 2>&1
 }
 
 if is_running && [[ "$RESTART" -eq 1 ]]; then

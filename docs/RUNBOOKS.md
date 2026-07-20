@@ -14,22 +14,25 @@ Reload only when the task requires it. Before the reload, record `pretty ls`;
 afterward wait for discovery to finish, compare the full session set, and
 verify `soak-d2`. A count drop or missing session is a failed update.
 
-## Pretty.app development install
+## Sessions.app development install
 
-`npm run ship` builds the current app shell and replaces the local copy in
+`npm run ship` builds Sessions.app and replaces the local copy in
 `/Applications` without restarting a running app. This is a developer loop,
-not the customer updater. The v1 shell does not install or update the daemon.
+not the customer updater. On launch, a release build verifies and stages its
+signed runtime, then reconciles only `tech.somewhere.sessions.daemon`.
 
-Do not add daemon ownership to the app process. The v2 installer/updater must
-follow [`NATIVE_APP.md`](NATIVE_APP.md).
+The lifecycle test uses a unique scratch label, random loopback port, and
+temporary home; it never exercises the daily-driver label. Do not add daemon
+ownership to the app process. The updater must follow
+[`NATIVE_APP.md`](NATIVE_APP.md).
 
 ## Production mini
 
 Do nothing until the user explicitly schedules the joint cutover. Do not use
 the old Node `pretty deploy`, do not run the repository's development scripts,
-and do not test Pretty.app service installation there.
+and do not test Sessions.app service installation there.
 
-When scheduled, the mini's first Pretty.app installation becomes the
+When scheduled, the mini's first Sessions.app installation becomes the
 Node-to-Go cutover. Use [`CUTOVER.md`](CUTOVER.md) and preserve the exact
 rollback path. Shipping the app or updating this repository does not itself
 schedule that operation.

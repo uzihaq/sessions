@@ -2,7 +2,7 @@
   "name": "pretty-pty",
   "private": true,
   "version": "0.1.0",
-  "description": "Native macOS package and local Go runtime for durable agent sessions.",
+  "description": "Sessions native app and its local Go runtime for durable agent sessions.",
   "scripts": {
     "dev": "tauri dev",
     "tauri": "tauri",

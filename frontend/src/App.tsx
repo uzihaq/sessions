@@ -17,7 +17,7 @@ import { ConnectScreen } from './components/ConnectScreen';
 import { formatServerEndpoint } from './lib/serverEndpoint';
 import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOrder';
 import { useTabLabel } from './lib/tabLabels';
-import { isTauri, notify, syncTrayServers } from './lib/tauriBridge';
+import { getNativeRuntimeStatus, isTauri, notify, syncTrayServers } from './lib/tauriBridge';
 import { readTextSize } from './lib/textSize';
 import type { SessionTool } from './types';
 
@@ -94,6 +94,16 @@ function ConnectedApp(): JSX.Element {
   // hydrated is false, any error means we can't reach the daemon.
   const sessionsError = useSessions((s) => s.error);
   const sessionsHydrated = useSessions((s) => s.hydrated);
+  const [nativeRuntimeError, setNativeRuntimeError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isTauri() || !sessionsError || sessionsHydrated) {
+      setNativeRuntimeError(null);
+      return;
+    }
+    void getNativeRuntimeStatus()
+      .then((status) => setNativeRuntimeError(status?.state === 'error' ? status.detail : null))
+      .catch(() => setNativeRuntimeError(null));
+  }, [sessionsError, sessionsHydrated]);
 
   // User-defined tab order. Persisted in localStorage so the order
   // survives reloads. Server's session list comes back in creation
@@ -261,7 +271,7 @@ function ConnectedApp(): JSX.Element {
     return (
       <ConnectScreen
         localDaemonUnavailable
-        detail={sessionsError}
+        detail={nativeRuntimeError ?? sessionsError}
         onRetry={() => void refresh()}
       />
     );
@@ -270,7 +280,7 @@ function ConnectedApp(): JSX.Element {
   return (
     <div className={`app-shell text-size-${textSize.toLowerCase()}`}>
       <header className="app-header">
-        <div className="app-brand" aria-hidden>pretty-PTY</div>
+        <div className="app-brand" aria-hidden>Sessions</div>
         {/* Tabs stay in single-session, fleet, and grid modes — the
             header always has the logo on the left, so reclaiming the
             space had limited value. In grid mode the tab strip just
@@ -538,7 +548,7 @@ function SinglePopOut({
   // peripheral signal when the window is in the background.
   useEffect(() => {
     const workingMark = status.isWorking ? '✻ ' : '';
-    document.title = `${workingMark}${label} — pretty-PTY`;
+    document.title = `${workingMark}${label} — Sessions`;
   }, [label, status.isWorking]);
 
   return (

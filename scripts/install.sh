@@ -4,7 +4,7 @@ set -euo pipefail
 cat >&2 <<'EOF'
 scripts/install.sh was retired with the Node-daemon deploy path; no changes were made.
 
-For local Pretty.app development, use:
+For local Sessions.app development, use:
   npm run ship
 
 For the current standalone Go development daemon, install adjacent pretty,

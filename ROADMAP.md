@@ -1,26 +1,23 @@
-# pretty-PTY roadmap
+# Sessions roadmap
 
 The native application is now the product package. The Go daemon, runner, and
 CLI remain the runtime inside that package; the React UI remains shared by the
 native client and the daemon-served browser client.
 
-## Now: ship Pretty.app for macOS
+## Now: ship Sessions.app for macOS
 
-Pretty.app v1 already proves the lifetime boundary: it provides tray status and
-scoped windows, while quitting the app leaves the daemon and every runner
-alive. The release build is v2:
+Sessions.app proves the lifetime boundary: it provides tray status and scoped
+windows, while quitting the app leaves the daemon and every runner alive. Its
+release build now bundles the signed Go runtime and implements idempotent
+launchd installation plus session-baseline rollback. The remaining release
+work is:
 
-1. Bundle the signed `pretty`, `prettyd`, and `runner` binaries in the app.
-2. Install or upgrade the per-user launchd daemon on first run without taking
-   ownership of its lifetime.
-3. Add a signed Tauri updater feed hosted as static metadata on somewhere.
-4. Notarize the app before distributing it outside the development machine.
-5. Encode the update safety ritual: record the session baseline, swap the
-   daemon, wait for health and discovery, verify every runner was re-adopted,
-   and report success only when the counts match. Roll back on failure.
+1. Add a signed Tauri updater feed hosted as static metadata on somewhere.
+2. Notarize the app before distributing it outside the development machine.
+3. Exercise the finished updater through the same channel customers will use.
 
 The MacBook remains the development channel. The production mini is not part
-of this phase and must remain untouched. Its first Pretty.app installation is a
+of this phase and must remain untouched. Its first Sessions.app installation is a
 later, joint Node-to-Go cutover after the app itself has shipped.
 
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
@@ -47,7 +44,7 @@ thin Kotlin client rather than changing the runtime boundary.
 ## Explicitly not planned
 
 - A custom Pretty relay or cloud terminal-data plane.
-- A required Pretty account or token markup.
+- A required Sessions account or token markup.
 - Prompt queuing; the user rejected it as redundant.
 - A PWA rung before native mobile.
 - Making the Tauri process own daemon or runner lifetime.

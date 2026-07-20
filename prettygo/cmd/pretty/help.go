@@ -212,7 +212,7 @@ var commandTable = []commandSpec{
 	{
 		name: "deploy", usage: "deploy",
 		summary: "explain the retired Node deploy path", group: adminCommandGroup,
-		longHelp: "The mutating Node-daemon deploy path is retired. Pretty.app is the macOS release and update vehicle; this command exits without changing files, services, or sessions and points operators to the current release documentation.",
+		longHelp: "The mutating Node-daemon deploy path is retired. Sessions.app is the macOS release and update vehicle; this command exits without changing files, services, or sessions and points operators to the current release documentation.",
 		examples: []string{"pretty deploy"}, run: (*app).cmdDeploy,
 	},
 	{

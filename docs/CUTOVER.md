@@ -1,6 +1,6 @@
 # Node-to-Go daemon cutover
 
-> **Deferred:** do not run this procedure now. Ship and exercise Pretty.app on
+> **Deferred:** do not run this procedure now. Ship and exercise Sessions.app on
 > macOS first. The production mini remains untouched until the user schedules
 > its first app install as a joint maintenance window.
 

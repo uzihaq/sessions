@@ -360,5 +360,5 @@ func (a *app) cmdDeploy(args []string) error {
 	if len(args) != 0 {
 		return fail(1, "usage: pretty deploy")
 	}
-	return fail(2, "pretty deploy was retired with the Node daemon; no changes were made. Pretty.app is the macOS install/update path. See docs/RELEASE.md and docs/NATIVE_APP.md in the source repository")
+	return fail(2, "pretty deploy was retired with the Node daemon; no changes were made. Sessions.app is the macOS install/update path. See docs/RELEASE.md and docs/NATIVE_APP.md in the source repository")
 }

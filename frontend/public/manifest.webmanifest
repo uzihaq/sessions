@@ -1,6 +1,6 @@
 {
-  "name": "Pretty PTY",
-  "short_name": "Pretty PTY",
+  "name": "Sessions",
+  "short_name": "Sessions",
   "description": "PTY-first runtime for Claude/Codex sessions, accessible from anywhere over Tailscale.",
   "start_url": ".",
   "display": "standalone",

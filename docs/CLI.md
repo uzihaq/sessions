@@ -597,7 +597,7 @@ Usage:
 
 explain the retired Node deploy path
 
-The mutating Node-daemon deploy path is retired. Pretty.app is the macOS release and update vehicle; this command exits without changing files, services, or sessions and points operators to the current release documentation.
+The mutating Node-daemon deploy path is retired. Sessions.app is the macOS release and update vehicle; this command exits without changing files, services, or sessions and points operators to the current release documentation.
 
 Examples:
   pretty deploy
