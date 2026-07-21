@@ -13,6 +13,22 @@ const screenshot = process.env.STRUCTURED_VIEW_SCREENSHOT || join(work, 'structu
 let browser;
 let server;
 
+const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+async function withTimeout(promise, label, milliseconds = 10_000) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${milliseconds}ms`)), milliseconds);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 try {
   await build({
     entryPoints: [new URL('./structured-view-fixture.tsx', import.meta.url).pathname],
@@ -62,13 +78,15 @@ try {
 
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   const page = await browser.newPage();
+  page.setDefaultTimeout(10_000);
+  page.setDefaultNavigationTimeout(10_000);
   await page.setViewport({ width: 1440, height: 960, deviceScaleFactor: 1 });
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
-  await page.goto(`http://127.0.0.1:${address.port}`, { waitUntil: 'networkidle0' });
+  await page.goto(`http://127.0.0.1:${address.port}`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.remote-bubble-plan');
-  await page.click('.remote-bubble-tools-toggle');
-  await page.click('.remote-bubble-tool');
+  await page.$eval('.remote-bubble-tools-toggle', (element) => element.click());
+  await page.$eval('.remote-bubble-tool', (element) => element.click());
 
   const report = await page.evaluate(() => ({
     planSteps: document.querySelectorAll('.remote-bubble-plan-step').length,
@@ -87,10 +105,24 @@ try {
   assert.ok(report.parserIconWidth > 0);
   assert.equal(report.horizontalOverflow, 0);
   assert.deepEqual(pageErrors, []);
-  await page.screenshot({ path: screenshot, fullPage: true });
-  process.stdout.write(`structured-view smoke passed: ${screenshot}\n`);
+  if (process.env.STRUCTURED_VIEW_SCREENSHOT) {
+    await withTimeout(
+      page.screenshot({ path: screenshot, captureBeyondViewport: false }),
+      'screenshot'
+    );
+  }
+  process.stdout.write(`structured-view smoke passed${process.env.STRUCTURED_VIEW_SCREENSHOT ? `: ${screenshot}` : ''}\n`);
 } finally {
-  if (browser) await browser.close();
-  if (server) await new Promise((resolve) => server.close(resolve));
+  if (browser) {
+    const browserProcess = browser.process();
+    await Promise.race([browser.close().catch(() => {}), delay(3_000)]);
+    if (browserProcess && browserProcess.exitCode === null && browserProcess.signalCode === null) {
+      browserProcess.kill('SIGKILL');
+    }
+  }
+  if (server) {
+    server.closeAllConnections?.();
+    await Promise.race([new Promise((resolve) => server.close(resolve)), delay(3_000)]);
+  }
   if (!process.env.STRUCTURED_VIEW_SCREENSHOT) await rm(work, { recursive: true, force: true });
 }
