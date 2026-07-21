@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-KEY_PATH="${SESSIONS_UPDATER_KEY_PATH:-$HOME/.config/pretty/sessions-updater.key}"
+KEY_PATH="${SESSIONS_UPDATER_KEY_PATH:-$HOME/.config/sessions/sessions-updater.key}"
 EXPECTED_PUBLIC_KEY="$ROOT/release/updater.pub"
 VERSION=""
 NOTES_FILE=""
@@ -16,7 +16,7 @@ Builds the signed, notarized Apple Silicon Sessions.app updater artifact and
 renders a Tauri latest.json manifest. It does not publish either artifact.
 
 Required release secrets:
-  SESSIONS_UPDATER_KEY_PATH (defaults to ~/.config/pretty/sessions-updater.key)
+  SESSIONS_UPDATER_KEY_PATH (defaults to ~/.config/sessions/sessions-updater.key)
   APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or App Store Connect API key vars
 EOF
 }
@@ -66,7 +66,7 @@ if [[ "$(tr -d '\r\n' < "$KEY_PATH.pub")" != "$(tr -d '\r\n' < "$EXPECTED_PUBLIC
 fi
 
 ARTIFACT_NAME="Sessions.app.tar.gz"
-ARTIFACT_URL="https://github.com/uzihaq/pretty-PTY/releases/download/v${VERSION}/${ARTIFACT_NAME}"
+ARTIFACT_URL="https://github.com/uzihaq/sessions/releases/download/v${VERSION}/${ARTIFACT_NAME}"
 OUTPUT_DIR="$ROOT/release/out/v${VERSION}"
 APP="$ROOT/src-tauri/target/release/bundle/macos/Sessions.app"
 ARTIFACT="$ROOT/src-tauri/target/release/bundle/macos/$ARTIFACT_NAME"
@@ -126,5 +126,5 @@ node "$ROOT/scripts/render-updater-manifest.mjs" \
 
 printf 'release artifacts verified; upload these immutable files first:\n'
 printf '  %s\n  %s\n' "$ARTIFACT" "$ARTIFACT.sig"
-printf 'then patch only releases/latest.json on pretty-pty.somewhere.site with:\n'
+printf 'then patch only releases/latest.json on sessions.somewhere.tech with:\n'
 printf '  %s/latest.json\n' "$OUTPUT_DIR"

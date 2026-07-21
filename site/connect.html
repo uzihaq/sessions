@@ -150,24 +150,24 @@
     <section class="hero">
       <p class="kicker">endpoint handoff</p>
       <h1>Back to your <em>sessions</em>.</h1>
-      <p class="lede">This compatibility page handles the <strong><code>#endpoint=…</code></strong> link printed by <code>pretty remote enable</code>. It checks that address directly, then sends this browser to the app served by your own daemon.</p>
-      <p class="privacy"><span class="lock">◆</span><span><strong>the fragment never touches our servers.</strong> The current command puts no master token in this link. For zero-typing, per-device credentials, use <code>pretty pair</code>.</span></p>
+      <p class="lede">This compatibility page handles the <strong><code>#endpoint=…</code></strong> link printed by <code>sessions remote enable</code>. It checks that address directly, then sends this browser to the app served by your own daemon.</p>
+      <p class="privacy"><span class="lock">◆</span><span><strong>the fragment never touches our servers.</strong> The current command puts no master token in this link. For zero-typing, per-device credentials, use <code>sessions pair</code>.</span></p>
 
       <div class="shell" id="shell">
         <div class="shell-bar"><span class="led"></span><span id="stateLabel">waiting for a connect link</span></div>
         <div class="shell-body">
           <div class="verdict-mark" id="verdictMark">No address yet.</div>
-          <p class="status-copy" id="statusCopy" aria-live="polite">Run the remote command on your Mac, then open its endpoint link. For the recommended one-scan sign-in, run pretty pair after remote access is enabled.</p>
+          <p class="status-copy" id="statusCopy" aria-live="polite">Run the remote command on your Mac, then open its endpoint link. For the recommended one-scan sign-in, run sessions pair after remote access is enabled.</p>
           <p class="endpoint" id="endpointLine" hidden>checking <code id="endpointText"></code></p>
           <a class="open" id="openButton" href="setup.html" target="_top">Open your Mac →</a>
           <div class="instructions" id="instructions">
-            <p>On the Mac where pretty is installed:</p>
-            <div class="command">pretty remote enable</div>
+            <p>On the Mac where sessions is installed:</p>
+            <div class="command">sessions remote enable</div>
             <p>Keep Tailscale connected on both devices. The endpoint link carries the verified address here in the fragment; the current flow does not put the master token in it.</p>
-            <div class="command">pretty pair --name "my phone"</div>
+            <div class="command">sessions pair --name "my phone"</div>
             <p>That newer QR opens the daemon-served app directly and exchanges a five-minute, single-use ticket for a revocable device credential.</p>
           </div>
-          <p class="safe">Saved only in this browser under <code>pretty-pty:hosted-connect</code>. The handoff fragment is scrubbed before fonts or other resources load. A legacy optional <code>token</code> field is still forwarded for compatibility, but new QR pairing never shares the master token. No analytics. No terminal relay. Flow source: <code>prettygo/cmd/pretty/remote.go</code> and <code>frontend/src/lib/hostedBootstrap.ts</code>.</p>
+          <p class="safe">Saved only in this browser under <code>sessions:hosted-connect</code>. The handoff fragment is scrubbed before fonts or other resources load. A legacy optional <code>token</code> field is still forwarded for compatibility, but new QR pairing never shares the master token. No analytics. No terminal relay. Flow source: <code>runtime/cmd/sessions/remote.go</code> and <code>frontend/src/lib/hostedBootstrap.ts</code>.</p>
           <noscript><p class="status-copy">JavaScript is required to read and immediately scrub the endpoint fragment.</p></noscript>
         </div>
       </div>
@@ -175,8 +175,8 @@
   </main>
 
   <footer>
-    <span>pretty — direct from this browser to your Mac.</span>
-    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS · MIT</span>
+    <span>sessions — direct from this browser to your Mac.</span>
+    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzihaq/sessions">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS · MIT</span>
   </footer>
 </div>
 
@@ -238,7 +238,7 @@
       try {
         var remembered = { endpoint: endpoint };
         if (token) remembered.token = token;
-        localStorage.setItem('pretty-pty:hosted-connect', JSON.stringify(remembered));
+        localStorage.setItem('sessions:hosted-connect', JSON.stringify(remembered));
       } catch (error) {
         // Storage can be disabled; the one-time connection check still works.
       }
@@ -267,13 +267,13 @@
           ? ' ' + health.sessionsLoaded + ' session' + (health.sessionsLoaded === 1 ? '' : 's') + ' loaded.'
           : '';
         var fallbackNote = usedFallback ? ' The public health check answered without the token.' : '';
-        var authNote = token ? ' The legacy credential will be handed to the daemon-served app in a scrubbed fragment.' : ' The app may ask for a credential; use pretty pair for a revocable per-device one.';
+        var authNote = token ? ' The legacy credential will be handed to the daemon-served app in a scrubbed fragment.' : ' The app may ask for a credential; use sessions pair for a revocable per-device one.';
         setState('connected', 'connected', 'Your Mac answered.', 'The private endpoint is live. Open your Mac\'s own app to use the sessions.' + sessionNote + fallbackNote + authNote);
         openButton.href = endpoint + '/#endpoint=' + encodeURIComponent(endpoint) + (token ? '&token=' + encodeURIComponent(token) : '');
         openButton.classList.add('visible');
       } else {
         var detail = response ? 'The daemon answered HTTP ' + response.status + '.' : 'The endpoint did not answer within 8 seconds.';
-        setState('blocked', 'connection blocked', 'Couldn’t connect.', detail + ' Check Tailscale on both devices, then run pretty doctor and pretty remote status on your Mac.');
+        setState('blocked', 'connection blocked', 'Couldn’t connect.', detail + ' Check Tailscale on both devices, then run sessions doctor and sessions remote status on your Mac.');
       }
     }
 
@@ -285,7 +285,7 @@
 
     if (!endpoint) {
       instructions.hidden = false;
-      setState('blocked', 'invalid connect link', 'Link rejected.', 'The endpoint must use https://, or loopback HTTP for the Mac you are sitting at. Run pretty remote enable again for a fresh link.');
+      setState('blocked', 'invalid connect link', 'Link rejected.', 'The endpoint must use https://, or loopback HTTP for the Mac you are sitting at. Run sessions remote enable again for a fresh link.');
       return;
     }
 

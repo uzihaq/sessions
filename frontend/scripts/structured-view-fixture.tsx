@@ -36,8 +36,8 @@ const events: StructuredSessionEvent[] = [
     type: 'codex', subtype: 'item_completed', turnId: 'turn-1',
     item: {
       id: 'command-1', type: 'commandExecution', status: 'completed',
-      command: 'go test ./...', cwd: '/Users/uzair/pretty-PTY',
-      aggregatedOutput: 'ok   github.com/uzihaq/pretty-pty/prettygo/internal/codexapp\n',
+      command: 'go test ./...', cwd: '/Users/uzair/sessions',
+      aggregatedOutput: 'ok   github.com/uzihaq/sessions/runtime/internal/codexapp\n',
       exitCode: 0, durationMs: 881
     }
   },
@@ -92,7 +92,7 @@ createRoot(document.getElementById('root')!).render(
         loadingEarlierClaudeEvents={false}
         onLoadEarlierClaudeEvents={() => {}}
         sidebar={sidebar}
-        cwd="/Users/uzair/pretty-PTY"
+        cwd="/Users/uzair/sessions"
         onOpenTerminal={() => {}}
         provider="codex"
         structuredKind="codex-app-server"

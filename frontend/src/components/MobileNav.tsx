@@ -53,7 +53,7 @@ export function MobileNav({
     window.requestAnimationFrame(() => sheetRef.current?.focus());
   }, [sheetOpen]);
 
-  // Tiny haptic helper. Mirrors pretty-tmux: 10ms for taps, 14ms for
+  // Tiny haptic helper. Mirrors sessions-tmux: 10ms for taps, 14ms for
   // swipes — short enough to feel like an "ack" not a buzz, long
   // enough to register on phones with conservative haptic motors.
   const haptic = (ms: number): void => {

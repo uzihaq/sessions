@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-// Maps the useTerminal hook's status → the four visible states pretty-tmux
+// Maps the useTerminal hook's status → the four visible states sessions-tmux
 // used. `error` and `closed` both fold to `disconnected` for the user;
 // internally we still distinguish them in useTerminal so the reconnect
 // loop knows whether to retry.

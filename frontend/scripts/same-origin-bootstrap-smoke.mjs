@@ -84,7 +84,7 @@ async function openCase(health, pairClaim = null) {
           status: 410,
           contentType: 'application/json',
           body: JSON.stringify({
-            error: 'Pairing ticket is invalid, expired, or already used. Run `pretty pair` to create a new one.'
+            error: 'Pairing ticket is invalid, expired, or already used. Run `sessions pair` to create a new one.'
           })
         });
       } else {
@@ -98,7 +98,7 @@ async function openCase(health, pairClaim = null) {
         void request.abort('failed');
       } else {
         const status = health === 'unauthorized' ? 401 : 200;
-        const body = status === 200 ? JSON.stringify({ name: 'prettyd' }) : '';
+        const body = status === 200 ? JSON.stringify({ name: 'sessionsd' }) : '';
         void request.respond({ status, contentType: 'application/json', body });
       }
       return;
@@ -131,13 +131,13 @@ try {
   await healthy.page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 15_000 });
   await healthy.page.waitForSelector('.app-shell', { timeout: 10_000 });
   await healthy.page.waitForFunction(() => {
-    const servers = JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]');
-    return servers.length === 1 && window.localStorage.getItem('pretty-pty:active-server') === servers[0].id;
+    const servers = JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]');
+    return servers.length === 1 && window.localStorage.getItem('sessions:active-server') === servers[0].id;
   });
   const healthyState = await healthy.page.evaluate(() => ({
     pickerVisible: document.querySelector('[data-testid="connect-screen"]') !== null,
-    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]'),
-    activeId: window.localStorage.getItem('pretty-pty:active-server')
+    servers: JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]'),
+    activeId: window.localStorage.getItem('sessions:active-server')
   }));
   assert.equal(healthyState.pickerVisible, false);
   assert.deepEqual(healthyState.servers[0], {
@@ -167,7 +167,7 @@ try {
   const unauthorizedState = await unauthorized.page.evaluate(() => ({
     endpoint: document.querySelector('.daemon-banner-host')?.textContent?.trim() ?? '',
     tokenFocused: document.activeElement?.classList.contains('daemon-banner-token-input') ?? false,
-    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]')
+    servers: JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]')
   }));
   assert.equal(unauthorizedState.endpoint, origin);
   assert.equal(unauthorizedState.tokenFocused, true);
@@ -179,8 +179,8 @@ try {
   await rejected.page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 15_000 });
   await rejected.page.waitForSelector('[data-testid="connect-screen"]', { timeout: 10_000 });
   const rejectedState = await rejected.page.evaluate(() => ({
-    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]'),
-    activeId: window.localStorage.getItem('pretty-pty:active-server')
+    servers: JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]'),
+    activeId: window.localStorage.getItem('sessions:active-server')
   }));
   assert.deepEqual(rejectedState, { servers: [], activeId: null });
   assert.deepEqual(rejected.pageErrors, []);
@@ -192,8 +192,8 @@ try {
   await fragment.page.waitForSelector('.app-shell', { timeout: 10_000 });
   const fragmentState = await fragment.page.evaluate(() => ({
     hash: window.location.hash,
-    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]'),
-    activeId: window.localStorage.getItem('pretty-pty:active-server')
+    servers: JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]'),
+    activeId: window.localStorage.getItem('sessions:active-server')
   }));
   assert.equal(fragment.healthRequests, 0);
   assert.equal(fragmentState.hash, '');
@@ -210,13 +210,13 @@ try {
   });
   await paired.page.waitForSelector('.app-shell', { timeout: 10_000 });
   await paired.page.waitForFunction(() => {
-    const servers = JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]');
+    const servers = JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]');
     return servers.length === 1 && servers[0].token === 'paired-device-token';
   });
   const pairedState = await paired.page.evaluate(() => ({
     hash: window.location.hash,
-    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]'),
-    activeId: window.localStorage.getItem('pretty-pty:active-server')
+    servers: JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]'),
+    activeId: window.localStorage.getItem('sessions:active-server')
   }));
   assert.equal(paired.healthRequests, 0);
   assert.equal(paired.pairClaimRequests, 1);
@@ -242,7 +242,7 @@ try {
     hash: window.location.hash,
     error: document.querySelector('.connect-error')?.textContent?.trim() ?? '',
     endpointInputUsable: !(document.querySelector('.connect-form input[type="url"]')?.disabled ?? true),
-    activeId: window.localStorage.getItem('pretty-pty:active-server')
+    activeId: window.localStorage.getItem('sessions:active-server')
   }));
   assert.equal(expiredPair.healthRequests, 0);
   assert.equal(expiredPair.pairClaimRequests, 1);

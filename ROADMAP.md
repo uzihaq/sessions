@@ -20,7 +20,7 @@ The native conversation surface now treats structured provider history as its
 UI boundary. Codex app-server sessions display streaming answers, progress,
 plans, reasoning summaries, tool and command activity, file diffs, context
 usage, and safe interruption while retaining Terminal as a fallback. See
-[`prettygo/internal/codexapp/history.go`](prettygo/internal/codexapp/history.go)
+[`runtime/internal/codexapp/history.go`](runtime/internal/codexapp/history.go)
 and [`frontend/src/components/RemoteView.tsx`](frontend/src/components/RemoteView.tsx).
 
 The MacBook remains the development channel. The production mini is not part
@@ -34,7 +34,7 @@ contract.
 
 After the macOS app ships, reuse the Tauri 2 client and React UI for Android.
 The Android app is a paired client for a user's Mac daemon, not a mobile daemon
-host. Native work includes FCM delivery over Pretty's existing encrypted push
+host. Native work includes FCM delivery over Sessions' existing encrypted push
 path, secure credential storage, widgets, and a Quick Settings entry point.
 If Tauri's Android shell proves limiting, keep the daemon protocol and use a
 thin Kotlin client rather than changing the runtime boundary.
@@ -49,7 +49,7 @@ thin Kotlin client rather than changing the runtime boundary.
 
 ## Explicitly not planned
 
-- A custom Pretty relay or cloud terminal-data plane.
+- A custom Sessions relay or cloud terminal-data plane.
 - A required Sessions account or token markup.
 - Prompt queuing; the user rejected it as redundant.
 - A PWA rung before native mobile.

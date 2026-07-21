@@ -1,4 +1,4 @@
-// User-defined tab order. Sessions come back from prettyd in arbitrary
+// User-defined tab order. Sessions come back from sessionsd in arbitrary
 // order (creation time, usually), but the user wants to organize them
 // — drag this one ahead, group related projects together, etc.
 //
@@ -6,7 +6,7 @@
 // the order falls to the end (so newly-spawned sessions land at the
 // right of the tab strip, ready to be dragged into place).
 
-const STORAGE_KEY = 'pretty-pty:tab-order:v1';
+const STORAGE_KEY = 'sessions:tab-order:v1';
 
 export function readTabOrder(): string[] {
   try {

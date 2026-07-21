@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { listFs, type FsListing } from '../api/prettyd';
+import { listFs, type FsListing } from '../api/sessionsd';
 
 interface Props {
   // The path that's currently selected (controlled). Empty string ⇒
@@ -16,7 +16,7 @@ interface Props {
 
 // Real directory browser. Click a folder to descend, click ".." to go
 // up, click "Select" to confirm. No "project-shaped" curation — every
-// child of the requested path that prettyd can stat shows up.
+// child of the requested path that sessionsd can stat shows up.
 //
 // Hidden entries (dotfiles) are folded by default with a "Show hidden"
 // toggle; on a typical $HOME there are dozens of dotfiles that bury

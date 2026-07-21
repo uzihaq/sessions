@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager};
 const SERVICE_LABEL: &str = "tech.somewhere.sessions.daemon";
 const LOOPBACK_HOST: &str = "127.0.0.1";
 const LOOPBACK_PORT: u16 = 8787;
-const REQUIRED_BINARIES: [&str; 3] = ["pretty", "prettyd", "runner"];
+const REQUIRED_BINARIES: [&str; 3] = ["sessions", "sessionsd", "sessions-runner"];
 
 type LifecycleResult<T> = Result<T, String>;
 
@@ -166,7 +166,7 @@ impl RuntimeConfig {
                 .join("Library")
                 .join("Logs")
                 .join("Sessions")
-                .join("prettyd.log"),
+                .join("sessionsd.log"),
             label: SERVICE_LABEL.to_string(),
             domain: format!("gui/{uid}"),
             host: LOOPBACK_HOST.to_string(),
@@ -435,7 +435,7 @@ fn validate_manifest(manifest: &RuntimeManifest) -> LifecycleResult<()> {
     }
     if manifest.binaries.len() != REQUIRED_BINARIES.len() {
         return Err(
-            "bundled runtime manifest must name exactly pretty, prettyd, and runner".to_string(),
+            "bundled runtime manifest must name exactly sessions, sessionsd, and sessions-runner".to_string(),
         );
     }
     for binary in REQUIRED_BINARIES {
@@ -507,18 +507,18 @@ fn verify_binary(
 }
 
 fn daemon_plist(config: &RuntimeConfig, runtime_dir: &Path) -> String {
-    let mut arguments = vec![runtime_dir.join("prettyd").display().to_string()];
+    let mut arguments = vec![runtime_dir.join("sessionsd").display().to_string()];
     arguments.extend(config.daemon_arguments.clone());
     let mut environment = vec![
         (
             "PATH".to_string(),
             "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string(),
         ),
-        ("PRETTYD_HOST".to_string(), config.host.clone()),
-        ("PRETTYD_PORT".to_string(), config.port.to_string()),
+        ("SESSIONS_HOST".to_string(), config.host.clone()),
+        ("SESSIONS_PORT".to_string(), config.port.to_string()),
         (
-            "PRETTYD_RUNNER".to_string(),
-            runtime_dir.join("runner").display().to_string(),
+            "SESSIONS_RUNNER".to_string(),
+            runtime_dir.join("sessions-runner").display().to_string(),
         ),
     ];
     environment.extend(config.environment.clone());
@@ -661,7 +661,7 @@ fn wait_until_ready(config: &RuntimeConfig, baseline: &BTreeSet<String>) -> Life
     let mut last_error = "no response".to_string();
     while Instant::now() < deadline {
         match health_once(config) {
-            Ok(health) if health.ok && health.name == "prettyd" && !health.discovering => {
+            Ok(health) if health.ok && health.name == "sessionsd" && !health.discovering => {
                 match fetch_sessions(config) {
                     Ok(current) => {
                         let missing = baseline.difference(&current).cloned().collect::<Vec<_>>();
@@ -970,7 +970,7 @@ mod tests {
         };
         assert!(validate_manifest(&manifest).is_err());
         manifest.runtime_version = "v1-safe".to_string();
-        manifest.binaries.remove("runner");
+        manifest.binaries.remove("sessions-runner");
         assert!(validate_manifest(&manifest).is_err());
     }
 
@@ -984,9 +984,9 @@ mod tests {
         let runtime = Path::new("/tmp/Sessions & tests/runtime/v1");
         let plist = daemon_plist(&config, runtime);
         assert!(plist.contains("tech.somewhere.sessions.fixture"));
-        assert!(plist.contains("/tmp/Sessions &amp; tests/runtime/v1/prettyd"));
-        assert!(plist.contains("PRETTYD_RUNNER"));
-        assert!(plist.contains("/tmp/Sessions &amp; tests/runtime/v1/runner"));
+        assert!(plist.contains("/tmp/Sessions &amp; tests/runtime/v1/sessionsd"));
+        assert!(plist.contains("SESSIONS_RUNNER"));
+        assert!(plist.contains("/tmp/Sessions &amp; tests/runtime/v1/sessions-runner"));
         assert!(plist.contains("<key>KeepAlive</key>"));
     }
 
@@ -997,7 +997,7 @@ mod tests {
         }
         let address = format!(
             "127.0.0.1:{}",
-            env::var("PRETTYD_PORT").expect("PRETTYD_PORT")
+            env::var("SESSIONS_PORT").expect("SESSIONS_PORT")
         );
         let listener = TcpListener::bind(&address).expect("bind launchd helper");
         for incoming in listener.incoming() {
@@ -1014,7 +1014,7 @@ mod tests {
                     .collect::<Vec<_>>();
                 serde_json::json!({ "sessions": sessions }).to_string()
             } else {
-                r#"{"ok":true,"name":"prettyd","discovering":false}"#.to_string()
+                r#"{"ok":true,"name":"sessionsd","discovering":false}"#.to_string()
             };
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1099,7 +1099,7 @@ mod tests {
         assert!(error.contains("rolled back safely"), "{error}");
         assert!(health_once(&config).is_ok());
         let plist = fs::read_to_string(&config.plist_path).unwrap();
-        assert!(plist.contains("/v2/prettyd"), "{plist}");
+        assert!(plist.contains("/v2/sessionsd"), "{plist}");
 
         bootout_if_loaded(&config).unwrap();
         guard.target.clear();
@@ -1114,7 +1114,7 @@ mod tests {
                 .join("Sessions")
                 .join("runtime"),
             plist_path: root.join("LaunchAgents").join(format!("{label}.plist")),
-            log_path: root.join("Logs").join("prettyd.log"),
+            log_path: root.join("Logs").join("sessionsd.log"),
             label: label.to_string(),
             domain: "gui/0".to_string(),
             host: LOOPBACK_HOST.to_string(),
@@ -1135,7 +1135,7 @@ mod tests {
         fs::create_dir_all(source).unwrap();
         let test_binary = env::current_exe().unwrap();
         for binary in REQUIRED_BINARIES {
-            let origin = if binary == "prettyd" {
+            let origin = if binary == "sessionsd" {
                 daemon.unwrap_or(&test_binary)
             } else {
                 &test_binary

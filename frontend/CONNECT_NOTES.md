@@ -45,7 +45,7 @@ exit 0
 The emitted cache key also changed across consecutive builds:
 
 ```text
-pretty-pty-0f1a7d011005 -> pretty-pty-580310c9ff70
+sessions-0f1a7d011005 -> sessions-580310c9ff70
 ```
 
 ## Same-origin daemon auto-adopt trace
@@ -55,7 +55,7 @@ The smoke served `dist/` at the non-8787 origin `http://127.0.0.1:62353`
 and intercepted only the daemon API calls:
 
 1. `/api/health` returned `200` with the deliberately minimal body
-   `{ "name": "prettyd" }`.
+   `{ "name": "sessionsd" }`.
    - The current origin was stored as the default `local` server and selected.
    - The connection picker was not rendered.
 2. After that successful hydration, `/api/sessions` began returning `401`.

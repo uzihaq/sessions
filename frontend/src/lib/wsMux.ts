@@ -154,7 +154,7 @@ class MuxManager {
       const timer = window.setTimeout(() => {
         this.requests.delete(msg.requestId);
         this.removeQueuedRequest(msg.requestId);
-        reject(new Error(`prettyd mux request timed out: ${msg.type}`));
+        reject(new Error(`sessionsd mux request timed out: ${msg.type}`));
         this.scheduleIdleShutdown();
       }, timeoutMs);
       this.requests.set(msg.requestId, { resolve, reject, timer });
@@ -217,7 +217,7 @@ class MuxManager {
       if (!pending) continue;
       window.clearTimeout(pending.timer);
       this.requests.delete(msg.requestId);
-      pending.reject(new Error(`prettyd mux request dropped while offline: ${msg.type}`));
+      pending.reject(new Error(`sessionsd mux request dropped while offline: ${msg.type}`));
     }
   }
 

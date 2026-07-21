@@ -1,4 +1,5 @@
-// Mirror of prettyd/src/types.ts. Kept duplicated for now to avoid
+// Mirror of the legacy contract in runtime/testdata/node-runtime/src/types.ts.
+// Kept duplicated for now to avoid
 // bundling backend code into the browser; Phase 4 will move shared
 // protocol types into a shared/ package once the daemon goes prod.
 
@@ -29,11 +30,11 @@ export interface SessionInfo {
   exitCode: number | null;
   exitSignal: string | null;
   exitedAt: number | null;
-  // Claude-side session titles, surfaced from the JSONL by prettyd.
+  // Claude-side session titles, surfaced from the JSONL by sessionsd.
   // claudeCustomTitle: set by Claude's /rename slash command.
   // claudeAiTitle: Claude's own auto-generated summary.
   // Used by the tab strip when the user hasn't manually renamed in
-  // pretty-PTY itself (manual override always wins).
+  // sessions itself (manual override always wins).
   claudeCustomTitle?: string;
   claudeAiTitle?: string;
   // Structured-provider controls resolved by the daemon at spawn time.
@@ -109,7 +110,7 @@ export type ServerMsg =
 // sessionId (tmux-style — N sessions, 1 socket).
 export type MuxClientMsg =
   // outputReplay=false suppresses raw PTY bytes (replay AND live) for
-  // this attach — Pretty-only sessions don't consume them, and replaying
+  // this attach — Sessions-only sessions don't consume them, and replaying
   // every session's 4MB ring through one socket on page load wedges the
   // browser for minutes.
   // claudeReplay=false suppresses the on-attach replay of Claude JSONL
@@ -160,7 +161,7 @@ export interface StructuredSessionEvent {
   uuid?: string;
   parentUuid?: string | null;
   timestamp?: string;
-  sessionId?: string;      // Claude's id, NOT prettyd's
+  sessionId?: string;      // Claude's id, NOT sessionsd's
   message?: {
     role?: string;
     content?: unknown;     // string OR array of typed blocks

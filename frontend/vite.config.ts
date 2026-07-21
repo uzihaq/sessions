@@ -31,37 +31,37 @@ function injectServiceWorkerBuildHash(): Plugin {
   };
 }
 
-const PRETTYD_HOST = process.env.PRETTYD_HOST ?? '127.0.0.1';
-const PRETTYD_PORT = process.env.PRETTYD_PORT ?? '8787';
-const PRETTYD_HTTP = `http://${PRETTYD_HOST}:${PRETTYD_PORT}`;
-const PRETTYD_WS = `ws://${PRETTYD_HOST}:${PRETTYD_PORT}`;
+const SESSIONS_HOST = process.env.SESSIONS_HOST ?? '127.0.0.1';
+const SESSIONS_PORT = process.env.SESSIONS_PORT ?? '8787';
+const SESSIONS_HTTP = `http://${SESSIONS_HOST}:${SESSIONS_PORT}`;
+const SESSIONS_WS = `ws://${SESSIONS_HOST}:${SESSIONS_PORT}`;
 
 const VITE_HOST = process.env.VITE_HOST ?? '127.0.0.1';
 const ANY_BIND = new Set(['0.0.0.0', '::', '::0', '*']);
-if (ANY_BIND.has(VITE_HOST) || ANY_BIND.has(PRETTYD_HOST)) {
+if (ANY_BIND.has(VITE_HOST) || ANY_BIND.has(SESSIONS_HOST)) {
   // Hard fail before Vite even starts. We never bind to any-interface;
   // for tailnet access, set the env var to your specific tailnet IP.
   throw new Error(
-    `pretty-PTY config: ${ANY_BIND.has(VITE_HOST) ? 'VITE_HOST' : 'PRETTYD_HOST'} ` +
-    `is set to ${ANY_BIND.has(VITE_HOST) ? VITE_HOST : PRETTYD_HOST}, which is rejected. ` +
+    `sessions config: ${ANY_BIND.has(VITE_HOST) ? 'VITE_HOST' : 'SESSIONS_HOST'} ` +
+    `is set to ${ANY_BIND.has(VITE_HOST) ? VITE_HOST : SESSIONS_HOST}, which is rejected. ` +
     `Use a specific address (127.0.0.1 for loopback, or a 100.x.y.z tailnet IP).`
   );
 }
 
 export default defineConfig({
   // Relative asset URLs let the exact same dist work at a hosted project
-  // root, under a static preview subpath, and from prettyd's embedded UI.
+  // root, under a static preview subpath, and from sessionsd's embedded UI.
   base: './',
   plugins: [react(), injectServiceWorkerBuildHash()],
   server: {
     host: VITE_HOST,
-    // 5273 (not 5173) so pretty-PTY can run alongside pretty-tmux,
+    // 5273 (not 5173) so sessions can run alongside sessions-tmux,
     // which is still on the default :5173 until Phase 5.
     port: Number(process.env.VITE_PORT ?? 5273),
     strictPort: false,
     proxy: {
-      '/api': { target: PRETTYD_HTTP, changeOrigin: true },
-      '/ws': { target: PRETTYD_WS, ws: true, changeOrigin: true }
+      '/api': { target: SESSIONS_HTTP, changeOrigin: true },
+      '/ws': { target: SESSIONS_WS, ws: true, changeOrigin: true }
     }
   },
   build: {

@@ -1,7 +1,7 @@
 interface Props {
   visible: boolean;
   onClick: () => void;
-  // Position pin — Terminal pane tucks it bottom-right, Pretty pane wants
+  // Position pin — Terminal pane tucks it bottom-right, Sessions pane wants
   // it slightly higher to clear the InputBar.
   bottom?: number;
 }

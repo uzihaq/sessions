@@ -1,4 +1,4 @@
-// Three-step text size for the Pretty + Reflowed views. Stored in
+// Three-step text size for the Sessions + Reflowed views. Stored in
 // localStorage; each step maps to a class on .app-shell. CSS rules
 // in globals.css read those classes to set body / heading / code
 // sizes. Default is "M" — the user explicitly said today's mobile
@@ -6,7 +6,7 @@
 
 export type TextSize = 'S' | 'M' | 'L';
 
-const KEY = 'pretty-pty:text-size';
+const KEY = 'sessions:text-size';
 
 export function readTextSize(): TextSize {
   try {

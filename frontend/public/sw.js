@@ -1,12 +1,12 @@
-// pretty-PTY app-shell service worker.
+// sessions app-shell service worker.
 //
 // Goals:
 //   1. Tap the home-screen icon → app opens INSTANTLY from cache (no
 //      network round-trip blocking first paint).
 //   2. /api/* and /ws are NEVER intercepted — those must always hit
-//      prettyd live; caching a session list or replaying a stale WS
+//      sessionsd live; caching a session list or replaying a stale WS
 //      handshake would be a footgun.
-//   3. Survive offline / prettyd-not-yet-up: the bundle still loads
+//   3. Survive offline / sessionsd-not-yet-up: the bundle still loads
 //      from cache, the React app boots, hydrates from localStorage
 //      (last seen sessions list, lastSeq per session), and shows the
 //      familiar tabs even before the WS connects.
@@ -29,7 +29,7 @@
 
 // Vite replaces this marker in the emitted sw.js with a unique build hash,
 // so every production build evicts the previous app-shell cache.
-const CACHE_VERSION = 'pretty-pty-__BUILD_HASH__';
+const CACHE_VERSION = 'sessions-__BUILD_HASH__';
 const SCOPE_URL = self.registration.scope;
 const scoped = (path) => new URL(path, SCOPE_URL).href;
 const INDEX_URL = scoped('index.html');
@@ -117,7 +117,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(req.url);
 
-  // Bypass: anything talking to prettyd (proxied through vite's /api or
+  // Bypass: anything talking to sessionsd (proxied through vite's /api or
   // /ws) must never be served from cache. Returning early lets the
   // browser handle the request normally.
   if (url.pathname.startsWith('/api/')) return;

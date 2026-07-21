@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ClipboardEvent } from 'react';
 import type { SessionInfo } from '../types';
 import type { TabStatus } from './SessionTabs';
-import { wsMuxUrl } from '../api/prettyd';
+import { wsMuxUrl } from '../api/sessionsd';
 import { requestClaudeEvents, sendSessionInput } from '../lib/wsMux';
 import { useServers } from '../lib/servers';
 import { openSessionWindow } from '../lib/tauriBridge';

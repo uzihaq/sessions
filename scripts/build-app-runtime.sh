@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-go_root="$repo_root/prettygo"
+go_root="$repo_root/runtime"
 frontend_dist="$repo_root/frontend/dist"
 embedded_assets="$go_root/internal/webassets/dist"
 runtime_dir="$repo_root/src-tauri/runtime"
@@ -35,13 +35,13 @@ if [[ ! "$runtime_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
   exit 1
 fi
 
-signing_identity="${PRETTY_SIGN_IDENTITY:-}"
-if [[ -z "$signing_identity" && -r "$HOME/.config/pretty/sign-identity" ]]; then
-  signing_identity="$(head -n1 "$HOME/.config/pretty/sign-identity")"
+signing_identity="${SESSIONS_SIGN_IDENTITY:-}"
+if [[ -z "$signing_identity" && -r "$HOME/.config/sessions/sign-identity" ]]; then
+  signing_identity="$(head -n1 "$HOME/.config/sessions/sign-identity")"
 fi
 if [[ -z "$signing_identity" ]]; then
   echo "build-app-runtime: a Developer ID is required for nested runtime binaries" >&2
-  echo "set PRETTY_SIGN_IDENTITY or write it to ~/.config/pretty/sign-identity" >&2
+  echo "set SESSIONS_SIGN_IDENTITY or write it to ~/.config/sessions/sign-identity" >&2
   exit 1
 fi
 
@@ -79,27 +79,28 @@ build_one() {
   codesign --verify --strict "$output"
 }
 
-build_one pretty ""
-build_one prettyd embedui
-build_one runner ""
+build_one sessions ""
+build_one sessionsd embedui
+build_one sessions-runner ""
 
 mkdir -p "$runtime_dir"
-for binary_name in pretty prettyd runner; do
+find "$runtime_dir" -mindepth 1 -maxdepth 1 ! -name '.gitkeep' -exec rm -rf {} +
+for binary_name in sessions sessionsd sessions-runner; do
   install -m 0755 "$build_staging/$binary_name" "$runtime_dir/$binary_name"
 done
 
-pretty_sha="$(shasum -a 256 "$runtime_dir/pretty" | awk '{print $1}')"
-prettyd_sha="$(shasum -a 256 "$runtime_dir/prettyd" | awk '{print $1}')"
-runner_sha="$(shasum -a 256 "$runtime_dir/runner" | awk '{print $1}')"
+sessions_sha="$(shasum -a 256 "$runtime_dir/sessions" | awk '{print $1}')"
+sessionsd_sha="$(shasum -a 256 "$runtime_dir/sessionsd" | awk '{print $1}')"
+runner_sha="$(shasum -a 256 "$runtime_dir/sessions-runner" | awk '{print $1}')"
 printf '%s\n' \
   '{' \
   '  "schemaVersion": 1,' \
   "  \"runtimeVersion\": \"$runtime_version\"," \
   '  "target": "darwin-arm64",' \
   '  "binaries": {' \
-  "    \"pretty\": \"$pretty_sha\"," \
-  "    \"prettyd\": \"$prettyd_sha\"," \
-  "    \"runner\": \"$runner_sha\"" \
+  "    \"sessions\": \"$sessions_sha\"," \
+  "    \"sessionsd\": \"$sessionsd_sha\"," \
+  "    \"sessions-runner\": \"$runner_sha\"" \
   '  }' \
   '}' >"$runtime_dir/runtime-manifest.json"
 

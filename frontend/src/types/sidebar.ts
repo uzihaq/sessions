@@ -1,6 +1,6 @@
-// Shared types between parsers and the Pretty derived sidebar.
+// Shared types between parsers and the Sessions derived sidebar.
 //
-// Lifted out of the original pretty-tmux StatusSidebar component so parsers
+// Lifted out of the original sessions-tmux StatusSidebar component so parsers
 // don't need to import a React component to get the types of their findings.
 
 export type FileTouchKind = 'read' | 'write' | 'edit';

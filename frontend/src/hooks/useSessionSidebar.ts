@@ -9,7 +9,7 @@
 // Stable UUIDs, typed roles, structured content. Everything we want
 // (tokens, tool calls, file ops, todos) is right there in `tool_use`
 // and `usage` fields. Codex rollouts are normalized to this same shape
-// in prettyd before they reach the browser.
+// in sessionsd before they reach the browser.
 
 import { useMemo } from 'react';
 import type { ClaudeSessionEvent } from '../types';

@@ -1,5 +1,5 @@
 {
-  "name": "pretty-pty",
+  "name": "sessions",
   "private": true,
   "version": "0.1.0",
   "description": "Sessions native app and its local Go runtime for durable agent sessions.",
@@ -10,9 +10,7 @@
     "tauri:build": "tauri build",
     "ship": "bash scripts/ship.sh",
     "build": "tauri build --bundles app",
-    "build:legacy": "npm --prefix frontend run build && npm --prefix prettyd run build",
-    "install:all": "npm install && npm --prefix frontend install",
-    "install:legacy": "npm --prefix prettyd install && npm --prefix frontend install"
+    "bootstrap": "npm ci && npm --prefix frontend ci"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.0"

@@ -116,7 +116,7 @@ function pairClaimError(status: number, body: unknown): Error {
     const error = (body as Record<string, unknown>).error;
     if (typeof error === 'string' && error.trim()) return new Error(error.trim());
   }
-  return new Error(`Pairing failed (HTTP ${status}). Run pretty pair again.`);
+  return new Error(`Pairing failed (HTTP ${status}). Run sessions pair again.`);
 }
 
 // Claim only against the page's own daemon origin. Pairing tickets are never
@@ -126,7 +126,7 @@ export async function claimCurrentOriginPairing(
   name?: string
 ): Promise<PairClaimResponse> {
   const ticket = pairingTicket(ticketValue);
-  if (!ticket) throw new Error('Paste a pairing ticket from `pretty pair`.');
+  if (!ticket) throw new Error('Paste a pairing ticket from `sessions pair`.');
 
   const response = await fetch(`${window.location.origin}/api/pair/claim`, {
     method: 'POST',
@@ -141,11 +141,11 @@ export async function claimCurrentOriginPairing(
   }
   if (!response.ok) throw pairClaimError(response.status, body);
   if (typeof body !== 'object' || body === null) {
-    throw new Error('Pairing succeeded without a device credential. Run `pretty pair` again.');
+    throw new Error('Pairing succeeded without a device credential. Run `sessions pair` again.');
   }
   const claimed = body as Partial<PairClaimResponse>;
   if (!claimed.device_id || !claimed.token || !claimed.name) {
-    throw new Error('Pairing succeeded with an invalid device credential. Run `pretty pair` again.');
+    throw new Error('Pairing succeeded with an invalid device credential. Run `sessions pair` again.');
   }
 
   adoptCurrentOriginServer(claimed.token);
@@ -164,7 +164,7 @@ export async function bootstrapPairingConnection(): Promise<boolean> {
   try {
     await claimCurrentOriginPairing(ticket);
   } catch (error) {
-    const detail = error instanceof Error ? error.message : 'Pairing failed. Run `pretty pair` again.';
+    const detail = error instanceof Error ? error.message : 'Pairing failed. Run `sessions pair` again.';
     const store = useServers.getState();
     store.setPairingError(detail);
     store.setActive(null);

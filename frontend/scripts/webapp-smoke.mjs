@@ -3,16 +3,16 @@ import os from 'node:os';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
 
-const appUrl = process.env.PRETTY_WEBAPP_URL;
-const daemonEndpoint = process.env.PRETTYD_ENDPOINT;
+const appUrl = process.env.SESSIONS_WEBAPP_URL;
+const daemonEndpoint = process.env.SESSIONS_ENDPOINT;
 if (!appUrl || !daemonEndpoint) {
-  console.error('usage: PRETTY_WEBAPP_URL=http://127.0.0.1:<port> PRETTYD_ENDPOINT=http://127.0.0.1:<port> node scripts/webapp-smoke.mjs');
+  console.error('usage: SESSIONS_WEBAPP_URL=http://127.0.0.1:<port> SESSIONS_ENDPOINT=http://127.0.0.1:<port> node scripts/webapp-smoke.mjs');
   process.exit(2);
 }
 
-const outputDir = process.env.PRETTY_SMOKE_DIR
-  ? path.resolve(process.env.PRETTY_SMOKE_DIR)
-  : fs.mkdtempSync(path.join(os.tmpdir(), 'pretty-pty-webapp-smoke.'));
+const outputDir = process.env.SESSIONS_SMOKE_DIR
+  ? path.resolve(process.env.SESSIONS_SMOKE_DIR)
+  : fs.mkdtempSync(path.join(os.tmpdir(), 'sessions-webapp-smoke.'));
 fs.mkdirSync(outputDir, { recursive: true });
 
 const endpoint = new URL(daemonEndpoint);
@@ -39,9 +39,9 @@ try {
   page.on('pageerror', (error) => pageErrors.push(error.message));
 
   await page.evaluateOnNewDocument(() => {
-    if (window.sessionStorage.getItem('pretty-smoke-initialized') !== '1') {
+    if (window.sessionStorage.getItem('sessions-smoke-initialized') !== '1') {
       window.localStorage.clear();
-      window.sessionStorage.setItem('pretty-smoke-initialized', '1');
+      window.sessionStorage.setItem('sessions-smoke-initialized', '1');
     }
   });
   await page.goto(appUrl, { waitUntil: 'networkidle0', timeout: 15_000 });
@@ -51,10 +51,10 @@ try {
   await page.screenshot({ path: connectScreenshot, fullPage: true });
 
   await page.evaluate((config) => {
-    window.localStorage.setItem('pretty-pty:servers', JSON.stringify([config]));
-    window.localStorage.setItem('pretty-pty:active-server', config.id);
-    window.localStorage.removeItem('pretty-pty:sessions-cache:v1');
-    window.localStorage.removeItem('pretty-pty:active-session:v1');
+    window.localStorage.setItem('sessions:servers', JSON.stringify([config]));
+    window.localStorage.setItem('sessions:active-server', config.id);
+    window.localStorage.removeItem('sessions:sessions-cache:v1');
+    window.localStorage.removeItem('sessions:active-session:v1');
   }, server);
 
   const sessionsResponse = page.waitForResponse(
@@ -81,8 +81,8 @@ try {
   await fragmentPage.waitForSelector('[role="tab"][data-tab-id]', { visible: true, timeout: 15_000 });
   const fragmentState = await fragmentPage.evaluate(() => ({
     hash: window.location.hash,
-    activeId: window.localStorage.getItem('pretty-pty:active-server'),
-    servers: JSON.parse(window.localStorage.getItem('pretty-pty:servers') ?? '[]')
+    activeId: window.localStorage.getItem('sessions:active-server'),
+    servers: JSON.parse(window.localStorage.getItem('sessions:servers') ?? '[]')
   }));
   await fragmentPage.close();
 

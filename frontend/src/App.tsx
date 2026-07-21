@@ -64,7 +64,7 @@ function readSingleModeParams(): { sessionId: string } | null {
 // Persisted per-window in localStorage so each window remembers its
 // last choice. Grid is best when N ≥ 2 and the window is wide.
 type LayoutMode = 'tabs' | 'fleet' | 'search' | 'usage' | 'grid';
-const LAYOUT_KEY = 'pretty-pty:layout-mode';
+const LAYOUT_KEY = 'sessions:layout-mode';
 function readStoredLayout(): LayoutMode {
   try {
     const v = window.localStorage.getItem(LAYOUT_KEY);
@@ -199,7 +199,7 @@ function ConnectedApp(): JSX.Element {
   // is overwritten below from the live parser state — the daemon
   // signal is just for sessions we aren't currently attached to. Also
   // re-runs whenever the active server changes so switching servers
-  // immediately repopulates the tab strip from the new prettyd.
+  // immediately repopulates the tab strip from the new sessionsd.
   const activeServerId = useServers((s) => s.activeId);
   const tokenRequiredServerId = useServers((s) => s.tokenRequiredServerId);
   useEffect(() => {
@@ -358,7 +358,7 @@ function ConnectedApp(): JSX.Element {
       <main className="app-main">
         {tokenRequiredServerId === activeServerId ? (
           <DaemonBanner
-            error="prettyd: authentication required (401)"
+            error="sessionsd: authentication required (401)"
             onRetry={() => void refresh()}
           />
         ) : effectiveLayout === 'fleet' ? (
@@ -447,9 +447,9 @@ function ConnectedApp(): JSX.Element {
 // Daemon-unreachable banner — shown when the first session-list fetch
 // fails and we have no live data (hydrated is false). Two variants:
 //   • Auth (401): token input + save + retry.
-//   • Network: shows host:port so the user knows which prettyd to check.
+//   • Network: shows host:port so the user knows which sessionsd to check.
 //
-// Auth detection: stream E's api/prettyd.ts throws an AuthError for 401
+// Auth detection: stream E's api/sessionsd.ts throws an AuthError for 401
 // responses; the sessions store stores its message. We check for '401'
 // in the string — stable regardless of the exact message wording.
 // updateServer is added by stream E to lib/servers.ts; we call it via
@@ -505,7 +505,7 @@ function DaemonBanner({
           <p className="daemon-banner-title">Daemon unreachable</p>
           <p className="daemon-banner-host">{server.host}:{server.port}</p>
           <p className="daemon-banner-hint">
-            prettyd is not responding. Check that it is running on{' '}
+            sessionsd is not responding. Check that it is running on{' '}
             <strong>{server.host}</strong> port <strong>{server.port}</strong>.
           </p>
           <button
@@ -540,7 +540,7 @@ function SinglePopOut({
   const session = sessions.find((s) => s.id === sessionId);
   const overrideLabel = useTabLabel(sessionId);
   // Display label — same resolution as SessionTabs:
-  //   user pretty-PTY override > claude custom > claude ai-title > cwd > cmd > short id.
+  //   user sessions override > claude custom > claude ai-title > cwd > cmd > short id.
   const label = useMemo(() => {
     if (overrideLabel) return overrideLabel;
     if (!session) return 'session';

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// DOM probe — opens the pretty-PTY web app in headless Chrome, picks a
+// DOM probe — opens the sessions web app in headless Chrome, picks a
 // session, and dumps the DOM text + computed styles for each view pane.
 // This is the "stop pestering the user for screenshots" tool: every time
 // I make a UI change I can run this and verify the panes actually have
 // content, instead of asking the user to peek at their browser.
 //
 // Usage:
-//   node scripts/dom-probe.mjs [--url=http://127.0.0.1:5273] [--session=<id>] [--mode=terminal|reflowed|pretty|split] [--all]
+//   node scripts/dom-probe.mjs [--url=http://127.0.0.1:5273] [--session=<id>] [--mode=terminal|reflowed|sessions|split] [--all]
 //   --all → run all four modes back-to-back and report each.
 //
 // Default: pick the first active session, run all four modes.
@@ -64,7 +64,7 @@ try {
   // first refresh. ACTIVE_KEY is stored as a raw string (not JSON).
   await page.evaluateOnNewDocument((sid) => {
     try {
-      localStorage.setItem('pretty-pty:active-session:v1', sid);
+      localStorage.setItem('sessions:active-session:v1', sid);
     } catch {}
   }, sessionId);
 
@@ -81,7 +81,7 @@ try {
   // Wait for the SessionView to mount.
   await page.waitForSelector('.session-view', { timeout: 8000 });
 
-  const modes = RUN_ALL ? ['terminal', 'reflowed', 'split', 'pretty'] : [REQUESTED_MODE ?? 'split'];
+  const modes = RUN_ALL ? ['terminal', 'reflowed', 'split', 'sessions'] : [REQUESTED_MODE ?? 'split'];
 
   for (const mode of modes) {
     // Click the matching toggle button.
@@ -153,10 +153,10 @@ try {
       return {
         terminalPane: probe('.session-terminal-pane'),
         reflowedPane: probe('.session-reflowed-pane'),
-        prettyPane: probe('.session-pretty-pane'),
+        prettyPane: probe('.session-sessions-pane'),
         reflowedView: probe('.reflowed-view'),
-        prettyView: probe('.pretty-view'),
-        prettyEmpty: probe('.pretty-empty'),
+        prettyView: probe('.sessions-view'),
+        prettyEmpty: probe('.sessions-empty'),
         xterm: xtermRows
       };
     });

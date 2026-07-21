@@ -11,7 +11,7 @@ Sessions.app (Tauri window, tray, installer, updater)
         |
         | install, configure, health-check
         v
-prettyd (independent per-user launchd service)
+sessionsd (independent per-user launchd service)
         |
         | discover and attach over local runner sockets
         v
@@ -31,13 +31,13 @@ server/tool/session-scoped windows in `src-tauri/src/lib.rs`. The release build
 also embeds signed Go binaries and runs the lifecycle boundary in
 `src-tauri/src/lifecycle.rs`: exact bundled bytes are copied into an immutable,
 versioned directory under `~/Library/Application Support/Sessions/runtime/`,
-then launchd owns the selected `prettyd` version.
+then launchd owns the selected `sessionsd` version.
 
 ## macOS v2 release gate
 
 A distributable build is complete only when all of these are true:
 
-1. The app bundle contains signed arm64 `pretty`, `prettyd`, and `runner`
+1. The app bundle contains signed arm64 `sessions`, `sessionsd`, and `sessions-runner`
    binaries at stable resource paths.
 2. First run verifies and stages those exact signed bytes, then installs or
    upgrades a per-user daemon plist using the immutable staged paths.
@@ -53,10 +53,10 @@ A distributable build is complete only when all of these are true:
    distribution data only; terminal bytes never pass through somewhere.
 
 The app must never call a broad cleanup command during install or update.
-Recovery remains an explicit user action through `pretty recover`.
+Recovery remains an explicit user action through `sessions recover`.
 
 The implementation pins the updater public key and reads
-`https://pretty-pty.somewhere.site/releases/latest.json`. Somewhere hosts only
+`https://sessions.somewhere.tech/releases/latest.json`. Somewhere hosts only
 that small mutable metadata file; every signed app archive is immutable and
 versioned on GitHub Releases. The settings menu checks explicitly and tells the
 user before installation that only the UI restarts—the launchd daemon and its
@@ -72,14 +72,14 @@ runners continue independently.
 
 The mini cutover is deliberately unscheduled. Shipping either client does not
 authorize it.
-The interop and rollback evidence remains in `docs/CUTOVER.md`,
-`docs/CUTOVER_AUDIT_2026-07-17.md`, `scripts/cutover.sh`, and
-`scripts/rollback.sh`.
+The compatibility evidence remains in `docs/CUTOVER_AUDIT_2026-07-17.md` and
+the interop tests. `docs/CUTOVER.md` is the manual SSH checklist for that joint
+operation; there is intentionally no automated production cutover script.
 
 ## Mobile sequence
 
 Android follows the shipped macOS app. The Tauri mobile client pairs with and
-connects to a Mac-hosted daemon; it does not run `prettyd` or session runners.
+connects to a Mac-hosted daemon; it does not run `sessionsd` or session runners.
 Reuse the existing per-device credential and encrypted push contracts. Keep
 native additions narrow: secure credential storage, FCM, widgets, and Quick
 Settings. iOS follows later when APNs, widgets, and Live Activities justify a

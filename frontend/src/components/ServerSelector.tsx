@@ -4,7 +4,7 @@ import { formatServerEndpoint } from '../lib/serverEndpoint';
 import { rememberServerEndpoint } from '../lib/hostedBootstrap';
 import { useSessions } from '../store/sessions';
 
-// Compact dropdown that lives in the app header. Lists known prettyd
+// Compact dropdown that lives in the app header. Lists known sessionsd
 // servers, marks the active one, and exposes "+ Add server" to register
 // a new one (saved to localStorage). Switching the active server triggers
 // re-fetch in useSessions, useTerminal, usePrettyParser, ReflowedView via

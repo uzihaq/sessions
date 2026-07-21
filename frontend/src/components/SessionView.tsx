@@ -5,7 +5,7 @@ import { RemoteView } from './RemoteView';
 import { ScrollToBottomButton } from './ScrollToBottomButton';
 import { useSessions } from '../store/sessions';
 import { ParserIcon } from './ParserIcon';
-import { wsMuxUrl } from '../api/prettyd';
+import { wsMuxUrl } from '../api/sessionsd';
 import { detectMultiChoice } from '../lib/detectMultiChoice';
 import { requestSnapshot } from '../lib/wsMux';
 
@@ -27,12 +27,12 @@ interface Props {
 //     log from Claude JSONL or Codex's normalized/app-server event stream.
 //     Stable identities, structured activity, no TUI scraping.
 //
-// The old `pretty`, `split`, and `reflowed` modes were retired: Remote
+// The old `sessions`, `split`, and `reflowed` modes were retired: Remote
 // supersedes them for chat reading, and a viewport-sized Terminal view
 // covers everything else without the parser pipeline.
 type ViewMode = 'terminal' | 'remote';
 
-const VIEW_KEY = 'pretty-pty:viewMode';
+const VIEW_KEY = 'sessions:viewMode';
 
 function readStoredView(): ViewMode {
   try {
@@ -40,7 +40,7 @@ function readStoredView(): ViewMode {
     if (v === 'terminal' || v === 'remote') return v;
     // Migrate retired modes — they all map to remote, which is the
     // default chat view that replaced them.
-    if (v === 'reflowed' || v === 'pretty' || v === 'split') return 'remote';
+    if (v === 'reflowed' || v === 'sessions' || v === 'split') return 'remote';
   } catch {
     // ignore
   }
@@ -56,7 +56,7 @@ function writeStoredView(mode: ViewMode): void {
 }
 
 // Owns useTerminal for the active session and exposes a Terminal /
-// Pretty layout. The terminal stream stays the source of truth — its
+// Sessions layout. The terminal stream stays the source of truth — its
 // xterm instance stays mounted across mode toggles so the raw terminal
 // is always one click away.
 //
@@ -78,11 +78,11 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
   const effectiveView: ViewMode = supportsConversation ? viewMode : 'terminal';
 
   // Sticky "have we ever needed xterm for this session?" Once true,
-  // stays true so toggling Pretty↔Terminal doesn't tear down xterm.
+  // stays true so toggling Sessions↔Terminal doesn't tear down xterm.
   // Starts true if Terminal is the persisted view; otherwise false
   // until the user clicks Terminal. With keep-mounted SessionViews
   // and ~8 sessions open, this saves ~2MB of memory + N×xterm DOM
-  // trees when the user lives in Pretty view.
+  // trees when the user lives in Sessions view.
   const [hasMountedTerminal, setHasMountedTerminal] = useState(viewMode === 'terminal');
   // Brief toolbar notice shown when the auto-switch fires (picker
   // detected → Terminal). The draft in InputBar IS preserved because
@@ -136,9 +136,9 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
   // picker. The picker needs arrow-keys + Enter to interact, which the
   // chat input can't deliver — typing a number lands as a normal user
   // message instead of selecting the option. Polls the server snapshot
-  // every 2s while this session is the active tab and we're in Pretty
+  // every 2s while this session is the active tab and we're in Sessions
   // view. Auto-switch fires once per picker (when it transitions from
-  // absent → present); user can manually switch back to Pretty if they
+  // absent → present); user can manually switch back to Sessions if they
   // want, and the next picker triggers a fresh switch.
   const lastPickerSeenRef = useRef(false);
   useEffect(() => {
@@ -224,7 +224,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
         ) : null}
         {pickerNotice ? (
           <span className="status-picker-notice" aria-live="polite">
-            Switched to Terminal for picker — your draft is preserved in Pretty view
+            Switched to Terminal for picker — your draft is preserved in Sessions view
           </span>
         ) : null}
         <div className="view-toggle" role="tablist" aria-label="view mode">

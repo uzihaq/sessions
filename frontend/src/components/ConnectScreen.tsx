@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { fetchServerHealth } from '../api/prettyd';
+import { fetchServerHealth } from '../api/sessionsd';
 import { rememberServerEndpoint } from '../lib/hostedBootstrap';
 import { formatServerEndpoint } from '../lib/serverEndpoint';
 import { useServers, type ServerConfig } from '../lib/servers';
@@ -51,7 +51,7 @@ export function ConnectScreen({
             <ol>
               <li>
                 <span>Sessions installs and starts its signed local runtime automatically.</span>
-                <code>~/Library/Logs/Sessions/prettyd.log</code>
+                <code>~/Library/Logs/Sessions/sessionsd.log</code>
               </li>
             </ol>
           </section>
@@ -79,7 +79,7 @@ export function ConnectScreen({
         ? probeError.message
         : 'The endpoint did not answer within 8 seconds.';
       setMessage(null);
-      setError(`${detail} Check Tailscale, then run pretty doctor on the daemon host.`);
+      setError(`${detail} Check Tailscale, then run sessions doctor on the daemon host.`);
     } finally {
       window.clearTimeout(timeout);
       setCheckingId(null);
@@ -220,11 +220,11 @@ export function ConnectScreen({
           <ol>
             <li>
               <span>Install and start Sessions on the Mac that owns your sessions.</span>
-              <code>brew install uzihaq/tap/pretty &amp;&amp; pretty install</code>
+              <code>brew install uzihaq/tap/sessions &amp;&amp; sessions install</code>
             </li>
             <li>
               <span>Enable direct HTTPS access over your own Tailscale network.</span>
-              <code>pretty remote enable</code>
+              <code>sessions remote enable</code>
             </li>
             <li>
               <span>Scan the printed QR code, or paste its endpoint and token above.</span>

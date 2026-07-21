@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSessions } from '../store/sessions';
 import { DirectoryBrowser } from './DirectoryBrowser';
-import { fetchResumableSessions, type ResumableSession } from '../api/prettyd';
+import { fetchResumableSessions, type ResumableSession } from '../api/sessionsd';
 import { readNewSessionDefaults, type NewSessionTool } from '../lib/newSessionDefaults';
 import { randomUUID } from '../lib/uuid';
 import { TagEditor } from './TagEditor';
@@ -36,7 +36,7 @@ interface Props {
   onOpenResume?: () => void;
 }
 
-// Resolve the (cmd, args) prettyd should spawn for the selected tool.
+// Resolve the (cmd, args) sessionsd should spawn for the selected tool.
 // Skip-perms maps to --dangerously-skip-permissions (Claude) or
 // --dangerously-bypass-approvals-and-sandbox (Codex) — full access, no
 // prompts, for both.
@@ -49,7 +49,7 @@ interface Props {
 //      loading." Pinning a fresh uuid skips that — Claude starts
 //      brand new.
 //   2. The JSONL filename is deterministic (<uuid>.jsonl), so the
-//      JSONL watcher in prettyd doesn't have to guess via mtime /
+//      JSONL watcher in sessionsd doesn't have to guess via mtime /
 //      birthtime heuristics — it reads exactly our file.
 //
 // Resume case (when the caller passes a resumeSessionId) uses
@@ -84,11 +84,11 @@ function resolveCommand(
         : ['--sandbox', 'workspace-write', '--ask-for-approval', 'on-request']
     };
   }
-  // shell — let prettyd default to $SHELL
+  // shell — let sessionsd default to $SHELL
   return { cmd: undefined, args: undefined };
 }
 
-// Pull the Claude session id out of a prettyd session's args. Claude
+// Pull the Claude session id out of a sessionsd session's args. Claude
 // is always launched with either `--session-id <uuid>` (fresh start,
 // see resolveCommand) or `--resume <uuid>` (resumed conversation).
 // Either way, that uuid IS the conversation id Claude writes to
@@ -129,7 +129,7 @@ export function NewSessionDialog({ onClose, onOpenResume }: Props): JSX.Element 
     return () => { alive = false; };
   }, [tool]);
 
-  // Sessions already open as prettyd tabs — exclude these from the
+  // Sessions already open as sessionsd tabs — exclude these from the
   // inline hint so we don't suggest resuming what's already on screen.
   const openClaudeIds = useMemo(() => {
     const ids = new Set<string>();

@@ -1,6 +1,6 @@
 // Browser clipboard with a fallback path for plain-HTTP origins.
 // `navigator.clipboard` is gated to secure contexts (HTTPS or localhost),
-// so when pretty-PTY is served from a Tailscale IP over HTTP we fall
+// so when sessions is served from a Tailscale IP over HTTP we fall
 // back to a hidden textarea + execCommand('copy'). Returns true on
 // success — caller is expected to flash UI feedback on the button.
 

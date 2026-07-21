@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sessions — get set up</title>
-<meta name="description" content="Get pretty running on your Mac in minutes. Two paths — local and from-anywhere over Tailscale — and the page checks each step actually worked.">
+<meta name="description" content="Get sessions running on your Mac in minutes. Two paths — local and from-anywhere over Tailscale — and the page checks each step actually worked.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
@@ -176,20 +176,20 @@
   <div class="step">
     <div class="step-head"><div class="num">0</div><div><div class="step-title">Before you start</div><div class="step-sub">a 10-second inventory</div></div></div>
     <div class="step-body">
-      <p class="note">You need a <b style="color:var(--cream)">Mac</b>, <b style="color:var(--cream)">Node 18+</b> (<code>node -v</code>), and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — pretty runs the agents you already have; it doesn't replace them.</p>
+      <p class="note">You need an <b style="color:var(--cream)">Apple Silicon Mac</b> and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — Sessions runs the agents you already have; it doesn't replace them. You do not need Node, npm, Xcode, or a native build toolchain.</p>
     </div>
   </div>
 
   <!-- 1: install -->
   <div class="step">
-    <div class="step-head"><div class="num">1</div><div><div class="step-title">Install pretty</div><div class="step-sub">on your Mac</div></div></div>
+    <div class="step-head"><div class="num">1</div><div><div class="step-title">Install sessions</div><div class="step-sub">on your Mac</div></div></div>
     <div class="step-body">
-      <span class="pill">early access — CLI landing soon</span>
-      <div class="cmd"><code>npm i -g pretty-pty</code><button class="copy">copy</button></div>
-      <div class="cmd"><code>pretty install</code><button class="copy">copy</button></div>
-      <p class="note"><code>pretty install</code> registers a small background daemon that <b>survives restarts and reboots</b>, then starts it. Your sessions live in it — close terminals, close the laptop lid, they keep going.</p>
+      <span class="pill">native Mac app</span>
+      <p class="note">Download the signed <b style="color:var(--cream)">Sessions.app</b> release, move it to Applications, and open it. The app installs and checks its own background runtime; there is no package-manager or compile step.</p>
+      <a class="btn-open" href="https://github.com/uzihaq/sessions/releases" target="_blank" rel="noopener">Download Sessions <span class="arr">→</span></a>
+      <p class="note">The background runtime <b>survives restarts and reboots</b>. Your sessions live outside the app window — close the window or quit the app and they keep going.</p>
       <a class="btn-open" href="http://localhost:8787" target="_blank" rel="noopener">Open it on this Mac <span class="arr">→</span></a>
-      <div class="tip"><b>Stuck on install?</b> If npm errors about <code>node-pty</code> / a C++ build, run <code>xcode-select --install</code> first, then retry. Any other trouble: <code>pretty doctor</code> tells you exactly what's wrong.</div>
+      <div class="tip"><b>Stuck?</b> Open Sessions and check the daemon status in Settings. Power users can also run <code>sessions doctor</code> from the CLI bundled with the app.</div>
     </div>
   </div>
 
@@ -200,7 +200,7 @@
       <p class="note">Want your sessions on your phone, or from another laptop? You'll put them on <b>Tailscale</b> — a private network just for <em>your</em> devices. No ports opened to the internet, and <b>nothing routed through us</b>: your browser talks straight to your Mac.</p>
       <p class="note" style="margin-top:18px"><b style="color:var(--cream)">a.</b> Install Tailscale and sign in — <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a>. Do it on your Mac <em>and</em> your phone (same account).</p>
       <p class="note"><b style="color:var(--cream)">b.</b> Back on your Mac, turn on remote access:</p>
-      <div class="cmd"><code>pretty remote enable</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>sessions remote enable</code><button class="copy">copy</button></div>
       <p class="note">That runs <code>tailscale serve</code> for you (gives your daemon a real HTTPS address like <code>https://your-mac.tailnet.ts.net</code>) and prints a <b>QR code</b>. Scan it with your phone — it lands you right back here, already connected, no typing.</p>
       <div class="tip"><b>One honest heads-up:</b> Tailscale's HTTPS certificate lists your machine + tailnet name in public certificate-transparency logs. Harmless for most, but if your machine name is sensitive, rename it before you enable serve.</div>
     </div>
@@ -210,7 +210,7 @@
   <div class="step">
     <div class="step-head"><div class="num">3</div><div><div class="step-title">Is it working?</div><div class="step-sub">the whole chain, checked live</div></div></div>
     <div class="step-body">
-      <p class="note">Paste your pretty address below and we'll actually reach out to it — right now, from your browser — and tell you if Tailscale, the daemon, and the connection are all up. (This check runs entirely between you and your Mac. We never see it.)</p>
+      <p class="note">Paste your sessions address below and we'll actually reach out to it — right now, from your browser — and tell you if Tailscale, the daemon, and the connection are all up. (This check runs entirely between you and your Mac. We never see it.)</p>
       <div class="check" id="check">
         <div class="check-bar"><span class="led"></span><span id="checkLabel">not checked yet</span></div>
         <div class="check-body">
@@ -230,7 +230,7 @@
     <div class="never">Terminal traffic goes straight from your browser to your Mac — we never relay or store it. <a href="/">what we never do →</a></div>
   </div>
 
-  <footer>pretty · a better tmux for Claude Code &amp; Codex</footer>
+  <footer>sessions · a better tmux for Claude Code &amp; Codex</footer>
 </div>
 
 <script>
@@ -248,7 +248,7 @@
   // ---- the live daemon check ----
   // Talks ONLY to the URL you type (your own daemon). /api/health is always open
   // (no token needed) and returns { discovering, sessionsLoaded }. The daemon
-  // allows this page's origin (see prettyd isAllowedOrigin), so we can read the body.
+  // allows this page's origin (see sessionsd isAllowedOrigin), so we can read the body.
   var el = {
     box: document.getElementById('check'),
     label: document.getElementById('checkLabel'),
@@ -274,7 +274,7 @@
 
   async function runCheck() {
     var base = normalize(el.input.value);
-    if (!base) { setState('bad', 'need an address'); el.verdict.innerHTML = '<span class="glyph">○</span> Paste your pretty address first.'; return; }
+    if (!base) { setState('bad', 'need an address'); el.verdict.innerHTML = '<span class="glyph">○</span> Paste your sessions address first.'; return; }
 
     setState('wait', 'reaching your Mac…');
     el.verdict.innerHTML = '<span class="glyph">◌</span> Knocking on ' + base + ' …';
@@ -301,8 +301,8 @@
         setState('bad', 'daemon said ' + r.status);
         el.verdict.innerHTML = '<span class="glyph">○</span> Reached your Mac, but the daemon answered <b>' + r.status +
           '</b>.<small>' + (r.status === 401 || r.status === 403
-            ? 'Auth is on and this page has no token yet — use the QR/connect link from <code>pretty remote enable</code>, which carries it.'
-            : 'The daemon is reachable but unhappy — try <code>pretty doctor</code> on your Mac.') + '</small>';
+            ? 'Auth is on and this page has no token yet — use the QR/connect link from <code>sessions remote enable</code>, which carries it.'
+            : 'The daemon is reachable but unhappy — try <code>sessions doctor</code> on your Mac.') + '</small>';
       }
     } catch (e) {
       setState('bad', 'no answer');
@@ -310,8 +310,8 @@
       el.verdict.innerHTML = '<span class="glyph">○</span> <b>Couldn\'t reach it.</b>' +
         '<small>Most likely one of:<br>' +
         '• <b>Tailscale isn\'t connected</b> on this device — open the Tailscale app and check you\'re signed in (both this device and your Mac).<br>' +
-        '• <b>The daemon isn\'t running</b> — run <code>pretty install</code> on your Mac.<br>' +
-        (https ? '• <b>Remote access isn\'t on</b> — run <code>pretty remote enable</code> to start <code>tailscale serve</code>.'
+        '• <b>The daemon isn\'t running</b> — run <code>sessions install</code> on your Mac.<br>' +
+        (https ? '• <b>Remote access isn\'t on</b> — run <code>sessions remote enable</code> to start <code>tailscale serve</code>.'
                : '• Using <code>http://localhost</code> from a different device won\'t work — that only reaches the Mac you\'re sitting at.') +
         '</small>';
     } finally {

@@ -2,29 +2,29 @@
 // Real-Claude diagnostic. Spawns the actual `claude` CLI under node-pty,
 // pipes its output into the same @xterm/headless + SerializeAddon stack
 // the browser uses, then dumps:
-//   1. The raw PTY stream (what prettyd's WS forwards verbatim)
+//   1. The raw PTY stream (what sessionsd's WS forwards verbatim)
 //   2. The serialized xterm buffer (what usePrettyParser feeds to detectTool)
 //   3. The parser's output (Block[] types) for that snapshot
 //
 // This is the gap-finder: if the parser produces 0 blocks against a real
 // Claude session, the input format from xterm-headless differs from what
-// the pretty-tmux parser was written for (tmux capture-pane -p -e -J).
+// the sessions-tmux parser was written for (tmux capture-pane -p -e -J).
 
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
 const FRONTEND_ROOT = path.resolve(__dirname, '..');
-const PRETTYD_NODE_MODULES = path.resolve(FRONTEND_ROOT, '..', 'prettyd', 'node_modules');
+const SESSIONS_NODE_MODULES = path.resolve(FRONTEND_ROOT, '..', 'runtime', 'testdata', 'node-runtime', 'node_modules');
 
 const esbuild = require(path.join(FRONTEND_ROOT, 'node_modules', 'esbuild'));
 const { Terminal } = require(path.join(FRONTEND_ROOT, 'node_modules', '@xterm', 'headless'));
 const { SerializeAddon } = require(path.join(FRONTEND_ROOT, 'node_modules', '@xterm', 'addon-serialize'));
-const pty = require(path.join(PRETTYD_NODE_MODULES, 'node-pty'));
+const pty = require(path.join(SESSIONS_NODE_MODULES, 'node-pty'));
 
 // Bundle the parsers AND the snapshot normalizer.
-const tmp = path.join(os.tmpdir(), `pretty-pty-claude-dump-${process.pid}.cjs`);
-const tmpNorm = path.join(os.tmpdir(), `pretty-pty-claude-norm-${process.pid}.cjs`);
+const tmp = path.join(os.tmpdir(), `sessions-claude-dump-${process.pid}.cjs`);
+const tmpNorm = path.join(os.tmpdir(), `sessions-claude-norm-${process.pid}.cjs`);
 esbuild.buildSync({
   entryPoints: [path.join(FRONTEND_ROOT, 'src', 'parsers', 'detect.ts')],
   bundle: true,
@@ -98,7 +98,7 @@ setTimeout(async () => {
   const snapshot = normalizeXtermSnapshot(rawSnapshot);
   const raw = rawChunks.join('');
 
-  const outDir = '/tmp/pretty-pty-claude-dump';
+  const outDir = '/tmp/sessions-claude-dump';
   fs.mkdirSync(outDir, { recursive: true });
   fs.writeFileSync(path.join(outDir, 'raw.bin'), raw);
   fs.writeFileSync(path.join(outDir, 'snapshot.txt'), snapshot);

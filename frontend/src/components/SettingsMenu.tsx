@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getPushVapidPublicKey, subscribePush, unsubscribePush } from '../api/prettyd';
+import { getPushVapidPublicKey, subscribePush, unsubscribePush } from '../api/sessionsd';
 import { type TextSize, nextSize, sizeLabel, writeTextSize } from '../lib/textSize';
 import {
   NEW_SESSION_DIMENSIONS,
@@ -27,7 +27,7 @@ interface Props {
   onNewSession?: () => void;
 }
 
-const PUSH_ENABLED_KEY = 'pretty-pty:push-enabled';
+const PUSH_ENABLED_KEY = 'sessions:push-enabled';
 
 const NEW_SESSION_TOOL_OPTIONS: { id: NewSessionTool; label: string }[] = [
   { id: 'claude-code', label: 'Claude Code' },
@@ -195,7 +195,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
       setPairTicket('');
       setPairMessage(`Paired as ${claimed.name}`);
     } catch (error) {
-      setPairMessage(error instanceof Error ? error.message : 'Pairing failed. Run `pretty pair` again.');
+      setPairMessage(error instanceof Error ? error.message : 'Pairing failed. Run `sessions pair` again.');
     } finally {
       setPairBusy(false);
     }
@@ -423,7 +423,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void claimPairTicket();
                   }}
-                  placeholder="From pretty pair"
+                  placeholder="From sessions pair"
                   autoComplete="off"
                   spellCheck={false}
                 />

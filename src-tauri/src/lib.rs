@@ -1,6 +1,6 @@
 // Sessions v1 is a native window and tray layer. The v2 lifecycle manager is
-// kept separate from this UI code: it may install or kickstart prettyd, but the
-// app process never owns prettyd or a runner, so quitting it cannot affect a
+// kept separate from this UI code: it may install or kickstart sessionsd, but the
+// app process never owns sessionsd or a runner, so quitting it cannot affect a
 // durable session.
 
 mod lifecycle;
@@ -14,7 +14,7 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent,
 };
 
-const TRAY_ID: &str = "pretty-status";
+const TRAY_ID: &str = "sessions-status";
 const LOCAL_SESSIONS_URL: &str = "http://localhost:8787/api/sessions";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

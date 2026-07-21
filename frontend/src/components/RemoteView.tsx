@@ -9,7 +9,7 @@ import { ScrollToBottomButton } from './ScrollToBottomButton';
 import StatusSidebar from './StatusSidebar';
 import { saveScrollPosition, readScrollPosition } from '../lib/scrollMemory';
 import { eventsToMessages } from '../lib/claudeEvents';
-import { snapshot as fetchServerSnapshot } from '../api/prettyd';
+import { snapshot as fetchServerSnapshot } from '../api/sessionsd';
 import { classifySnapshotComposerState, type SnapshotComposerState } from '../lib/detectMultiChoice';
 import type { DispatchMessage } from '../hooks/useDispatch';
 
@@ -366,7 +366,7 @@ export function RemoteView({
           />
         ))}
         {/* Sticky-anchor: pins the down-arrow to the right edge of the
-            centered 820px message column (same pattern as Pretty). */}
+            centered 820px message column (same pattern as Sessions). */}
         <div className="scroll-to-bottom-anchor" aria-hidden={atBottom}>
           <ScrollToBottomButton visible={!atBottom} onClick={scrollToBottom} />
         </div>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 // Reactive media-query hook. Same shape as @react-hook/media-query and
-// pretty-tmux's hook. Returns the live match state and re-renders when
+// sessions-tmux's hook. Returns the live match state and re-renders when
 // the query starts/stops matching (window resize, orientation change,
 // dark-mode toggle, etc.).
 //
@@ -32,7 +32,7 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-// Convenience: matches the 720px breakpoint pretty-PTY's CSS already
+// Convenience: matches the 720px breakpoint sessions's CSS already
 // uses for mobile layout. Use this in components that need to make
 // JS-side decisions ("am I on a phone right now?") rather than just
 // styling differences.

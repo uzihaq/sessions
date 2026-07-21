@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 // xterm + its CSS are dynamically imported below — Vite splits them into
-// a separate chunk so the initial bundle (Pretty / Remote / Reflowed —
+// a separate chunk so the initial bundle (Sessions / Remote / Reflowed —
 // the views most users hit first) doesn't pay xterm's ~250KB parse cost.
 // On a fresh Android install over cellular, this is the difference
 // between "instant tap-to-content" and "wait for the terminal lib to
 // download even though you didn't open Terminal view."
-import { wsMuxUrl, snapshot as fetchServerSnapshot, fetchClaudeEvents } from '../api/prettyd';
+import { wsMuxUrl, snapshot as fetchServerSnapshot, fetchClaudeEvents } from '../api/sessionsd';
 import { attachSession, type SessionChannel, type MuxStatus } from '../lib/wsMux';
 import { useServers } from '../lib/servers';
 import type { ServerMsg, ClaudeSessionEvent } from '../types';
@@ -49,7 +49,7 @@ interface UseTerminalResult {
   loadEarlierClaudeEventsRef: { current: () => void };
 }
 
-// Bounded Pretty history. A RemoteView renders ~50 recent messages; 300
+// Bounded Sessions history. A RemoteView renders ~50 recent messages; 300
 // structured events covers that tail generously without walking weeks of
 // JSONL on every switch. Older chunks are paged in explicitly, and the hard
 // cap prevents an intentionally expanded session from becoming unbounded.
@@ -350,7 +350,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
 
       // Sizing strategy: FitAddon measures cell metrics + container dims
       // and computes cols/rows that fill the visible terminal pane. We
-      // then forward the new size to prettyd so the PTY (and the TUI
+      // then forward the new size to sessionsd so the PTY (and the TUI
       // inside it) redraws at the actual viewport size. Last-resize-wins
       // across clients. Debounced: ResizeObserver can fire many times
       // during a window-drag; the PTY receives one resize 60ms after the
@@ -553,7 +553,7 @@ export function useTerminal(sessionId: string | null, mountTerminal: boolean = t
         // terminal replays its output ring on page load / reconnect — at
         // 36 sessions that backlog drains slowly over Tailscale and the
         // keystroke echo queues behind it (the "typing is 5s" symptom).
-        // No terminal mounted (Pretty-only) → no bytes at all. A hidden
+        // No terminal mounted (Sessions-only) → no bytes at all. A hidden
         // session catches up via snapshot-prefill when it's reactivated.
         outputReplay: term !== null && isActiveRef.current,
         // Likewise only the viewed session replays Claude history and live

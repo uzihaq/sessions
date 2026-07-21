@@ -1,13 +1,13 @@
-# Pretty integration endpoints
+# Sessions integration endpoints
 
-Pretty exposes local, read-only integration contracts for session recall and
+Sessions exposes local, read-only integration contracts for session recall and
 error automation. These endpoints do not call somewhere, file tasks, or upload
-data. A consumer such as a somewhere MCP server calls the user's Pretty daemon
-with the user's normal Pretty token.
+data. A consumer such as a somewhere MCP server calls the user's Sessions daemon
+with the user's normal Sessions token.
 
 ## Common contract
 
-- All routes require normal Pretty authentication: `Authorization: Bearer
+- All routes require normal Sessions authentication: `Authorization: Bearer
   <token>` or `?token=<token>`. The daemon's existing loopback and `open`-file
   behavior is unchanged.
 - JSON responses use `Content-Type: application/json` and include the integer
@@ -24,7 +24,7 @@ with the user's normal Pretty token.
 
 History is assembled from live sessions and durable runner metadata in the
 configured runner state directory. Claude and Codex conversation paths are
-resolved with the same watcher rules used by Pretty's backup feature. Results
+resolved with the same watcher rules used by Sessions' backup feature. Results
 are ordered by `last_activity_at` descending, then `id` ascending.
 
 ### `GET /api/history`
@@ -56,11 +56,11 @@ Each session object always contains all ten fields:
 
 | Field | JSON type | Meaning |
 | --- | --- | --- |
-| `id` | string | Pretty runner/session identifier |
+| `id` | string | Sessions runner/session identifier |
 | `name` | string | User label; empty string when none was set |
 | `tool` | string | Normalized tool name, normally `claude`, `codex`, or `terminal` |
 | `cwd` | string | Session working directory |
-| `machine` | string | Hostname of the Pretty daemon |
+| `machine` | string | Hostname of the Sessions daemon |
 | `created_at` | number | Session creation time in Unix epoch milliseconds |
 | `last_activity_at` | number | Latest metadata or conversation-file activity in Unix epoch milliseconds |
 | `message_count` | number | Count of normalized user/assistant text turns |
@@ -111,7 +111,7 @@ Message fields are stable:
 | `timestamp` | string or null | Provider timestamp, or null when the source record has none |
 
 Claude's canonical event records are reduced directly. Codex rollout records
-first pass through Pretty's `internal/watch` Codex normalizer, so recall and the
+first pass through Sessions' `internal/watch` Codex normalizer, so recall and the
 live daemon share the same filtering and role semantics.
 
 ### `GET /api/history/:id?format=text`
@@ -127,13 +127,13 @@ Why did the release fail?
 The signing dependency was unavailable.
 ```
 
-The response header `X-Pretty-Schema-Version: 1` versions this text format.
+The response header `X-Sessions-Schema-Version: 1` versions this text format.
 
 ### `GET /api/history/:id/raw`
 
 Returns the exact resolved Claude JSONL or Codex rollout bytes with
 `Content-Type: application/octet-stream`. The raw provider format is not a
-Pretty schema and therefore has no `schemaVersion`; consumers that need a
+Sessions schema and therefore has no `schemaVersion`; consumers that need a
 stable shape should use `format=json`.
 
 For a missing session or a known session without an available conversation,
@@ -152,7 +152,7 @@ returns 500 and is also offered to the error feed as `kind: "daemon_error"`.
 
 ## Error-event feed
 
-Pretty stores structured errors in `<state-dir>/errors.jsonl`. The file is
+Sessions stores structured errors in `<state-dir>/errors.jsonl`. The file is
 append-only, created with mode `0600`, and each line is one complete JSON event.
 Sequence numbers resume from the highest durable sequence after daemon restart.
 
@@ -204,10 +204,10 @@ Error event fields are stable:
 | `seq` | number | Durable, monotonically increasing feed sequence |
 | `ts` | string | UTC RFC 3339 event time |
 | `kind` | string | Machine-readable category such as `runner_exit`, `runner_lost`, or `daemon_error` |
-| `session_id` | string, optional | Related Pretty session; omitted for daemon-wide errors |
+| `session_id` | string, optional | Related Sessions session; omitted for daemon-wide errors |
 | `summary` | string | Short human-readable failure summary |
 | `detail` | string | Diagnostic detail; consumers must not parse this as a stable sub-schema |
-| `machine` | string | Hostname of the emitting Pretty daemon |
+| `machine` | string | Hostname of the emitting Sessions daemon |
 
 If no new event exists, `errors` is an empty array and `nextSeq` remains the
 current cursor. Invalid cursors return 400:
@@ -222,7 +222,7 @@ stable identity is the pair `(machine, seq)`.
 
 ## Thin local CLI
 
-`pretty recall` lists history, `pretty recall <full-session-id>` prints the
-normalized text transcript, and `pretty recall <full-session-id> --raw` writes
+`sessions recall` lists history, `sessions recall <full-session-id>` prints the
+normalized text transcript, and `sessions recall <full-session-id> --raw` writes
 the raw bytes. The global `--json` flag returns the versioned JSON list or
 transcript. The HTTP API above remains the integration contract.

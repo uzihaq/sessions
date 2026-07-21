@@ -1,284 +1,144 @@
-# Node-to-Go daemon cutover
+# Production mini cutover runbook
 
-> **Deferred:** do not run this procedure now. Ship and exercise Sessions.app on
-> macOS first. The production mini remains untouched until the user schedules
-> its first app install as a joint maintenance window.
+The production mini stays on the Node daemon until Sessions.app has shipped and
+the user schedules a joint maintenance window. The cutover is deliberately a
+manual SSH operation: observe the real machine first, record what is running,
+then change one service definition while keeping every runner artifact intact.
+There is no cutover or rollback script.
 
-This runbook swaps only the daemon. Existing per-session runners stay alive and
-keep owning their PTYs. The cutover scripts are dry-run-only unless
-`--execute` is present, take a runner-count baseline, fail closed on a drop,
-and keep an exact copy of the node daemon plist for rollback.
+This runbook is an operator checklist, not authorization to touch the mini.
+Stop whenever the observed machine differs from the assumptions below.
 
-Run the live section only from a shell on the Mac mini during an announced
-maintenance window. Do not aim development or test commands at the mini; use a
-scratch `HOME`, runner state directory, ledger, and non-8787 port instead.
+## Safety contract
 
-## Proven compatibility boundary
+- Never delete or rewrite a runner socket, metadata file, event log, session
+  LaunchAgent, ledger entry, or provider transcript during cutover.
+- Never infer the production plist label, state directory, port, or binary path.
+  Read each value from the live plist and process state.
+- Compare exact session IDs before and after. A matching count is necessary but
+  not sufficient.
+- Keep an exact copy of the old plist and its referenced Node checkout/binaries
+  until the observation window has closed.
+- If health, discovery, any session ID, or a preserved-runner round trip fails,
+  restore the old plist immediately. Do not use recovery to hide a bad swap.
 
-`prettygo/internal/interop/cutover_test.go` exercises real compiled processes
-in both directions:
+## Evidence required before the maintenance window
 
-- a Node `prettyd/dist/runner.js` running `bash -i` is discovered by the Go
-  daemon, listed by `GET /api/sessions`, accepts input, returns the expanded
-  marker in a snapshot, survives Go-daemon shutdown, and reattaches after the
-  Go daemon restarts;
-- a Go runner is discovered by the TypeScript daemon and passes the same
-  list/input/snapshot/survival regression.
+- The release build is signed, notarized, stapled, and accepted by Gatekeeper.
+- The app has completed a first install and an updater-driven upgrade on
+  isolated MacBook state without losing the pre-update session set.
+- `go build ./...`, `go vet ./...`, and `go test ./...` pass in `runtime/`.
+- `TestNodeRunnerUnderGoDaemonCutover` passes against the frozen Node fixture in
+  `runtime/testdata/node-runtime/`.
+- The three staged Apple Silicon binaries are `sessions`, `sessionsd`, and
+  `sessions-runner`, and their hashes match the app's runtime manifest.
+- A maintenance window, operator, rollback decision-maker, and observation
+  period are agreed in advance.
 
-Both use the canonical `RUNNER_*` environment, state files, Unix socket, HELLO,
-replay, input, and output frame protocol. Both currently report protocol v1;
-no HELLO/frame mismatch or daemon-side compatibility shim was required.
+## 1. Read-only SSH inventory
 
-## 1. Preflight checklist
+Before copying or changing anything, connect with the user present and record:
 
-All boxes are mandatory before the maintenance window.
+- macOS version, architecture, logged-in UID, hostname, and free disk space;
+- the exact daemon PID, command line, environment, listener, LaunchAgent label,
+  and plist path;
+- the daemon health response and whether discovery is complete;
+- the full session listing in JSON, including exact IDs, kinds, names, and
+  states;
+- every runner metadata file, socket, event log, and per-session LaunchAgent;
+- daemon and representative runner log locations and recent errors;
+- the existing Node checkout/binary path and its revision;
+- current plist bytes and SHA-256.
 
-- [ ] The working tree and intended revision have been reviewed.
-- [ ] The Go suite and vet pass with `CGO_ENABLED=0`.
-- [ ] The bidirectional real-process interop proof passes.
-- [ ] `prettyd`, `runner`, and `pretty` are built for `darwin/arm64` and have
-      been staged on the mini at stable absolute paths.
-- [ ] The mini is reachable over the normal administrative channel.
-- [ ] The node daemon is healthy and discovery is complete.
-- [ ] A disposable Node-spawned shell runner has been created and its ID saved
-      for the preserved-runner round trip.
-- [ ] A fresh, timestamped mini backup has been taken and verified.
-- [ ] The exact installed node LaunchAgent plist exists and no stale cutover
-      backup path will be overwritten.
-- [ ] The rollback command, variables, and operator are ready before execute.
+Save the inventory outside the directories being changed. Take a fresh backup
+of the plist, runtime state, ledger, and configuration without following or
+modifying live sockets. Do not stop the daemon during inventory.
 
-On the development machine, from the reviewed checkout:
+Create one disposable shell session through the old daemon and save its ID as
+the preserved runner. Send it a unique marker and confirm that the expanded
+marker appears in its snapshot; terminal echo alone is not proof.
 
-```bash
-npm --prefix prettyd run build
+## 2. Stage without activating
 
-cd prettygo
-CGO_ENABLED=0 go test -count=1 -v ./internal/interop
-CGO_ENABLED=0 go test -count=1 ./...
-CGO_ENABLED=0 go vet ./...
+Copy the notarized Sessions.app package or its exact embedded runtime to a new,
+immutable revision directory. Do not overwrite the old Node files. Verify:
 
-DIST_GO_DIR=/absolute/scratch/dist-go bash scripts/build-binaries.sh
-file /absolute/scratch/dist-go/{prettyd,runner,pretty}-darwin-arm64
-```
+- SHA-256 against the release manifest;
+- `file` reports arm64 Mach-O executables;
+- `codesign --verify --strict` succeeds for the app and all three binaries;
+- the staged daemon can complete a scratch-state health check on a non-production
+  port without reading production state.
 
-Each `file` result must be a Mach-O arm64 executable. Copy the three binaries
-to a versioned directory on the mini, make them executable, and do not replace
-an in-use binary in place. Example destination:
+Render a candidate LaunchAgent separately. Derive its user, host, port, state,
+logs, and label from the observed service. Change only the daemon executable to
+the staged `sessionsd`, set the adjacent `sessions-runner` path explicitly, and
+use `SESSIONS_*` environment names. Validate the candidate with `plutil -lint`
+and review its diff against the saved production plist line by line.
 
-```text
-~/Library/Application Support/pretty-PTY/bin/<revision>/
-```
+## 3. Manual activation
 
-On the mini, create a disposable shell while the node daemon is still active.
-This runner is the most direct live proof because it is Node-spawned before the
-daemon swap:
+Immediately before activation, repeat health and the full JSON session listing.
+That exact ID set is the cutover baseline.
 
-```bash
-export PRETTYD_HOST='<mini-tailnet-bind-address>'
-export PRETTYD_PORT=8787
-export PRETTY_BIN="$HOME/Library/Application Support/pretty-PTY/bin/<revision>/pretty-darwin-arm64"
+With the old plist and rollback commands already prepared:
 
-VERIFY_ID="$($PRETTY_BIN --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" new --tool shell)"
-test -n "$VERIFY_ID"
-printf 'preserved runner: %s\n' "$VERIFY_ID"
-```
+1. Boot out only the observed daemon LaunchAgent. Do not touch session
+   LaunchAgents or runner processes.
+2. Atomically place the reviewed candidate plist at the same service location.
+3. Bootstrap and kickstart that one daemon service.
+4. Poll health until `ok:true` and `discovering:false`, with a short agreed
+   deadline.
+5. Fetch the full session listing and compare exact IDs with the baseline.
 
-Record the baseline from `pretty ls --json` and wait for
-`GET /api/health` to show `discovering:false`.
-
-### Fresh backup
-
-The backup must be made during this maintenance window, before `--execute`.
-It should include the node plist, runner history (sockets are intentionally
-excluded), the lane ledger via SQLite's online backup, and Claude/Codex
-conversation stores. The following is an example; adjust the destination to
-the mini's established backup volume:
-
-```bash
-BACKUP_ROOT='<established-mini-backup-volume>/pretty-PTY'
-BACKUP_DIR="$BACKUP_ROOT/$(date -u +%Y%m%dT%H%M%SZ)-node-to-go"
-mkdir -p "$BACKUP_DIR"
-
-cp -p "$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist" "$BACKUP_DIR/"
-rsync -a --exclude='*.sock' "$HOME/.local/state/pretty-PTY/" "$BACKUP_DIR/state/"
-rsync -a "$HOME/.claude/projects/" "$BACKUP_DIR/claude-projects/"
-rsync -a "$HOME/.codex/sessions/" "$BACKUP_DIR/codex-sessions/"
-sqlite3 "$HOME/Library/Application Support/pretty-PTY/ledger/lanes.sqlite3" \
-  ".backup '$BACKUP_DIR/lanes.sqlite3'"
-
-find "$BACKUP_DIR" -type f ! -name SHA256SUMS -print0 \
-  | while IFS= read -r -d '' file; do shasum -a 256 "$file"; done \
-  >"$BACKUP_DIR/SHA256SUMS"
-test -s "$BACKUP_DIR/SHA256SUMS"
-plutil -lint "$BACKUP_DIR/tech.pretty-pty.daemon.plist"
-sqlite3 "$BACKUP_DIR/lanes.sqlite3" 'PRAGMA integrity_check;'
-```
-
-The integrity check must print `ok`. Also confirm the backup is on the intended
-backup volume, not merely another directory on the mini's system disk.
-
-## 2. Dry run on the mini
-
-Set absolute staged-binary and plist paths. Keep the node backup path unique to
-this cutover; the script refuses to overwrite it.
-
-```bash
-export PRETTYD_GO_DAEMON="$HOME/Library/Application Support/pretty-PTY/bin/<revision>/prettyd-darwin-arm64"
-export PRETTYD_GO_RUNNER="$HOME/Library/Application Support/pretty-PTY/bin/<revision>/runner-darwin-arm64"
-export PRETTYD_DAEMON_PLIST="$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.plist"
-export PRETTYD_NODE_PLIST_BACKUP="$HOME/Library/LaunchAgents/tech.pretty-pty.daemon.node-<timestamp>.plist"
-
-bash scripts/cutover.sh --dry-run
-```
-
-Dry run performs read-only binary/plist validation plus health/session reads,
-then prints every planned mutation. It must report the expected nonzero runner
-baseline. A dry-run failure is a hard stop; fix staged assets, reachability,
-auth, discovery, or path variables first.
-
-## 3. Execute the swap
-
-Keep a second mini shell open. Then run exactly:
-
-```bash
-bash scripts/cutover.sh --execute
-```
-
-The script performs these guarded steps:
-
-1. verifies both Go binaries are executable Darwin arm64 Mach-O files;
-2. smoke-loads the Go daemon with `PRETTYD_SMOKE=1`;
-3. confirms the installed plist points at the node daemon;
-4. saves the exact node plist without overwriting an existing backup;
-5. renders and lints a replacement plist whose program is the Go daemon and
-   whose environment includes `PRETTYD_RUNNER`, `PRETTYD_HOST`, and
-   `PRETTYD_PORT`;
-6. boots out the node daemon, atomically installs the Go plist, bootstraps it,
-   and kickstarts `tech.pretty-pty.daemon`;
-7. waits for health 200, `discovering:false`, and a session count at least as
-   large as the baseline.
-
-If Go activation or runner-count verification fails after the node daemon was
-stopped, the script automatically restores the saved node plist, kickstarts
-the node daemon, and verifies the same baseline before returning failure.
-
-Do not manually remove runner `.sock`, `.json`, `.events`, or per-session
-LaunchAgent plists during the swap.
+Do not continue to acceptance checks if any baseline ID is absent, any unknown
+service was affected, the daemon repeatedly exits, or logs show protocol or
+reconnect failures. Roll back immediately.
 
 ## 4. Acceptance checks
 
-First verify daemon and fleet state:
+After the exact baseline returns:
 
-```bash
-curl --fail --silent --show-error "http://$PRETTYD_HOST:$PRETTYD_PORT/api/health"
-curl --fail --silent --show-error "http://$PRETTYD_HOST:$PRETTYD_PORT/api/health/deep"
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" ls --json
-```
+- Round-trip a new unique marker through the preserved Node-created runner and
+  prove the expanded output appears in its snapshot.
+- Inspect at least one existing Claude session and one existing Codex session
+  without sending input to active work.
+- Open the local UI, reconnect, and compare its session set with the CLI JSON.
+- Create one disposable new session and confirm its process uses the staged
+  `sessions-runner` binary.
+- Inspect daemon and representative old/new runner logs for repeated exits,
+  protocol warnings, or reconnect loops.
 
-The health response must be 200 with `ok:true`, `discovering:false`, and the
-runner count must not be below the recorded baseline.
+Record the revision, binary and plist hashes, exact baseline/final ID sets,
+health output, preserved-runner marker, PIDs, operator, and timestamps.
 
-Now round-trip through the preserved Node runner. The command contains a shell
-variable literally; the snapshot assertion requires its numeric expansion, so
-matching only terminal echo of the typed command cannot pass:
+## 5. Manual rollback
 
-```bash
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" \
-  send "$VERIFY_ID" --no-wait 'echo CUTOVER_GO_$RANDOM'
+Rollback is the first response to any failed acceptance check or unexplained
+regression:
 
-for attempt in {1..20}; do
-  SNAPSHOT="$($PRETTY_BIN --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" snap "$VERIFY_ID")"
-  if printf '%s' "$SNAPSHOT" | grep -Eq 'CUTOVER_GO_[0-9]+'; then
-    printf 'preserved Node runner round-trip: PASS\n'
-    break
-  fi
-  sleep 0.25
-done
-printf '%s' "$SNAPSHOT" | grep -Eq 'CUTOVER_GO_[0-9]+'
-```
+1. Boot out only the new daemon LaunchAgent.
+2. Restore the exact saved Node plist bytes atomically.
+3. Validate the restored plist, bootstrap it, and kickstart the old daemon.
+4. Wait for health and discovery, then compare exact IDs with the baseline.
+5. Send a different marker through the same preserved runner and verify the
+   expanded output in its snapshot.
 
-Check at least one Claude and one Codex session snapshot without sending input
-to an active conversation. Confirm the web UI loads, reconnects, and shows the
-same session set. Inspect the daemon log and a representative runner log for
-protocol warnings, reconnect loops, or repeated exits.
+Do not delete the staged Go runtime during rollback, and do not delete the Node
+plist backup after a successful rollback. Preserve logs and both inventories for
+diagnosis.
 
-## 5. Rollback
+## 6. Recovery is not cutover
 
-Rollback is the first response to any health failure, runner-count drop,
-preserved-runner input failure, repeated protocol warning, or UI/API regression
-that cannot be explained immediately. Use the same exported variables,
-especially the exact `PRETTYD_NODE_PLIST_BACKUP` created by cutover.
+`sessions recover` may inspect ledger and runner state after the original
+service is healthy again. The expected clean result is no unexpectedly lost
+lanes. `sessions recover --reopen` creates replacement work and therefore
+requires a separate, explicit decision; it is never part of normal activation
+or rollback.
 
-Preview:
+## 7. Observation window
 
-```bash
-bash scripts/rollback.sh --dry-run
-```
-
-Execute:
-
-```bash
-bash scripts/rollback.sh --execute
-```
-
-Rollback boots out the Go daemon, atomically restores the exact node plist,
-bootstraps and kickstarts the node service, then waits for health,
-`discovering:false`, and no runner-count drop. If the Go daemon is already
-down, rollback derives a conservative baseline from the configured runner-state
-socket directory and proceeds. It never deletes the saved node plist.
-
-After rollback, repeat the preserved-runner round trip with a different marker:
-
-```bash
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" \
-  send "$VERIFY_ID" --no-wait 'echo ROLLBACK_NODE_$RANDOM'
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" snap "$VERIFY_ID" \
-  | grep -E 'ROLLBACK_NODE_[0-9]+'
-```
-
-This confirms the same runner survived Go-to-node daemon rollback. Do not
-delete the node plist backup until the cutover has passed its full observation
-window and an additional fresh backup exists.
-
-## 6. Recovery safety net
-
-`pretty recover` reconciles the append-only lane ledger with runner sockets,
-launchd, and Claude/Codex conversation stores. It is a safety net for a lane
-that is genuinely unexpectedly lost; it is not part of a normal daemon swap
-and should not be used to mask a runner-count regression.
-
-On the mini, inspect only first:
-
-```bash
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" recover
-```
-
-The expected result after a clean cutover is `no unexpectedly-lost lanes`.
-If the report contains lanes, preserve all state and logs, compare it with the
-fresh backup, and review every resume recipe. Only then explicitly reopen:
-
-```bash
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" recover --reopen
-```
-
-`--reopen` creates replacement runners and is intentionally not automatic.
-Never remove the original state artifacts merely because a replacement opened.
-
-## 7. Post-cutover observation
-
-- Keep the maintenance window open until the preserved runner, UI, snapshots,
-  and representative Claude/Codex sessions have been checked.
-- Recheck health, discovery, runner count, daemon PID stability, and logs after
-  5 minutes, 30 minutes, and the next expected idle/active transition.
-- Confirm new sessions use the staged Go runner while pre-cutover Node runners
-  remain usable until they end naturally.
-- Keep the fresh backup and exact node plist backup through the observation
-  window.
-- Kill the disposable `VERIFY_ID` only after the rollback window closes:
-
-```bash
-"$PRETTY_BIN" --host "$PRETTYD_HOST" --port "$PRETTYD_PORT" kill "$VERIFY_ID"
-```
-
-- Record revision, binary hashes, baseline/final counts, health output,
-  round-trip marker, operator, timestamps, and whether rollback was exercised.
+Recheck health, discovery, exact session IDs, daemon PID stability, and logs
+after 5 minutes, 30 minutes, and the next idle/active transition. Keep the old
+Node runtime, original plist, fresh backup, and preserved runner through the
+agreed window. End the disposable sessions only after rollback is no longer
+needed and the user accepts the cutover.

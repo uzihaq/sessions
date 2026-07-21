@@ -5,7 +5,7 @@
 // true at save time we preserve that semantically — auto-stick still
 // follows new content rather than freezing at a literal pixel offset.
 
-export type Pane = 'pretty' | 'remote';
+export type Pane = 'sessions' | 'remote';
 
 export interface ScrollPosition {
   scrollTop: number;

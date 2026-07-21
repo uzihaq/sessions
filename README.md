@@ -7,7 +7,7 @@ daemon restart and can be reopened from another browser.
 
 ## Trust contract
 
-- **Local runtime:** Pretty drives tools you already installed through a PTY or
+- **Local runtime:** Sessions drives tools you already installed through a PTY or
   their structured CLI contracts. It makes no direct model API calls.
 - **Local by default:** the daemon listens on `127.0.0.1:8787`; remote access is
   opt-in and goes directly over your Tailscale network.
@@ -30,25 +30,25 @@ early-access path:
 On Apple Silicon macOS:
 
 ```sh
-brew install uzihaq/tap/pretty
-pretty install
+brew install uzihaq/tap/sessions
+sessions install
 open http://localhost:8787
 ```
 
-`pretty install` registers `prettyd` as the per-user development LaunchAgent
-`tech.pretty-pty.dev.daemon`, starts it, and checks its health. Override the
-label explicitly with `PRETTYD_DAEMON_LABEL` when needed. Direct loopback use is
+`sessions install` registers `sessionsd` as the per-user development LaunchAgent
+`tech.somewhere.sessions.dev.daemon`, starts it, and checks its health. Override the
+label explicitly with `SESSIONS_DAEMON_LABEL` when needed. Direct loopback use is
 zero-setup; LAN and remote clients normally authenticate with the token printed
-by the command. Print it again later with `pretty token`.
+by the command. Print it again later with `sessions token`.
 
 Static archives are published for macOS arm64 and Linux arm64/amd64. Download
-the archive for your platform from [GitHub Releases](https://github.com/uzihaq/pretty-PTY/releases),
+the archive for your platform from [GitHub Releases](https://github.com/uzihaq/sessions/releases),
 then install all three adjacent binaries:
 
 ```sh
-tar -xzf pretty-pty_<version>_<os>_<arch>.tar.gz
+tar -xzf sessions_<version>_<os>_<arch>.tar.gz
 mkdir -p "$HOME/.local/bin"
-install -m 0755 pretty prettyd runner "$HOME/.local/bin/"
+install -m 0755 sessions sessionsd sessions-runner "$HOME/.local/bin/"
 ```
 
 There is no `curl | sh` installer. See [installation details](docs/INSTALL.md)
@@ -57,35 +57,35 @@ for exact archive names, PATH setup, Linux startup, upgrades, and uninstalling.
 ## Quickstart
 
 ```sh
-id=$(pretty new --tool claude --cwd "$HOME/project" --name docs)
-pretty send "$id" "Review the documentation and fix stale examples"
-pretty wait "$id" --timeout 10m
-pretty last "$id" --role assistant
+id=$(sessions new --tool claude --cwd "$HOME/project" --name docs)
+sessions send "$id" "Review the documentation and fix stale examples"
+sessions wait "$id" --timeout 10m
+sessions last "$id" --role assistant
 ```
 
 Open `http://localhost:8787` for the terminal and structured conversation views.
-Session IDs may be replaced with a unique prefix shown by `pretty ls`.
+Session IDs may be replaced with a unique prefix shown by `sessions ls`.
 
 ## The CLI in 60 seconds
 
 | Command | Purpose |
 | --- | --- |
-| `pretty new --tool claude\|codex\|shell [--cwd DIR]` | Start an interactive session |
-| `pretty ls` | List live sessions |
-| `pretty send <id> <message...>` | Submit text and confirm receipt |
-| `pretty ask <id> <message...>` | Send, wait, and print the reply |
-| `pretty wait <id> [--timeout 10m]` | Wait for a session to become idle |
-| `pretty run [options] -- <command...>` | Start a tracked headless lane |
-| `pretty lanes` | List running and completed lanes |
-| `pretty status <id>` | Show compact session, git, activity, and verdict state |
-| `pretty recover [--reopen]` | Inspect or reopen unexpectedly lost lanes |
-| `pretty remote enable\|status\|disable` | Manage early-access Tailscale HTTPS access |
-| `pretty model <id> <model> [--effort LEVEL]` | Switch an idle supported Claude session model |
-| `pretty kill <id> [<id>...]` | Explicitly terminate selected sessions |
+| `sessions new --tool claude\|codex\|shell [--cwd DIR]` | Start an interactive session |
+| `sessions ls` | List live sessions |
+| `sessions send <id> <message...>` | Submit text and confirm receipt |
+| `sessions ask <id> <message...>` | Send, wait, and print the reply |
+| `sessions wait <id> [--timeout 10m]` | Wait for a session to become idle |
+| `sessions run [options] -- <command...>` | Start a tracked headless lane |
+| `sessions lanes` | List running and completed lanes |
+| `sessions status <id>` | Show compact session, git, activity, and verdict state |
+| `sessions recover [--reopen]` | Inspect or reopen unexpectedly lost lanes |
+| `sessions remote enable\|status\|disable` | Manage early-access Tailscale HTTPS access |
+| `sessions model <id> <model> [--effort LEVEL]` | Switch an idle supported Claude session model |
+| `sessions kill <id> [<id>...]` | Explicitly terminate selected sessions |
 
-Also useful: `pretty snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
+Also useful: `sessions snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
 `verdict`, `doctor`, and `help`. Global flags are `--json`, `--host`, and
-`--port` (or `PRETTYD_HOST` / `PRETTYD_PORT`).
+`--port` (or `SESSIONS_HOST` / `SESSIONS_PORT`).
 
 ## Documentation
 
@@ -98,34 +98,34 @@ Also useful: `pretty snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
 
 ## Notifications and hooks
 
-Enable browser push in **Settings → Notify when a session finishes**. Pretty
+Enable browser push in **Settings → Notify when a session finishes**. Sessions
 classifies a completed turn locally and sends done, blocked, or error notices to
 the browser subscription you approved.
 
 Run a per-session shell hook after a working-to-idle transition:
 
 ```sh
-pretty new --tool codex --on-idle 'printf "%s: %s\n" "$PRETTY_SESSION_NAME" "$PRETTY_OUTCOME"'
+sessions new --tool codex --on-idle 'printf "%s: %s\n" "$SESSIONS_SESSION_NAME" "$SESSIONS_OUTCOME"'
 ```
 
 A global `{"onIdle":"..."}` hook may be stored at
-`~/.config/pretty/hooks.json`. Hooks receive `PRETTY_SESSION_ID`,
-`PRETTY_SESSION_NAME`, `PRETTY_SESSION_TOOL`, `PRETTY_SESSION_CWD`,
-`PRETTY_FINAL_MESSAGE`, `PRETTY_OUTCOME`, and `PRETTY_DURATION_MS`.
+`~/.config/sessions/hooks.json`. Hooks receive `SESSIONS_SESSION_ID`,
+`SESSIONS_SESSION_NAME`, `SESSIONS_SESSION_TOOL`, `SESSIONS_SESSION_CWD`,
+`SESSIONS_FINAL_MESSAGE`, `SESSIONS_OUTCOME`, and `SESSIONS_DURATION_MS`.
 
 ## Remote access (early access)
 
 Install Tailscale on the daemon host and your client device, then run:
 
 ```sh
-pretty remote enable
-pretty remote status
+sessions remote enable
+sessions remote status
 ```
 
-Pretty configures Tailscale Serve, verifies the HTTPS health endpoint, and
-prints a QR code. Terminal data is not relayed by Pretty. Tailscale HTTPS issues
+Sessions configures Tailscale Serve, verifies the HTTPS health endpoint, and
+prints a QR code. Terminal data is not relayed by Sessions. Tailscale HTTPS issues
 a certificate whose machine/tailnet name appears in public Certificate
-Transparency logs. Run `pretty remote disable` to remove Pretty's Serve route.
+Transparency logs. Run `sessions remote disable` to remove Sessions' Serve route.
 
 Never bind the daemon to `0.0.0.0`; the binary refuses wildcard listeners.
 
@@ -134,32 +134,33 @@ Never bind the daemon to `0.0.0.0`; the binary refuses wildcard listeners.
 Start with:
 
 ```sh
-pretty doctor
-pretty status <id>
+sessions doctor
+sessions status <id>
 ```
 
 Daemon logs on macOS are in
-`~/Library/Logs/pretty-pty/tech.pretty-pty.dev.daemon.log`. If the web UI cannot
-authenticate, run `pretty token`. See [installation troubleshooting](docs/INSTALL.md#troubleshooting)
+`~/Library/Logs/sessions/tech.somewhere.sessions.dev.daemon.log`. If the web UI cannot
+authenticate, run `sessions token`. See [installation troubleshooting](docs/INSTALL.md#troubleshooting)
 and the [runbooks](docs/RUNBOOKS.md).
 
 ## Development
 
-The Go runtime is in `prettygo/`; Sessions.app is in `src-tauri/`. The TypeScript
-daemon remains only as mini-cutover and rollback evidence.
+The Go runtime is in `runtime/`; Sessions.app is in `src-tauri/`. The frozen
+TypeScript daemon under `runtime/testdata/node-runtime/` remains only as
+compatibility and mini-cutover evidence.
 
 ```sh
-make -C prettygo binaries
-make -C prettygo binaries-noui  # fast Go-only iteration
-cd prettygo && go test ./...
+make -C runtime binaries
+make -C runtime binaries-noui  # fast Go-only iteration
+cd runtime && go test ./...
 ```
 
 Tracked, non-interactive work uses lanes:
 
 ```sh
-pretty run --name checks --cwd "$PWD" -- sh -lc 'cd prettygo && go test ./...'
-pretty lanes
+sessions run --name checks --cwd "$PWD" -- sh -lc 'cd runtime && go test ./...'
+sessions lanes
 ```
 
-See [architecture](ARCHITECTURE.md), [Go port constraints](prettygo/ARCHITECTURE.md),
+See [architecture](ARCHITECTURE.md), [Go port constraints](runtime/ARCHITECTURE.md),
 and [release instructions](docs/RELEASE.md).

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchUsage, type UsageReport, type UsageRow, type UsageTokens } from '../api/prettyd';
+import { fetchUsage, type UsageReport, type UsageRow, type UsageTokens } from '../api/sessionsd';
 import { useServers } from '../lib/servers';
 import { useSessions } from '../store/sessions';
 import { TagEditor } from './TagEditor';

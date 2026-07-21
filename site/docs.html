@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sessions — shipped CLI field guide</title>
-<meta name="description" content="A concise, source-checked field guide to pretty's durable sessions, lanes, recovery, search, access, pairing, encrypted backup, and agent controls.">
+<meta name="description" content="A concise, source-checked field guide to sessions's durable sessions, lanes, recovery, search, access, pairing, encrypted backup, and agent controls.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
@@ -151,33 +151,33 @@
     <section class="doc" id="cli">
       <p class="kicker">CLI</p>
       <h2>The daily moves, <em>source-checked.</em></h2>
-      <p class="section-lede">Session IDs can be full IDs or unique prefixes from <code>pretty ls</code>. Put the global <code>--json</code> flag before the command when a script needs structured output.</p>
+      <p class="section-lede">Session IDs can be full IDs or unique prefixes from <code>sessions ls</code>. Put the global <code>--json</code> flag before the command when a script needs structured output.</p>
       <div class="reference">
-        <div class="command-row"><code>pretty new --tool claude|codex|shell</code><p>Start an interactive session. Add <code>--cwd</code>, <code>--name</code>, <code>--description</code>, <code>--model</code>, <code>--effort</code>, or <code>--on-idle</code> as needed.</p></div>
-        <div class="command-row"><code>pretty ls [--mine]</code><p>List live sessions, scoped to agent provenance with <code>--mine</code>. Add <code>-a</code> to include exited sessions.</p></div>
-        <div class="command-row"><code>pretty sessions --mine</code><p>List agent sessions and headless lanes together. Purpose descriptions make cleanup decisions readable.</p></div>
-        <div class="command-row"><code>pretty send &lt;id&gt; "…"</code><p>Send text plus Enter, then confirm that Claude or Codex received it. Add <code>--file path</code> for a prompt file or <code>--no-wait</code> for fire-and-forget.</p></div>
-        <div class="command-row"><code>pretty ask &lt;id&gt; "…"</code><p>Send with confirmation, wait for the working → idle edge, and print the last assistant reply.</p></div>
-        <div class="command-row"><code>pretty wait &lt;id&gt;</code><p>Block until a session is idle or a lane exits. Tune with <code>--idle</code> and <code>--timeout</code>; condition waits can watch a commit, file content, or stable idle period.</p></div>
-        <div class="command-row"><code>pretty run [options] -- &lt;command…&gt;</code><p>Start a supervised, headless lane. Add <code>--name</code>, <code>--description</code>, <code>--cwd</code>, or <code>--spec</code>; add <code>--wait --output</code> to block and print its captured tail.</p></div>
-        <div class="command-row"><code>pretty lanes</code><p>List running and completed lanes with exit codes, durations, working directories, and names.</p></div>
-        <div class="command-row"><code>pretty search &lt;query&gt; [--ranked]</code><p>Search live and persisted chat history. Substring is the precise default; choose regex or FTS5-ranked stemming, phrases, and boolean operators.</p></div>
-        <div class="command-row"><code>pretty status &lt;id&gt;</code><p>Show a compact session card with activity, git state, runtime state, and the latest producer verdict.</p></div>
-        <div class="command-row"><code>pretty verdict &lt;id&gt;</code><p>Read the latest explicit verdict. Use <code>pretty verdict emit &lt;id&gt;</code> with schema-versioned JSON to append one.</p></div>
-        <div class="command-row"><code>pretty recover [--reopen]</code><p>Inspect unexpectedly lost lanes, then explicitly reopen the recoverable ones.</p></div>
-        <div class="command-row"><code>pretty adopt &lt;path-or-uuid&gt;</code><p>Bring an existing Claude or Codex provider session under pretty's supervision.</p></div>
-        <div class="command-row"><code>pretty move &lt;id&gt; --to &lt;endpoint&gt;</code><p>Prepare and resume a session on another pretty daemon. Preview with <code>--dry-run</code>; dirty worktrees require <code>--allow-dirty</code>.</p></div>
-        <div class="command-row"><code>pretty lan enable|status|disable</code><p>Opt into a second HTTP listener on the current same-Wi-Fi or Ethernet address. Protected routes still require authentication.</p></div>
-        <div class="command-row"><code>pretty remote enable|status|disable</code><p>Manage the tailnet-only Tailscale Serve HTTPS endpoint used for direct remote access.</p></div>
-        <div class="command-row"><code>pretty pair [--name NAME]</code><p>Mint a five-minute, single-use QR ticket for the best enabled endpoint. The device gets its own revocable token; the master token is not embedded.</p></div>
-        <div class="command-row"><code>pretty devices [revoke &lt;id&gt;]</code><p>List per-device credentials or invalidate one immediately by exact ID or unique prefix.</p></div>
-        <div class="command-row"><code>pretty backup enable --project P --encrypt</code><p>Encrypt transcripts and the manifest locally with XChaCha20-Poly1305 before direct upload to your own somewhere project. Use <code>now</code>, <code>status</code>, or <code>decrypt</code> afterward.</p></div>
-        <div class="command-row"><code>pretty models</code><p>List the live Codex app-server model catalog, including supported efforts and service tiers.</p></div>
-        <div class="command-row"><code>pretty model &lt;id&gt; &lt;model&gt;</code><p>Switch the model, and optionally effort, for an idle supported session.</p></div>
-        <div class="command-row"><code>pretty kill &lt;id&gt; […]</code><p>Terminate one or more sessions and remove their supervised runners.</p></div>
-        <div class="command-row"><code>pretty doctor</code><p>Check the daemon and per-session health; flag runners that need attention.</p></div>
-        <div class="command-row"><code>pretty install</code><p>Register <code>prettyd</code> as the macOS LaunchAgent, start it, and check its health.</p></div>
-        <div class="command-row"><code>pretty uninstall</code><p>Stop the daemon and remove its launchd registration without deleting session or recovery data.</p></div>
+        <div class="command-row"><code>sessions new --tool claude|codex|shell</code><p>Start an interactive session. Add <code>--cwd</code>, <code>--name</code>, <code>--description</code>, <code>--model</code>, <code>--effort</code>, or <code>--on-idle</code> as needed.</p></div>
+        <div class="command-row"><code>sessions ls [--mine]</code><p>List live sessions, scoped to agent provenance with <code>--mine</code>. Add <code>-a</code> to include exited sessions.</p></div>
+        <div class="command-row"><code>sessions list --mine</code><p>List agent sessions and headless lanes together. Purpose descriptions make cleanup decisions readable.</p></div>
+        <div class="command-row"><code>sessions send &lt;id&gt; "…"</code><p>Send text plus Enter, then confirm that Claude or Codex received it. Add <code>--file path</code> for a prompt file or <code>--no-wait</code> for fire-and-forget.</p></div>
+        <div class="command-row"><code>sessions ask &lt;id&gt; "…"</code><p>Send with confirmation, wait for the working → idle edge, and print the last assistant reply.</p></div>
+        <div class="command-row"><code>sessions wait &lt;id&gt;</code><p>Block until a session is idle or a lane exits. Tune with <code>--idle</code> and <code>--timeout</code>; condition waits can watch a commit, file content, or stable idle period.</p></div>
+        <div class="command-row"><code>sessions run [options] -- &lt;command…&gt;</code><p>Start a supervised, headless lane. Add <code>--name</code>, <code>--description</code>, <code>--cwd</code>, or <code>--spec</code>; add <code>--wait --output</code> to block and print its captured tail.</p></div>
+        <div class="command-row"><code>sessions lanes</code><p>List running and completed lanes with exit codes, durations, working directories, and names.</p></div>
+        <div class="command-row"><code>sessions search &lt;query&gt; [--ranked]</code><p>Search live and persisted chat history. Substring is the precise default; choose regex or FTS5-ranked stemming, phrases, and boolean operators.</p></div>
+        <div class="command-row"><code>sessions status &lt;id&gt;</code><p>Show a compact session card with activity, git state, runtime state, and the latest producer verdict.</p></div>
+        <div class="command-row"><code>sessions verdict &lt;id&gt;</code><p>Read the latest explicit verdict. Use <code>sessions verdict emit &lt;id&gt;</code> with schema-versioned JSON to append one.</p></div>
+        <div class="command-row"><code>sessions recover [--reopen]</code><p>Inspect unexpectedly lost lanes, then explicitly reopen the recoverable ones.</p></div>
+        <div class="command-row"><code>sessions adopt &lt;path-or-uuid&gt;</code><p>Bring an existing Claude or Codex provider session under sessions's supervision.</p></div>
+        <div class="command-row"><code>sessions move &lt;id&gt; --to &lt;endpoint&gt;</code><p>Prepare and resume a session on another sessions daemon. Preview with <code>--dry-run</code>; dirty worktrees require <code>--allow-dirty</code>.</p></div>
+        <div class="command-row"><code>sessions lan enable|status|disable</code><p>Opt into a second HTTP listener on the current same-Wi-Fi or Ethernet address. Protected routes still require authentication.</p></div>
+        <div class="command-row"><code>sessions remote enable|status|disable</code><p>Manage the tailnet-only Tailscale Serve HTTPS endpoint used for direct remote access.</p></div>
+        <div class="command-row"><code>sessions pair [--name NAME]</code><p>Mint a five-minute, single-use QR ticket for the best enabled endpoint. The device gets its own revocable token; the master token is not embedded.</p></div>
+        <div class="command-row"><code>sessions devices [revoke &lt;id&gt;]</code><p>List per-device credentials or invalidate one immediately by exact ID or unique prefix.</p></div>
+        <div class="command-row"><code>sessions backup enable --project P --encrypt</code><p>Encrypt transcripts and the manifest locally with XChaCha20-Poly1305 before direct upload to your own somewhere project. Use <code>now</code>, <code>status</code>, or <code>decrypt</code> afterward.</p></div>
+        <div class="command-row"><code>sessions models</code><p>List the live Codex app-server model catalog, including supported efforts and service tiers.</p></div>
+        <div class="command-row"><code>sessions model &lt;id&gt; &lt;model&gt;</code><p>Switch the model, and optionally effort, for an idle supported session.</p></div>
+        <div class="command-row"><code>sessions kill &lt;id&gt; […]</code><p>Terminate one or more sessions and remove their supervised runners.</p></div>
+        <div class="command-row"><code>sessions doctor</code><p>Check the daemon and per-session health; flag runners that need attention.</p></div>
+        <div class="command-row"><code>sessions install</code><p>Register <code>sessionsd</code> as the macOS LaunchAgent, start it, and check its health.</p></div>
+        <div class="command-row"><code>sessions uninstall</code><p>Stop the daemon and remove its launchd registration without deleting session or recovery data.</p></div>
       </div>
     </section>
 
@@ -187,29 +187,29 @@
       <div class="reference">
         <div class="command-row"><code>--model &lt;name&gt;</code><p>Choose the startup model for Claude or Codex.</p></div>
         <div class="command-row"><code>--effort &lt;level&gt;</code><p>Pass the requested reasoning effort to the agent.</p></div>
-        <div class="command-row"><code>--fast</code><p>Use Codex priority service tier. Claude has no equivalent, so pretty rejects that combination.</p></div>
+        <div class="command-row"><code>--fast</code><p>Use Codex priority service tier. Claude has no equivalent, so sessions rejects that combination.</p></div>
       </div>
-      <pre><span style="color:var(--phos-dim)">$</span> pretty models
-<span style="color:var(--phos-dim)">$</span> pretty new --tool codex --model &lt;model&gt; --effort high --fast --cwd ~/work</pre>
+      <pre><span style="color:var(--phos-dim)">$</span> sessions models
+<span style="color:var(--phos-dim)">$</span> sessions new --tool codex --model &lt;model&gt; --effort high --fast --cwd ~/work</pre>
     </section>
 
     <section class="doc" id="hooks">
       <p class="kicker">when work stops</p>
       <h2>Let the session <em>tap you.</em></h2>
-      <p class="section-lede">Put one global shell command in <code>~/.config/pretty/hooks.json</code>. It runs on each observed working → idle edge, in that session's working directory.</p>
+      <p class="section-lede">Put one global shell command in <code>~/.config/sessions/hooks.json</code>. It runs on each observed working → idle edge, in that session's working directory.</p>
       <div class="panel">
         <pre>{
-  "onIdle": "~/bin/notify-pretty"
+  "onIdle": "~/bin/notify-sessions"
 }</pre>
-        <p>The hook receives these environment variables. <code>PRETTY_OUTCOME</code> is <code>done</code>, <code>blocked</code>, or <code>error</code>; a missing final assistant summary is an empty string.</p>
+        <p>The hook receives these environment variables. <code>SESSIONS_OUTCOME</code> is <code>done</code>, <code>blocked</code>, or <code>error</code>; a missing final assistant summary is an empty string.</p>
         <div class="env">
-          <code>PRETTY_SESSION_ID</code>
-          <code>PRETTY_SESSION_NAME</code>
-          <code>PRETTY_SESSION_TOOL</code>
-          <code>PRETTY_SESSION_CWD</code>
-          <code>PRETTY_OUTCOME</code>
-          <code>PRETTY_FINAL_MESSAGE</code>
-          <code>PRETTY_DURATION_MS</code>
+          <code>SESSIONS_SESSION_ID</code>
+          <code>SESSIONS_SESSION_NAME</code>
+          <code>SESSIONS_SESSION_TOOL</code>
+          <code>SESSIONS_SESSION_CWD</code>
+          <code>SESSIONS_OUTCOME</code>
+          <code>SESSIONS_FINAL_MESSAGE</code>
+          <code>SESSIONS_DURATION_MS</code>
         </div>
       </div>
       <div class="signals" aria-label="Finish notification outcomes">
@@ -217,20 +217,20 @@
         <div class="signal"><strong>🟡 needs you</strong><p>A prompt, permission request, or visible choice is waiting for a person.</p></div>
         <div class="signal"><strong>🔴 error</strong><p>The final screen still shows an unresolved failure.</p></div>
       </div>
-      <p class="fine">Classification and summary extraction are best-effort. Browser notifications and idle hooks exist today; native Android push when an agent needs you is still being built. Use <code>pretty help</code> as the final word on command syntax. Need the walkthrough? <a href="setup.html">Get set up →</a></p>
+      <p class="fine">Classification and summary extraction are best-effort. Browser notifications and idle hooks exist today; native Android push when an agent needs you is still being built. Use <code>sessions help</code> as the final word on command syntax. Need the walkthrough? <a href="setup.html">Get set up →</a></p>
     </section>
 
     <section class="doc" id="trust">
       <p class="kicker">the spine</p>
       <h2>Local by default.<br><em>Direct by design.</em></h2>
       <div class="trust-panel"><strong>No Sessions account is required, and Sessions never relays terminal bytes.</strong> Localhost is zero setup; LAN is an explicit opt-in; remote access stays inside Tailscale and terminates TLS on your Mac. Optional encrypted backup is the exception that leaves the machine, and it leaves as ciphertext sent directly to your own somewhere project. Sessions is free; <a href="https://somewhere.tech">somewhere</a> is the platform behind it.</div>
-      <p class="source-note">Claims on this page were checked against <code>docs/CLI.md</code>, <code>docs/WHY.md</code>, <code>prettygo/cmd/pretty/help.go</code>, <code>prettygo/cmd/pretty/pair.go</code>, and <code>prettygo/internal/backup/encrypt.go</code>.</p>
+      <p class="source-note">Claims on this page were checked against <code>docs/CLI.md</code>, <code>docs/WHY.md</code>, <code>runtime/cmd/sessions/help.go</code>, <code>runtime/cmd/sessions/pair.go</code>, and <code>runtime/internal/backup/encrypt.go</code>.</p>
     </section>
   </main>
 
   <footer>
-    <span>pretty — free, local-first, built in public.</span>
-    <span><a href="setup.html">setup</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
+    <span>sessions — free, local-first, built in public.</span>
+    <span><a href="setup.html">setup</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzihaq/sessions">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
   </footer>
 </div>
 </body>

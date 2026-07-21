@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSessions } from '../store/sessions';
-import { fetchResumableSessions, type ResumableSession } from '../api/prettyd';
+import { fetchResumableSessions, type ResumableSession } from '../api/sessionsd';
 import { getCwdLabel } from '../lib/tabLabels';
 
 // Dedicated resume picker — opened by the ↺ button in the tab strip
@@ -20,7 +20,7 @@ interface Props {
 
 type ViewMode = 'flat' | 'grouped';
 
-const VIEW_MODE_KEY = 'pretty-pty:resume-view-mode:v1';
+const VIEW_MODE_KEY = 'sessions:resume-view-mode:v1';
 
 function readViewMode(): ViewMode {
   try {
@@ -89,7 +89,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
     return () => { alive = false; };
   }, []);
 
-  // Filter out sessions that are already open as prettyd tabs — picking
+  // Filter out sessions that are already open as sessionsd tabs — picking
   // one would spawn a second `claude --resume <id>` against the live
   // JSONL the open tab is writing to, fighting for the file.
   const openClaudeIds = useMemo(() => {

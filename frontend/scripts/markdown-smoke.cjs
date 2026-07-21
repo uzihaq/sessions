@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Verifies the contentRender pipeline (ANSI→HTML, then marked, then
 // linkify) produces the right HTML for a representative Claude
-// response. Doesn't need a running prettyd / live Claude — just feeds
+// response. Doesn't need a running sessionsd / live Claude — just feeds
 // strings through the same function the browser uses.
 
 const path = require('node:path');
@@ -11,7 +11,7 @@ const os = require('node:os');
 const FRONTEND_ROOT = path.resolve(__dirname, '..');
 const esbuild = require(path.join(FRONTEND_ROOT, 'node_modules', 'esbuild'));
 
-const tmp = path.join(os.tmpdir(), `pretty-pty-md-smoke-${process.pid}.cjs`);
+const tmp = path.join(os.tmpdir(), `sessions-md-smoke-${process.pid}.cjs`);
 esbuild.buildSync({
   entryPoints: [path.join(FRONTEND_ROOT, 'src', 'lib', 'contentRender.ts')],
   bundle: true,

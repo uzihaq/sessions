@@ -25,7 +25,7 @@ interface Props {
 }
 
 // Combined label — user override (set via double-click rename in
-// pretty-PTY) > Claude's own title > cwd basename. Exported so every
+// sessions) > Claude's own title > cwd basename. Exported so every
 // consumer (tabs, grid cells, pop-out window title) reaches the same
 // name. Delegates the base resolution to lib/tabLabels.sessionLabel so
 // all callers use one authoritative chain.

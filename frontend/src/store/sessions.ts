@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import * as api from '../api/prettyd';
+import * as api from '../api/sessionsd';
 import type { CreateSessionRequest, SessionInfo } from '../types';
 import {
   filterSessionsForWindow,
@@ -69,7 +69,7 @@ interface SessionsState {
   sessions: SessionInfo[];
   activeId: string | null;
   // Whether the store has rendered with at least one fresh refresh()
-  // result from prettyd. Stays false during the localStorage-hydrated
+  // result from sessionsd. Stays false during the localStorage-hydrated
   // phase right after PWA cold-start. Lets the UI tell "this is the
   // last-known state, fetching fresh" from "this is live."
   hydrated: boolean;
@@ -87,8 +87,8 @@ interface SessionsState {
 // We only stash what the UI needs to draw a plausible first frame —
 // not the full SessionInfo (working/lastDataAt are stale within
 // seconds anyway). On refresh() the live data overwrites everything.
-const CACHE_KEY = 'pretty-pty:sessions-cache:v1';
-const ACTIVE_KEY = 'pretty-pty:active-session:v1';
+const CACHE_KEY = 'sessions:sessions-cache:v1';
+const ACTIVE_KEY = 'sessions:active-session:v1';
 
 interface CachedSession {
   id: string;

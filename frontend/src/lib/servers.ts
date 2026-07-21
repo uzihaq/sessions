@@ -3,7 +3,7 @@ import { randomUUID } from './uuid';
 import { isTauri } from './tauriBridge';
 import { readWindowScope } from './windowScope';
 
-// A "server" is a prettyd instance reachable over the network. The user can
+// A "server" is a sessionsd instance reachable over the network. The user can
 // have multiple — their Mac Mini on Tailscale, their local MacBook, a Fly
 // machine, etc. — and switch between them. The frontend changes its REST/WS
 // base URLs based on whichever server is active. localStorage persists the
@@ -24,14 +24,14 @@ export interface ServerConfig {
   scheme?: 'http' | 'https';
 }
 
-const STORAGE_KEY = 'pretty-pty:servers';
-const ACTIVE_KEY = 'pretty-pty:active-server';
+const STORAGE_KEY = 'sessions:servers';
+const ACTIVE_KEY = 'sessions:active-server';
 
 function embeddedServer(): ServerConfig | null {
   if (typeof window === 'undefined') return null;
   // Tauri's page origin is its asset protocol, not the daemon. A fresh
   // desktop install still needs to be zero-configuration and talk directly
-  // to the loopback daemon managed by `pretty install`.
+  // to the loopback daemon managed by `sessions install`.
   if (isTauri()) {
     return {
       id: 'local',
@@ -48,7 +48,7 @@ function embeddedServer(): ServerConfig | null {
     : (scheme === 'https' ? 443 : 80);
 
   // The normal daemon origin should remain zero-configuration: the same
-  // production build served by prettyd at localhost:8787 goes straight to
+  // production build served by sessionsd at localhost:8787 goes straight to
   // the session list. A static preview or hosted site uses another port and
   // deliberately starts with no server, so its first paint is the picker.
   if (port !== 8787) return null;
@@ -270,16 +270,16 @@ function hasStoredServerList(): boolean {
   }
 }
 
-function isPrettydHealth(value: unknown): boolean {
+function isSessionsDaemonHealth(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false;
   const health = value as Record<string, unknown>;
   return health.ok === true || typeof health.name === 'string';
 }
 
-// A non-8787 page may still be the UI served by prettyd itself (for example
+// A non-8787 page may still be the UI served by sessionsd itself (for example
 // its Tailscale HTTPS origin). With no saved configuration, probe that origin
 // and adopt it only when the response identifies a daemon. Static hosted
-// shells fall through unchanged when /api/health is absent or not prettyd.
+// shells fall through unchanged when /api/health is absent or not sessionsd.
 export async function bootstrapCurrentOriginServer(): Promise<void> {
   if (typeof window === 'undefined') return;
   if (useServers.getState().servers.length > 0 || hasStoredServerList()) return;
@@ -300,7 +300,7 @@ export async function bootstrapCurrentOriginServer(): Promise<void> {
     tokenRequired = true;
   } else if (response.status === 200) {
     try {
-      if (!isPrettydHealth(await response.json())) return;
+      if (!isSessionsDaemonHealth(await response.json())) return;
     } catch {
       return;
     }
@@ -311,12 +311,12 @@ export async function bootstrapCurrentOriginServer(): Promise<void> {
   adoptCurrentOriginServer(undefined, tokenRequired);
 }
 
-// Non-reactive accessor for use inside api/prettyd.ts and similar — those
+// Non-reactive accessor for use inside api/sessionsd.ts and similar — those
 // functions are called per request, and reading the latest value out of
 // the store at call time is exactly what we want.
 export function getActiveServer(): ServerConfig {
   const server = useServers.getState().active();
-  if (!server) throw new Error('No pretty server is configured.');
+  if (!server) throw new Error('No sessions server is configured.');
   return server;
 }
 

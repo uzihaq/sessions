@@ -121,7 +121,7 @@ export interface DispatchMessage {
   confirmBaseline?: number;
 }
 
-const STORAGE_PREFIX = 'pretty-pty:dispatch:';
+const STORAGE_PREFIX = 'sessions:dispatch:';
 const MAX_PER_SESSION = 200;       // localStorage budget cap
 const PENDING_TIMEOUT_MS = 6_000;  // pending → failed after this
 const SUFFIX_LEN = 30;             // chars at end-of-message used for matching

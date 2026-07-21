@@ -1,6 +1,6 @@
 // User-chosen labels for session tabs. Two layers:
 //
-//   labelById[sessionId] — explicit rename for a specific prettyd
+//   labelById[sessionId] — explicit rename for a specific sessionsd
 //     session. Overrides everything else.
 //   labelByCwd[cwd]      — "friendly name for this project." Set
 //     automatically every time the user renames a tab (we record
@@ -15,7 +15,7 @@
 import { useSyncExternalStore } from 'react';
 import type { SessionInfo } from '../types';
 
-const STORAGE_KEY = 'pretty-pty:tab-labels:v2';
+const STORAGE_KEY = 'sessions:tab-labels:v2';
 
 interface Stored {
   byId: Record<string, string>;
@@ -27,7 +27,7 @@ function read(): Stored {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       // Migrate v1 single-map shape, if present.
-      const legacy = window.localStorage.getItem('pretty-pty:tab-labels:v1');
+      const legacy = window.localStorage.getItem('sessions:tab-labels:v1');
       if (legacy) {
         const parsed = JSON.parse(legacy);
         if (parsed && typeof parsed === 'object') {
@@ -80,7 +80,7 @@ export function getCwdLabel(cwd: string): string | null {
   return cache.byCwd[cwd] ?? null;
 }
 
-// Set the label for a specific prettyd session. Also records the cwd
+// Set the label for a specific sessionsd session. Also records the cwd
 // → label mapping so future sessions in the same folder inherit it.
 export function setTabLabel(sessionId: string, label: string, cwd?: string): void {
   const trimmed = label.trim();
@@ -116,7 +116,7 @@ export function useTabLabel(sessionId: string, cwd?: string): string | null {
 //   3. cwd basename — the project folder name, our traditional default
 //   4. cmd basename or short id as last resort
 //
-// User's pretty-PTY tab rename is layered ABOVE this by callers (via
+// User's sessions tab rename is layered ABOVE this by callers (via
 // getTabLabel / useTabLabel) so it always wins without being part of
 // this function.
 export function sessionLabel(session: SessionInfo): string {

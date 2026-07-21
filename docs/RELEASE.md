@@ -16,8 +16,7 @@ a placeholder manifest or point it at a mutable artifact.
 Developer builds may use their own updater key:
 
 ```sh
-npm install
-npm --prefix frontend install
+npm run bootstrap
 TAURI_SIGNING_PRIVATE_KEY=/path/to/development-updater.key TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' npm run tauri:build
 ```
 
@@ -43,11 +42,23 @@ Before publishing a version:
 The required Apple credential is an app-specific password or App Store Connect
 API key. Credentials are release secrets and must never be committed.
 
+For the Apple-account path, sign in at `https://account.apple.com`, open
+**Sign-In and Security → App-Specific Passwords**, and generate one named for
+Sessions notarization. Two-factor authentication must already be enabled. Use
+that generated value as `APPLE_PASSWORD` for one release shell; never use the
+primary Apple Account password and never write either value to this repository.
+
+```sh
+export APPLE_ID='your Apple Account email'
+export APPLE_PASSWORD='the generated app-specific password'
+export APPLE_TEAM_ID='7GW9T5ZWW8'
+```
+
 ## Reproducible updater release
 
 The production updater public key is committed at `release/updater.pub`; its
 private half lives outside the repository at
-`~/.config/pretty/sessions-updater.key` with mode `0600`. Back it up securely:
+`~/.config/sessions/sessions-updater.key` with mode `0600`. Back it up securely:
 losing it prevents every installed build from accepting future updates.
 
 Keep the version synchronized in `src-tauri/tauri.conf.json`,
@@ -76,11 +87,11 @@ The secondary archive builder remains available for automation and unsupported
 headless installs:
 
 ```sh
-./prettygo/scripts/release.sh --version 0.1.0 --dry-run
-./prettygo/scripts/release.sh --version 0.1.0
+./runtime/scripts/release.sh --version 0.1.0 --dry-run
+./runtime/scripts/release.sh --version 0.1.0
 ```
 
-Each archive contains adjacent `pretty`, `prettyd`, and `runner` binaries,
+Each archive contains adjacent `sessions`, `sessionsd`, and `sessions-runner` binaries,
 `LICENSE`, and `README.md`, with a matching SHA-256 file. Homebrew may remain a
 power-user channel, but its formula is not the native app updater and must not
 be presented as the primary macOS experience.

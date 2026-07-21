@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { searchServer, type SearchMatch } from '../api/prettyd';
+import { searchServer, type SearchMatch } from '../api/sessionsd';
 import { useServers } from '../lib/servers';
 
 interface Result extends SearchMatch { serverId: string; serverName: string }

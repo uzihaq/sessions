@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import { uploadFile } from '../api/prettyd';
+import { uploadFile } from '../api/sessionsd';
 import type { SessionTool } from '../types';
 
 interface Props {
@@ -13,7 +13,7 @@ interface Props {
   // dropped file as a result of drag-drop).
   sessionId: string;
   // Fires AFTER bytes leave (immediately after submit). Used by the
-  // parent to render an optimistic "pending" message in the Pretty
+  // parent to render an optimistic "pending" message in the Sessions
   // view so the user sees their message land instantly, instead of
   // waiting for Claude's TUI redraw + parser throttle (~500ms-1s).
   onSubmitted?: (text: string) => void;
@@ -56,11 +56,11 @@ const CODEX_APP_SERVER_QUICK_KEYS: QuickKey[] = [
   }
 ];
 
-// Bottom composer for the Pretty view. xterm itself accepts input fine
-// when focused, but in Pretty mode the user can't see the cursor — they
+// Bottom composer for the Sessions view. xterm itself accepts input fine
+// when focused, but in Sessions mode the user can't see the cursor — they
 // need an obvious "type here" target. Keystrokes go through the same WS
 // as xterm's onData; the PTY echoes them and the parser sees them on the
-// next snapshot. No "live-type diff" machinery from pretty-tmux: with a
+// next snapshot. No "live-type diff" machinery from sessions-tmux: with a
 // real PTY, the echoed text just appears.
 export function InputBar({
   send,
@@ -198,7 +198,7 @@ export function InputBar({
     }
   };
 
-  // Drag-drop file handling. Upload each dropped file to the prettyd
+  // Drag-drop file handling. Upload each dropped file to the sessionsd
   // host's uploads dir, then paste the (single-quoted) absolute path
   // into the textarea. We DON'T auto-submit — the user typically wants
   // to add a caption ("describe this image", "what's wrong here", etc.)

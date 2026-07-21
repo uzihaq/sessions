@@ -115,8 +115,8 @@ async function openCase(query, selector = '[role="tab"][data-tab-id]') {
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.evaluateOnNewDocument((serversValue) => {
     window.localStorage.clear();
-    window.localStorage.setItem('pretty-pty:servers', JSON.stringify(serversValue));
-    window.localStorage.setItem('pretty-pty:active-server', 'primary-server');
+    window.localStorage.setItem('sessions:servers', JSON.stringify(serversValue));
+    window.localStorage.setItem('sessions:active-server', 'primary-server');
   }, storedServers);
   await page.goto(`${origin}/${query}`, { waitUntil: 'domcontentloaded', timeout: 15_000 });
   await page.waitForSelector(selector, { timeout: 10_000 });

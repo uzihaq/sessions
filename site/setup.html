@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sessions — get set up</title>
-<meta name="description" content="Install pretty's static Go binaries, choose localhost, LAN, or Tailscale access, pair each device with one QR scan, and optionally encrypt backup before upload.">
+<meta name="description" content="Install sessions's static Go binaries, choose localhost, LAN, or Tailscale access, pair each device with one QR scan, and optionally encrypt backup before upload.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&amp;family=Instrument+Serif:ital@0;1&amp;display=swap" rel="stylesheet">
@@ -223,43 +223,43 @@
   <section class="hero">
     <div class="kicker">get set up</div>
     <h1>Let's get you <em>running</em>.</h1>
-    <p class="lede">Install the local runtime, choose exactly how far it can reach, then pair each device with one scan. The core needs <b>no Sessions account</b>, and nothing here sends terminal traffic through us.</p>
+    <p class="lede">Install the native Mac app, choose exactly how far it can reach, then pair each device with one scan. The core needs <b>no Sessions account</b>, and nothing here sends terminal traffic through us.</p>
   </section>
 
   <!-- prereqs -->
   <div class="step">
     <div class="step-head"><div class="num">0</div><div><div class="step-title">Before you start</div><div class="step-sub">a 10-second inventory</div></div></div>
     <div class="step-body">
-      <p class="note">For this walkthrough you need an <b style="color:var(--cream)">Apple Silicon Mac</b>, either <b style="color:var(--cream)">Homebrew</b> or a downloaded release archive, and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — pretty runs the agents you already have; it does not replace or rebill them. You do not need Node, npm, Xcode, or a native build toolchain.</p>
+      <p class="note">For this walkthrough you need an <b style="color:var(--cream)">Apple Silicon Mac</b> and <b style="color:var(--cream)">Claude Code</b> and/or <b style="color:var(--cream)">Codex</b> already installed — Sessions runs the agents you already have; it does not replace or rebill them. You do not need Node, npm, Xcode, or a native build toolchain.</p>
     </div>
   </div>
 
   <!-- 1: install -->
   <div class="step" id="install">
-    <div class="step-head"><div class="num">1</div><div><div class="step-title">Install pretty</div><div class="step-sub">on your Mac</div></div></div>
+    <div class="step-head"><div class="num">1</div><div><div class="step-title">Install Sessions</div><div class="step-sub">on your Mac</div></div></div>
     <div class="step-body">
-      <span class="pill">early access — static Go binaries</span>
-      <div class="cmd"><code>brew install uzihaq/tap/pretty</code><button class="copy">copy</button></div>
-      <p class="note" style="margin-top:18px">That's the whole package install: static binaries, with no dependency installer and no script piped into your shell.</p>
-      <p class="note" style="margin-top:18px">Prefer a manual install? Download the checksummed release archive, then keep <code>pretty</code>, <code>prettyd</code>, and <code>runner</code> together:</p>
-      <div class="cmd"><code>curl -fLO https://github.com/uzihaq/pretty-PTY/releases/download/v&lt;version&gt;/pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</code><button class="copy">copy</button></div>
-      <div class="cmd"><code>tar -xzf pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</code><button class="copy">copy</button></div>
-      <div class="cmd"><code>mkdir -p "$HOME/.local/bin" &amp;&amp; install -m 0755 pretty prettyd runner "$HOME/.local/bin/"</code><button class="copy">copy</button></div>
-      <p class="note">Replace <code>&lt;version&gt;</code> with the release number. Check the SHA-256 first; the <a href="https://github.com/uzihaq/pretty-PTY/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">installation guide</a> has the verification steps and Linux archive names.</p>
-      <div class="cmd"><code>pretty install</code><button class="copy">copy</button></div>
-      <p class="note"><code>pretty install</code> registers the Go daemon with launchd, starts it, checks its health, and prints the local URL. Open that URL. Session runners live outside the daemon, so closing a terminal or reloading the daemon does not kill their work.</p>
+      <span class="pill">native Mac app</span>
+      <a class="btn-open" href="https://github.com/uzihaq/sessions/releases" target="_blank" rel="noopener">Download Sessions <span class="arr">→</span></a>
+      <p class="note" style="margin-top:18px">Move <b>Sessions.app</b> to Applications and open it. The app verifies and installs its own signed background runtime. There is no Node or npm install, no native-module compile, and no script piped into your shell.</p>
+      <p class="note" style="margin-top:18px">For headless machines and developers, the same release also includes checksummed archives. Keep <code>sessions</code>, <code>sessionsd</code>, and <code>sessions-runner</code> together:</p>
+      <div class="cmd"><code>curl -fLO https://github.com/uzihaq/sessions/releases/download/v&lt;version&gt;/sessions_&lt;version&gt;_darwin_arm64.tar.gz</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>tar -xzf sessions_&lt;version&gt;_darwin_arm64.tar.gz</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>mkdir -p "$HOME/.local/bin" &amp;&amp; install -m 0755 sessions sessionsd sessions-runner "$HOME/.local/bin/"</code><button class="copy">copy</button></div>
+      <p class="note">Replace <code>&lt;version&gt;</code> with the release number. Check the SHA-256 first; the <a href="https://github.com/uzihaq/sessions/blob/main/docs/INSTALL.md" target="_blank" rel="noopener">advanced installation guide</a> has the verification steps and Linux archive names.</p>
+      <div class="cmd"><code>sessions install</code><button class="copy">copy</button></div>
+      <p class="note"><code>sessions install</code> registers the Go daemon with launchd, starts it, checks its health, and prints the local URL. Open that URL. Session runners live outside the daemon, so closing a terminal or reloading the daemon does not kill their work.</p>
       <a class="btn-open" href="http://localhost:8787" target="_blank" rel="noopener">Open the local URL <span class="arr">→</span></a>
-      <div class="tip"><b>Stuck on install?</b> Keep all three binaries in the same directory and make sure it is on <code>PATH</code>. <code>pretty doctor</code> checks the daemon and session runners.</div>
+      <div class="tip"><b>Stuck on install?</b> Keep all three binaries in the same directory and make sure it is on <code>PATH</code>. <code>sessions doctor</code> checks the daemon and session runners.</div>
       <details class="trouble">
         <summary>Installation troubleshooting</summary>
         <div class="trouble-body">
           <div class="fix">
-            <b><code>pretty: command not found</code></b>
+            <b><code>sessions: command not found</code></b>
             <p>Check that Homebrew's bin directory or <code>$HOME/.local/bin</code> is on your <code>PATH</code>, then open a new shell.</p>
           </div>
           <div class="fix">
             <b>The daemon is down</b>
-            <p>Run <code>pretty doctor</code>. It checks the daemon and session runners and tells you what needs attention. There is no native-module or Xcode build step to repair.</p>
+            <p>Run <code>sessions doctor</code>. It checks the daemon and session runners and tells you what needs attention. There is no native-module or Xcode build step to repair.</p>
           </div>
         </div>
       </details>
@@ -270,26 +270,26 @@
   <div class="step" id="access">
     <div class="step-head"><div class="num">2</div><div><div class="step-title">Choose the reach</div><div class="step-sub">local first · each wider listener is opt-in</div></div></div>
     <div class="step-body">
-      <p class="note">Pretty starts on <code>127.0.0.1:8787</code>. Widen that boundary only when you want another device to connect.</p>
+      <p class="note">Sessions starts on <code>127.0.0.1:8787</code>. Widen that boundary only when you want another device to connect.</p>
       <div class="access-grid">
         <div class="access-card"><span class="reach">your Mac · zero setup</span><h3>Stay on localhost</h3><p>Nothing to enable. Open <code>http://localhost:8787</code>; no network configuration or account is involved.</p></div>
-        <div class="access-card"><span class="reach">same Wi-Fi · no Tailscale</span><h3>Open the LAN rung</h3><p>Run <code>pretty lan enable</code>. Pretty binds a second listener to the current LAN address; protected routes still require a credential.</p></div>
+        <div class="access-card"><span class="reach">same Wi-Fi · no Tailscale</span><h3>Open the LAN rung</h3><p>Run <code>sessions lan enable</code>. Sessions binds a second listener to the current LAN address; protected routes still require a credential.</p></div>
       </div>
       <span id="remote"></span>
       <p class="note"><b style="color:var(--cream)">From anywhere:</b> install Tailscale and sign in on the Mac and client device — <a href="https://tailscale.com/download" target="_blank" rel="noopener">tailscale.com/download</a> — then run:</p>
-      <div class="cmd"><code>pretty remote enable</code><button class="copy">copy</button></div>
-      <p class="note">Pretty configures a tailnet-only Tailscale Serve HTTPS endpoint and verifies it. TLS terminates on your Mac; there is no Pretty relay and no open internet port.</p>
+      <div class="cmd"><code>sessions remote enable</code><button class="copy">copy</button></div>
+      <p class="note">Sessions configures a tailnet-only Tailscale Serve HTTPS endpoint and verifies it. TLS terminates on your Mac; there is no Sessions relay and no open internet port.</p>
       <div class="tip"><b>One honest heads-up:</b> Tailscale's HTTPS certificate lists your machine + tailnet name in public certificate-transparency logs. Harmless for most, but if your machine name is sensitive, rename it before you enable serve.</div>
       <details class="trouble">
         <summary>Remote-access troubleshooting</summary>
         <div class="trouble-body">
           <div class="fix">
             <b>The <code>.ts.net</code> address does not resolve</b>
-            <p>Let this device use Tailscale DNS with <code>tailscale set --accept-dns=true</code>. Then confirm MagicDNS is enabled in the <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noopener">Tailscale DNS console</a> and retry <code>pretty remote status</code>.</p>
+            <p>Let this device use Tailscale DNS with <code>tailscale set --accept-dns=true</code>. Then confirm MagicDNS is enabled in the <a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noopener">Tailscale DNS console</a> and retry <code>sessions remote status</code>.</p>
           </div>
           <div class="fix">
             <b>The address resolves but does not answer</b>
-            <p>Make sure both devices are signed into the same tailnet, then run <code>pretty doctor</code> and <code>pretty remote status</code> on your Mac.</p>
+            <p>Make sure both devices are signed into the same tailnet, then run <code>sessions doctor</code> and <code>sessions remote status</code> on your Mac.</p>
           </div>
         </div>
       </details>
@@ -301,10 +301,10 @@
     <div class="step-head"><div class="num">3</div><div><div class="step-title">Pair the device</div><div class="step-sub">scan once · zero typing · no shared master secret</div></div></div>
     <div class="step-body">
       <p class="note">After enabling LAN or remote access, mint a one-time QR for the device in your hand:</p>
-      <div class="cmd"><code>pretty pair --name "my phone"</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>sessions pair --name "my phone"</code><button class="copy">copy</button></div>
       <p class="note">The ticket expires after five minutes and works once. It is exchanged directly with your Mac for a per-device credential; the daemon's master token is never embedded in the QR.</p>
-      <div class="cmd"><code>pretty devices</code><button class="copy">copy</button></div>
-      <div class="cmd"><code>pretty devices revoke &lt;id-or-prefix&gt;</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>sessions devices</code><button class="copy">copy</button></div>
+      <div class="cmd"><code>sessions devices revoke &lt;id-or-prefix&gt;</code><button class="copy">copy</button></div>
       <p class="note">List each credential by device and revoke one immediately without rotating every other device.</p>
     </div>
   </div>
@@ -313,10 +313,10 @@
   <div class="step" id="backup">
     <div class="step-head"><div class="num">4</div><div><div class="step-title">Back up the history</div><div class="step-sub">optional · encrypted before upload</div></div></div>
     <div class="step-body">
-      <p class="note">If you have a somewhere project, Pretty can push its session history there directly. Turn on local XChaCha20-Poly1305 encryption so the transcripts and manifest leave your Mac only as ciphertext:</p>
-      <div class="cmd"><code>pretty backup enable --project my-project --interval 15m --encrypt</code><button class="copy">copy</button></div>
-      <p class="note">Write down the recovery phrase. The key stays on your machine, somewhere receives encrypted bytes, and there is no Pretty-operated backup relay. Without that phrase, nobody can reset or recover the key for you.</p>
-      <div class="cmd"><code>pretty backup status</code><button class="copy">copy</button></div>
+      <p class="note">If you have a somewhere project, Sessions can push its session history there directly. Turn on local XChaCha20-Poly1305 encryption so the transcripts and manifest leave your Mac only as ciphertext:</p>
+      <div class="cmd"><code>sessions backup enable --project my-project --interval 15m --encrypt</code><button class="copy">copy</button></div>
+      <p class="note">Write down the recovery phrase. The key stays on your machine, somewhere receives encrypted bytes, and there is no Sessions-operated backup relay. Without that phrase, nobody can reset or recover the key for you.</p>
+      <div class="cmd"><code>sessions backup status</code><button class="copy">copy</button></div>
     </div>
   </div>
 
@@ -335,25 +335,25 @@
           <div class="verdict" id="verdict"></div>
         </div>
       </div>
-      <p class="note" style="font-size:13.5px;color:var(--cream-faint)">On your Mac? Try <code>http://localhost:8787</code>. Away from it? Use the <code>.ts.net</code> address from <code>pretty remote status</code>.</p>
+      <p class="note" style="font-size:13.5px;color:var(--cream-faint)">On your Mac? Try <code>http://localhost:8787</code>. Away from it? Use the <code>.ts.net</code> address from <code>sessions remote status</code>.</p>
     </div>
   </div>
 
   <section class="uninstall" id="uninstall">
     <div class="kicker">leave no daemon behind</div>
     <h2>Uninstall cleanly.</h2>
-    <p class="note">End any sessions you still need first. Then let pretty stop the daemon and remove its launchd registration before uninstalling the Homebrew package. Session and recovery data are left in place.</p>
-    <div class="cmd"><code>pretty uninstall</code><button class="copy">copy</button></div>
-    <div class="cmd"><code>brew uninstall pretty</code><button class="copy">copy</button></div>
+    <p class="note">End any sessions you still need first. Then let sessions stop the daemon and remove its launchd registration before uninstalling the Homebrew package. Session and recovery data are left in place.</p>
+    <div class="cmd"><code>sessions uninstall</code><button class="copy">copy</button></div>
+    <div class="cmd"><code>brew uninstall sessions</code><button class="copy">copy</button></div>
   </section>
 
   <div class="closing">
     <div class="line">Close the terminal. Take the walk.<br>The runner keeps going.</div>
     <div class="never">Terminal traffic goes straight from your browser to your Mac — we never relay or store it. <a href="index.html#never">what we never do →</a></div>
-    <p class="source-note">Setup claims and commands checked against <code>docs/INSTALL.md</code>, <code>docs/CLI.md</code>, <code>prettygo/cmd/pretty/help.go</code>, <code>prettygo/cmd/pretty/pair.go</code>, and <code>prettygo/internal/backup/encrypt.go</code>.</p>
+    <p class="source-note">Setup claims and commands checked against <code>docs/INSTALL.md</code>, <code>docs/CLI.md</code>, <code>runtime/cmd/sessions/help.go</code>, <code>runtime/cmd/sessions/pair.go</code>, and <code>runtime/internal/backup/encrypt.go</code>.</p>
   </div>
 
-  <footer>pretty is the free local tool by <a href="https://somewhere.tech">somewhere</a> · <a href="docs.html">docs</a> · <a href="https://github.com/uzairhaq/pretty-PTY">source</a> · MIT</footer>
+  <footer>sessions is the free local tool by <a href="https://somewhere.tech">somewhere</a> · <a href="docs.html">docs</a> · <a href="https://github.com/uzihaq/sessions">source</a> · MIT</footer>
 </div>
 
 <script>
@@ -413,7 +413,7 @@
 
   async function runCheck() {
     var base = normalize(el.input.value);
-    if (!base) { setState('bad', 'need an address'); el.verdict.innerHTML = '<span class="glyph">○</span> Paste your pretty address first.'; return; }
+    if (!base) { setState('bad', 'need an address'); el.verdict.innerHTML = '<span class="glyph">○</span> Paste your sessions address first.'; return; }
 
     setState('wait', 'reaching your Mac…');
     el.verdict.innerHTML = '<span class="glyph">◌</span> Knocking on <code></code> …';
@@ -441,8 +441,8 @@
         setState('bad', 'daemon said ' + r.status);
         el.verdict.innerHTML = '<span class="glyph">○</span> Reached your Mac, but the daemon answered <b>' + r.status +
           '</b>.<small>' + (r.status === 401 || r.status === 403
-            ? 'The health route is unexpectedly protected. Run <code>pretty doctor</code>, then use <code>pretty pair</code> from the Mac for a fresh device credential.'
-            : 'The daemon is reachable but unhappy — try <code>pretty doctor</code> on your Mac.') + '</small>';
+            ? 'The health route is unexpectedly protected. Run <code>sessions doctor</code>, then use <code>sessions pair</code> from the Mac for a fresh device credential.'
+            : 'The daemon is reachable but unhappy — try <code>sessions doctor</code> on your Mac.') + '</small>';
       }
     } catch (e) {
       setState('bad', 'no answer');
@@ -450,8 +450,8 @@
       el.verdict.innerHTML = '<span class="glyph">○</span> <b>Couldn\'t reach it.</b>' +
         '<small>Most likely one of:<br>' +
         (https ? '• <b>Tailscale is not connected</b> on this device — open the Tailscale app and check both devices are on the same tailnet.<br>' : '') +
-        '• <b>The daemon isn\'t running</b> — run <code>pretty install</code> on your Mac.<br>' +
-        (https ? '• <b>Remote access isn\'t on</b> — run <code>pretty remote enable</code> to start <code>tailscale serve</code>.'
+        '• <b>The daemon isn\'t running</b> — run <code>sessions install</code> on your Mac.<br>' +
+        (https ? '• <b>Remote access isn\'t on</b> — run <code>sessions remote enable</code> to start <code>tailscale serve</code>.'
                : '• Using <code>http://localhost</code> from a different device won\'t work — that only reaches the Mac you\'re sitting at.') +
         '</small>';
     } finally {

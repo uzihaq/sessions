@@ -9,7 +9,7 @@ export interface NewSessionDefaults {
   tags: Record<string, string>;
 }
 
-export const NEW_SESSION_DEFAULTS_KEY = 'pretty-pty:new-session-defaults';
+export const NEW_SESSION_DEFAULTS_KEY = 'sessions:new-session-defaults';
 
 export const DEFAULT_NEW_SESSION_DEFAULTS: NewSessionDefaults = {
   tool: 'claude-code',

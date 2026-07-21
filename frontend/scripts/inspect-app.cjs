@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Headless-browser inspection of the running pretty-PTY frontend.
+// Headless-browser inspection of the running sessions frontend.
 //
 // Why this exists: macOS Screen Recording / Accessibility permissions
 // are awkward to grant when the host process is an agent rather than a
@@ -11,11 +11,11 @@
 // Usage:
 //   node scripts/inspect-app.cjs                       # default: http://127.0.0.1:5273/
 //   node scripts/inspect-app.cjs --url http://...      # different URL
-//   node scripts/inspect-app.cjs --click-tab Pretty    # click a button by visible text
+//   node scripts/inspect-app.cjs --click-tab Sessions    # click a button by visible text
 //   node scripts/inspect-app.cjs --click-tab Terminal  #   ... before screenshot
 //   node scripts/inspect-app.cjs --wait 1500           # extra ms to wait after load
 //
-// Outputs to /tmp/pretty-pty-inspect/:
+// Outputs to /tmp/sessions-inspect/:
 //   - screenshot.png         full-page render
 //   - console.log            every console message + page errors
 //   - requests.log           failed network requests
@@ -37,10 +37,10 @@ function arg(name, fallback) {
 }
 
 const URL = arg('url', 'http://127.0.0.1:5273/');
-const CLICK_TAB = arg('click-tab', null); // 'Pretty' / 'Terminal' / 'Split'
+const CLICK_TAB = arg('click-tab', null); // 'Sessions' / 'Terminal' / 'Split'
 const EXTRA_WAIT = Number(arg('wait', 1500));
 
-const OUT_DIR = '/tmp/pretty-pty-inspect';
+const OUT_DIR = '/tmp/sessions-inspect';
 fs.mkdirSync(OUT_DIR, { recursive: true });
 
 (async () => {
@@ -127,7 +127,7 @@ fs.mkdirSync(OUT_DIR, { recursive: true });
       connDot:   brief(document.querySelector('.conn-dot')),
       sessionView: brief(document.querySelector('.session-view')),
       terminalHost: brief(document.querySelector('.terminal-host')),
-      prettyView: brief(document.querySelector('.pretty-view'))
+      prettyView: brief(document.querySelector('.sessions-view'))
     };
   });
 

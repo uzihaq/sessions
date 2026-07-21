@@ -46,7 +46,7 @@ try {
   await writeFile(join(work, 'index.html'), `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <link rel="stylesheet" href="/app.css"></head><body><div id="root"></div>
-<script>localStorage.setItem('pretty-pty:servers', JSON.stringify([{id:'fixture',name:'Fixture',host:'127.0.0.1',port:8787,isDefault:true}]));localStorage.setItem('pretty-pty:active-server','fixture');</script>
+<script>localStorage.setItem('sessions:servers', JSON.stringify([{id:'fixture',name:'Fixture',host:'127.0.0.1',port:8787,isDefault:true}]));localStorage.setItem('sessions:active-server','fixture');</script>
 <script type="module" src="/app.js"></script></body></html>`);
 
   server = createServer(async (request, response) => {

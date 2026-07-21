@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchServerHealth, listServerSessions } from '../api/prettyd';
+import { fetchServerHealth, listServerSessions } from '../api/sessionsd';
 import { formatServerEndpoint } from '../lib/serverEndpoint';
 import { useServers, type ServerConfig } from '../lib/servers';
 import type { SessionInfo, SessionTool } from '../types';
@@ -34,7 +34,7 @@ interface FleetViewProps {
 }
 
 // Fleet is deliberately client-side aggregation: each group owns its own
-// polling loop and talks straight to its configured prettyd. A slow or dead
+// polling loop and talks straight to its configured sessionsd. A slow or dead
 // machine therefore cannot delay updates from any other machine.
 export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
   const servers = useServers((state) => state.servers);

@@ -8,7 +8,7 @@
 <meta property="og:title" content="Sessions — never lose your agent fleet">
 <meta property="og:description" content="Durable agent sessions on your Mac. Local-first, directly connected, and free — with structured control, search, recovery, pairing, and encrypted backup already shipped.">
 <script>
-  // `pretty remote enable` ships a root #endpoint link. Keep that fragment out
+  // `sessions remote enable` ships a root #endpoint link. Keep that fragment out
   // of requests and hand it to the compatibility page that knows how to scrub it.
   if (new URLSearchParams(location.hash.slice(1)).has('endpoint')) {
     location.replace('connect.html' + location.hash);
@@ -265,16 +265,16 @@
     <div class="term rise" style="animation-delay:.3s">
       <div class="term-bar">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-        <span class="term-title">pretty — local agent runtime</span>
+        <span class="term-title">sessions — local agent runtime</span>
       </div>
       <div class="term-body">
-        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">pretty new --tool codex --name migration --description "plan the cutover"</span></span>
+        <span class="ln p1"><span class="prompt">$</span> <span class="cmd">sessions new --tool codex --name migration --description "plan the cutover"</span></span>
         <span class="ln p2"><span class="ok">✓</span> <span class="out">durable session created — the runner owns the work</span></span>
-        <span class="ln p3"><span class="prompt">$</span> <span class="cmd">pretty search '"migration plan" OR rollback' --ranked</span></span>
+        <span class="ln p3"><span class="prompt">$</span> <span class="cmd">sessions search '"migration plan" OR rollback' --ranked</span></span>
         <span class="ln p4"><span class="ok">→</span> <span class="out">ranked matches across live and saved history</span></span>
-        <span class="ln p5"><span class="prompt">$</span> <span class="cmd">pretty sessions --mine</span></span>
+        <span class="ln p5"><span class="prompt">$</span> <span class="cmd">sessions list --mine</span></span>
         <span class="ln p6"><span class="ok">→</span> <span class="out">your sessions and lanes, with provenance and purpose</span></span>
-        <span class="ln p7"><span class="prompt">$</span> <span class="cmd">pretty recover --reopen</span></span>
+        <span class="ln p7"><span class="prompt">$</span> <span class="cmd">sessions recover --reopen</span></span>
         <span class="ln p8"><span class="ok">✓</span> <span class="out">recoverable work reopened</span> <span class="cursor"></span></span>
       </div>
     </div>
@@ -288,7 +288,7 @@
       <div class="cell">
         <span class="n">i.</span>
         <h3>Never lose the fleet</h3>
-        <p>Each session lives in its own runner, outside the daemon. The ledger records what exists, so reloads do not kill the work and <code>pretty recover --reopen</code> can rebuild a lost lane in one command.</p>
+        <p>Each session lives in its own runner, outside the daemon. The ledger records what exists, so reloads do not kill the work and <code>sessions recover --reopen</code> can rebuild a lost lane in one command.</p>
       </div>
       <div class="cell">
         <span class="n">ii.</span>
@@ -298,26 +298,26 @@
       <div class="cell">
         <span class="n">iii.</span>
         <h3>Search all of it</h3>
-        <p><code>pretty search</code> covers live and persisted conversations. Keep exact substring and regex for precision, or opt into FTS5 ranking with BM25, stemming, phrases, and boolean queries.</p>
+        <p><code>sessions search</code> covers live and persisted conversations. Keep exact substring and regex for precision, or opt into FTS5 ranking with BM25, stemming, phrases, and boolean queries.</p>
       </div>
       <div class="cell">
         <span class="n">iv.</span>
         <h3>Access grows with you</h3>
-        <p>Use localhost with zero setup, <code>pretty lan enable</code> on the same Wi-Fi without Tailscale, or <code>pretty remote enable</code> anywhere over Tailscale Serve. Remote TLS ends on your Mac.</p>
+        <p>Use localhost with zero setup, <code>sessions lan enable</code> on the same Wi-Fi without Tailscale, or <code>sessions remote enable</code> anywhere over Tailscale Serve. Remote TLS ends on your Mac.</p>
       </div>
       <div class="cell">
         <span class="n">v.</span>
         <h3>Scan once. Revoke anytime.</h3>
-        <p><code>pretty pair</code> mints a five-minute, single-use QR ticket. The device receives its own revocable credential; the daemon's master token is never put in the QR.</p>
+        <p><code>sessions pair</code> mints a five-minute, single-use QR ticket. The device receives its own revocable credential; the daemon's master token is never put in the QR.</p>
       </div>
       <div class="cell">
         <span class="n">vi.</span>
         <h3>Encrypted before upload</h3>
-        <p><code>pretty backup … --encrypt</code> applies XChaCha20-Poly1305 on your Mac before your history reaches your own somewhere project. The recovery key stays with you; nobody without it — including us — can read the backup.</p>
+        <p><code>sessions backup … --encrypt</code> applies XChaCha20-Poly1305 on your Mac before your history reaches your own somewhere project. The recovery key stays with you; nobody without it — including us — can read the backup.</p>
       </div>
     </div>
-    <p class="toolbelt"><strong>Built for agents running agents:</strong> install the bundled <a href="https://github.com/uzihaq/pretty-PTY/blob/go-rewrite/skills/pretty/SKILL.md">pretty skill</a>, use <code>--mine</code> to query work by provenance, and add <code>--description</code> so every lane says why it exists. If you omit one, pretty can derive the purpose from the first message.</p>
-    <p class="fine">Feature sources: <code>docs/WHY.md</code>, <code>docs/CLI.md</code>, <code>prettygo/cmd/pretty/help.go</code>, <code>prettygo/internal/api/pair.go</code>, and <code>prettygo/internal/backup/encrypt.go</code>.</p>
+    <p class="toolbelt"><strong>Built for agents running agents:</strong> install the bundled <a href="https://github.com/uzihaq/sessions/blob/main/skills/sessions/SKILL.md">sessions skill</a>, use <code>--mine</code> to query work by provenance, and add <code>--description</code> so every lane says why it exists. If you omit one, sessions can derive the purpose from the first message.</p>
+    <p class="fine">Feature sources: <code>docs/WHY.md</code>, <code>docs/CLI.md</code>, <code>runtime/cmd/sessions/help.go</code>, <code>runtime/internal/api/pair.go</code>, and <code>runtime/internal/backup/encrypt.go</code>.</p>
   </section>
 
   <section id="never">
@@ -328,7 +328,7 @@
     <div class="never">
       <div class="never-row">
         <span class="no">see your data</span>
-        <p>There is no Pretty relay and no hosted session store. Terminal bytes travel browser&nbsp;→&nbsp;your Mac over loopback, your local network, or your own tailnet. We never see, store, or forward a single keystroke or token of output.</p>
+        <p>There is no Sessions relay and no hosted session store. Terminal bytes travel browser&nbsp;→&nbsp;your Mac over loopback, your local network, or your own tailnet. We never see, store, or forward a single keystroke or token of output.</p>
       </div>
       <div class="never-row">
         <span class="no">hold your keys</span>
@@ -351,7 +351,7 @@
         <p>We run our own agent work on the same runner, daemon, ledger, and CLI documented below. If the durable-session path breaks, it breaks our work first.</p>
       </div>
     </div>
-    <p class="fine">Precise version: the core runtime is local and terminal traffic has no Pretty data plane. Remote use is strongest through the daemon-served same-origin UI; the hosted onboarding page is still mutable web code. Encrypted backup protects bytes before upload. That honesty is part of the contract too.</p>
+    <p class="fine">Precise version: the core runtime is local and terminal traffic has no Sessions data plane. Remote use is strongest through the daemon-served same-origin UI; the hosted onboarding page is still mutable web code. Encrypted backup protects bytes before upload. That honesty is part of the contract too.</p>
   </section>
 
   <section id="start">
@@ -364,8 +364,8 @@
         <h3>On your Mac</h3>
         <p class="when">Same machine, right now — no account, no network config, nothing.</p>
         <ol class="steps">
-          <li><span class="k">1</span><code>brew install uzihaq/tap/pretty</code></li>
-          <li><span class="k">2</span><code>pretty install</code></li>
+          <li><span class="k">1</span><code>brew install uzihaq/tap/sessions</code></li>
+          <li><span class="k">2</span><code>sessions install</code></li>
           <li><span class="k">3</span>open the local app — done.</li>
         </ol>
         <a class="go" href="setup.html#install">Set up on this Mac →</a>
@@ -376,8 +376,8 @@
         <h3>Around the house</h3>
         <p class="when">Phone, tablet, or another computer — no Tailscale needed.</p>
         <ol class="steps">
-          <li><span class="k">1</span><code>pretty lan enable</code></li>
-          <li><span class="k">2</span><code>pretty pair --name "phone"</code></li>
+          <li><span class="k">1</span><code>sessions lan enable</code></li>
+          <li><span class="k">2</span><code>sessions pair --name "phone"</code></li>
           <li><span class="k">3</span>scan once; the device gets its own credential.</li>
         </ol>
         <a class="go" href="setup.html#access">Set up local-network access →</a>
@@ -389,8 +389,8 @@
         <p class="when">Your phone, your laptop, the café — over your own private tailnet.</p>
         <ol class="steps">
           <li><span class="k">1</span>Install <code>Tailscale</code> and sign in (free)</li>
-          <li><span class="k">2</span><code>pretty remote enable</code></li>
-          <li><span class="k">3</span><code>pretty pair</code>, then scan once.</li>
+          <li><span class="k">2</span><code>sessions remote enable</code></li>
+          <li><span class="k">3</span><code>sessions pair</code>, then scan once.</li>
         </ol>
         <a class="go" href="setup.html#remote">Set up phone access →</a>
       </div>
@@ -398,11 +398,11 @@
 
     <div class="install-box">
       <span class="c"># Homebrew — no Node, npm, or install script:</span><br>
-      <span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/pretty</span><br>
-      <span class="prompt">$</span> <span class="cmd">pretty install</span> &nbsp;<span class="c"># registers the daemon, prints your local URL</span><br>
+      <span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/sessions</span><br>
+      <span class="prompt">$</span> <span class="cmd">sessions install</span> &nbsp;<span class="c"># registers the daemon, prints your local URL</span><br>
       <span class="c"># or download the static archive directly:</span><br>
-      <span class="prompt">$</span> <span class="cmd">curl -fLO https://github.com/uzihaq/pretty-PTY/releases/download/v&lt;version&gt;/pretty-pty_&lt;version&gt;_darwin_arm64.tar.gz</span><br>
-      <span class="prompt">$</span> <span class="cmd">pretty pair</span> &nbsp;<span class="c"># optional — one-time QR, per-device credential</span>
+      <span class="prompt">$</span> <span class="cmd">curl -fLO https://github.com/uzihaq/sessions/releases/download/v&lt;version&gt;/sessions_&lt;version&gt;_darwin_arm64.tar.gz</span><br>
+      <span class="prompt">$</span> <span class="cmd">sessions pair</span> &nbsp;<span class="c"># optional — one-time QR, per-device credential</span>
     </div>
 
     <p class="status">Early access — once you're running, keep the <a href="docs.html">Go CLI reference</a> close for sessions, lanes, recovery, and remote access.</p>
@@ -415,7 +415,7 @@
     <div class="roadmap">
       <div class="roadmap-item"><span class="state">shipping next</span><h3>Sessions for Mac</h3><p>The signed menu-bar shell and scoped windows are built. The release step bundles and safely updates the background Go service without ever owning session lifetime.</p></div>
       <div class="roadmap-item"><span class="state">shipped</span><h3>Push when you are needed</h3><p>Done, waiting, and lost events already feed encrypted browser push. Android FCM delivery follows the shipped Mac app.</p></div>
-      <div class="roadmap-item"><span class="state">shipped</span><h3>One worktree per task</h3><p><code>pretty new --worktree</code> creates the branch and worktree; cleanup refuses live, dirty, or unmerged work.</p></div>
+      <div class="roadmap-item"><span class="state">shipped</span><h3>One worktree per task</h3><p><code>sessions new --worktree</code> creates the branch and worktree; cleanup refuses live, dirty, or unmerged work.</p></div>
       <div class="roadmap-item"><span class="state">later</span><h3>One fleet, many machines</h3><p>After the native clients: search and move work across your computers, then add an optional always-on VM through somewhere when local hardware should not be the ceiling.</p></div>
     </div>
     <p class="somewhere"><strong>Sessions stays free.</strong> <a href="https://somewhere.tech">somewhere</a> is the platform behind it — the optional home for encrypted backup and, later, always-on compute. The local runtime does not require a cloud account.</p>
@@ -423,8 +423,8 @@
   </section>
 
   <footer>
-    <span>pretty — the free local tool by <a href="https://somewhere.tech">somewhere</a>.</span>
-    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzairhaq/pretty-PTY">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
+    <span>sessions — the free local tool by <a href="https://somewhere.tech">somewhere</a>.</span>
+    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzihaq/sessions">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
   </footer>
 </main>
 </body>

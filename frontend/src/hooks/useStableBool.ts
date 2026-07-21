@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 // Debounce a boolean signal to prevent rapid flipping in the UI.
-// Specifically tuned for the working↔idle transition in pretty-PTY's
+// Specifically tuned for the working↔idle transition in sessions's
 // status strips: the parser briefly reports `isWorking: false` between
 // thinking-active redraws (a few times per second), which previously
 // caused the strip to flicker between "processing" and "idle".
