@@ -27,9 +27,15 @@ transfer needed — the durable record IS the handoff.
   verify **soak-d2 survives** → push → remove worktree + kill lane. Never merge on the lane's word alone.
 
 ## Current reality
-- Product = the Go runtime plus Sessions.app on branch **`main`**. MacBook = dev (launchd
-  `tech.somewhere.sessions.dev.daemon`, localhost:8787). Mac mini (100.86.76.84) = prod, still OLD node daemon,
-  **UNTOUCHED** — cutover is a JOINT step, now planned as the mini's first Sessions.app install (see below).
+- Product = the Go runtime plus Sessions.app on branch **`main`**. Source names the MacBook development service
+  `tech.somewhere.sessions.dev.daemon`, but the machine has **not** crossed that local runtime boundary yet: as of
+  2026-07-22, localhost:8787 is still owned by `tech.pretty-pty.dev.daemon`, running the legacy
+  `/Users/uzair/pretty-PTY/prettygo/dist-go/prettyd-darwin-arm64` binary and reporting `name=prettyd`. It does not
+  expose the new recap API. The release app's collision guard correctly refuses to replace that different service
+  while it owns 8787, so a complete Mac 0.2 dogfood pass needs either a separately isolated test daemon or a joint,
+  ID-verified MacBook dev-runtime transition. Do not casually stop it: it currently sees the daily-driver sessions.
+  Mac mini (100.86.76.84) = prod, still OLD node daemon, **UNTOUCHED** — its cutover is a separate JOINT step, now
+  planned as the mini's first Sessions.app install (see below).
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/sessions/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
