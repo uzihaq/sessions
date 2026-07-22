@@ -14,8 +14,8 @@ daemon restart and can be reopened from another browser.
 - **No default phone-home:** no Sessions account, analytics, telemetry, or relay.
   Opt-in backup, web push, and Tailscale use their configured services.
 - **Native package:** Sessions.app is the primary macOS distribution and keeps
-  its Go daemon and runner processes independent. The current early-access
-  install exposes the same three `CGO_ENABLED=0` binaries directly.
+  its Go daemon and runner processes independent. The standalone runtime
+  package exposes the same three `CGO_ENABLED=0` binaries directly.
 - **Auditable:** source available under the [MIT license](LICENSE).
 
 Sessions does not replace Claude Code or Codex. Install and authenticate the
@@ -81,6 +81,11 @@ Session IDs may be replaced with a unique prefix shown by `sessions ls`.
 
 ## The CLI in 60 seconds
 
+No skill or plugin is required. `sessions help` lists every command,
+`sessions help <command>` gives focused usage and examples, and `sessions docs`
+prints the complete offline Markdown reference directly from the executable's
+command registry.
+
 | Command | Purpose |
 | --- | --- |
 | `sessions new --tool claude\|codex\|shell [--cwd DIR]` | Start an interactive session |
@@ -97,7 +102,7 @@ Session IDs may be replaced with a unique prefix shown by `sessions ls`.
 | `sessions kill <id> [<id>...]` | Explicitly terminate selected sessions |
 
 Also useful: `sessions snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
-`verdict`, `doctor`, and `help`. Global flags are `--json`, `--host`, and
+`verdict`, `doctor`, `docs`, and `help`. Global flags are `--json`, `--host`, and
 `--port` (or `SESSIONS_HOST` / `SESSIONS_PORT`).
 
 ## Documentation
