@@ -1,32 +1,26 @@
 class Sessions < Formula
-  desc "Local web UI and CLI for long-lived Claude, Codex, and terminal sessions"
-  homepage "https://github.com/uzihaq/sessions"
-  version "0.1.0" # TODO_RELEASE_VERSION: replace before publishing.
+  desc "Durable local Claude Code, Codex, and terminal sessions"
+  homepage "https://sessions.somewhere.tech"
+  version "0.1.0"
   license "MIT"
 
   on_macos do
     depends_on arch: :arm64
     on_arm do
-      # TODO_RELEASE_URL(darwin_arm64): replace the placeholder version before publishing.
       url "https://github.com/uzihaq/sessions/releases/download/v0.1.0/sessions_0.1.0_darwin_arm64.tar.gz"
-      # TODO_RELEASE_SHA256(darwin_arm64): replace the zero digest before publishing.
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "a3f2327cd0f4e27d72849334df785acbe923e74771a911c110528a208d4ee041"
     end
   end
 
   on_linux do
     on_arm do
-      # TODO_RELEASE_URL(linux_arm64): replace the placeholder version before publishing.
       url "https://github.com/uzihaq/sessions/releases/download/v0.1.0/sessions_0.1.0_linux_arm64.tar.gz"
-      # TODO_RELEASE_SHA256(linux_arm64): replace the zero digest before publishing.
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "275c2fae5c6c84562b1f8fe40912d3e5f5c5888085cfc11fcdf20da1a41c714d"
     end
 
     on_intel do
-      # TODO_RELEASE_URL(linux_amd64): replace the placeholder version before publishing.
       url "https://github.com/uzihaq/sessions/releases/download/v0.1.0/sessions_0.1.0_linux_amd64.tar.gz"
-      # TODO_RELEASE_SHA256(linux_amd64): replace the zero digest before publishing.
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      sha256 "7e41d380a607dbb8884c561b283bfd98aac4c12a0629d92a6ea73438bfe28c09"
     end
   end
 
@@ -35,16 +29,17 @@ class Sessions < Formula
   end
 
   def caveats
-    <<~EOS
-      On macOS, register and start the per-user daemon with:
-        sessions install
+    on_macos do
+      <<~EOS
+        Register and start the per-user daemon with:
+          sessions install
 
-      Then open http://localhost:8787. Linux service installation is not yet
-      automated; run sessionsd under your user supervisor.
-    EOS
+        Then open http://localhost:8787.
+      EOS
+    end
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/sessions version")
+    system bin/"sessions", "help"
   end
 end

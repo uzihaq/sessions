@@ -1,9 +1,9 @@
 # Install Sessions
 
 Sessions.app is the primary macOS package. Its bundled-runtime installer and
-signed updater are implemented; the first public download is gated on Apple
-notarization and publication of the matching immutable updater artifact. The
-instructions below remain for developers and early-access headless installs.
+signed updater shipped publicly as v0.1.0. The release is Developer ID signed,
+notarized, stapled, and backed by an immutable updater artifact. The standalone
+instructions below remain useful for agents, developers, and headless installs.
 Do not use them to change the production mini.
 
 The standalone runtime ships as three static Go binaries:
@@ -34,10 +34,16 @@ CI before the GitHub Release becomes visible. Extract it, move `Sessions.app` to
 Applications, and open it normally. First run installs or adopts the independent
 daemon; quitting the app does not end the daemon or any session.
 
+Install the native app through Homebrew with:
+
+```sh
+brew install --cask uzihaq/tap/sessions-app
+```
+
 ## Homebrew runtime install on macOS
 
-Homebrew is the planned npm-like package-manager channel for the three
-standalone runtime binaries:
+Homebrew is the npm-like package-manager channel for the three standalone
+runtime binaries:
 
 ```sh
 brew install uzihaq/tap/sessions
@@ -45,10 +51,9 @@ sessions install
 open http://localhost:8787
 ```
 
-Do not use that command until the first release announcement confirms the
-public `uzihaq/homebrew-tap` repository has been populated. The formula in this
-source repository is a release template, not a live tap; its placeholder
-checksums intentionally prevent installation.
+The public `uzihaq/homebrew-tap` repository pins the immutable v0.1.0 URLs and
+SHA-256 digests. It installs native binaries directly; Node and npm are not
+runtime dependencies.
 
 `sessions install` writes
 `~/Library/LaunchAgents/tech.somewhere.sessions.dev.daemon.plist`, starts the per-user
@@ -148,7 +153,7 @@ implementation. Treat both locations as private user data.
 
 ## Upgrade
 
-Homebrew, after the public tap is announced:
+Homebrew:
 
 ```sh
 brew update

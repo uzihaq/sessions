@@ -9,9 +9,11 @@ update story.
 The checked-in Tauri application builds as `Sessions.app`. It bundles signed Go
 binaries and implements idempotent first install, health/discovery checks,
 live-session baseline verification, rollback for daemon upgrades, and a signed
-Tauri updater. The first public updater manifest is intentionally absent until
-the corresponding immutable archive is notarized and uploaded. Do not publish
-a placeholder manifest or point it at a mutable artifact.
+Tauri updater. Sessions 0.1.0 is public at the immutable GitHub tag `v0.1.0`;
+its signed updater manifest is live at
+`https://sessions.somewhere.tech/releases/latest.json`. The archive is
+Developer ID signed, notarized, stapled, and Gatekeeper accepted. Future
+versions must preserve that artifact-first publication order.
 
 Developer builds may use their own updater key:
 
@@ -114,8 +116,13 @@ zip, updater archive and signature, static runtime archives, individual
 checksums, and `checksums.txt`. It deliberately does not receive broad Somewhere
 project credentials.
 
+The initial v0.1.0 release was built and notarized on the signing Mac, then
+uploaded after all local gates and a GitHub download round-trip matched. The
+tag-triggered lane remains the required path for subsequent releases once its
+dedicated Apple certificate and notarization secrets are configured.
+
 Upload `Sessions.app.tar.gz` and its `.sig` to the immutable GitHub release tag
-first; the CI lane now performs that upload. Then use the Somewhere project's
+first; the CI lane performs that upload for subsequent versions. Then use the Somewhere project's
 `project_patch` operation to replace only `releases/latest.json` with the
 rendered manifest from the workflow. Do not deploy a one-file directory: a full
 static deploy can remove the onboarding pages. Read the file back from

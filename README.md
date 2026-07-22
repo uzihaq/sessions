@@ -23,14 +23,25 @@ agent CLI you want to run separately.
 
 ## Install
 
-Sessions.app is the primary macOS package. Its first public download will appear
-on [GitHub Releases](https://github.com/uzihaq/sessions/releases) after the
-notarized v0.1.0 release gate completes. Until then, standalone Go archives are
-the early-access and headless path.
+Sessions.app is the primary macOS package. The signed, notarized Apple Silicon
+v0.1.0 release is available from
+[GitHub Releases](https://github.com/uzihaq/sessions/releases/tag/v0.1.0) or
+Homebrew:
+
+```sh
+brew install --cask uzihaq/tap/sessions-app
+```
+
+For agents, headless machines, and Linux, install the three-binary runtime:
+
+```sh
+brew install uzihaq/tap/sessions
+sessions install
+```
 
 Release automation also produces static archives for macOS arm64 and Linux
-arm64/amd64. An authenticated agent can fetch an exact version even while the
-repository is private:
+arm64/amd64. An agent can fetch an exact immutable version without parsing a
+web page:
 
 ```sh
 VERSION=0.1.0
@@ -51,10 +62,8 @@ label explicitly with `SESSIONS_DAEMON_LABEL` when needed. Direct loopback use i
 zero-setup; LAN and remote clients normally authenticate with the token printed
 by the command. Print it again later with `sessions token`.
 
-Once the first release exists and the public Homebrew tap is populated,
-`brew install uzihaq/tap/sessions` will be the npm-like one-command runtime
-install. It is not advertised as live before that repository and its real
-checksums exist. There is no `curl | sh` installer. See
+Homebrew is the npm-like one-command runtime channel, but it installs native Go
+binaries rather than a Node wrapper. There is no `curl | sh` installer. See
 [installation details](docs/INSTALL.md) for exact archive names, agent-safe
 downloads, PATH setup, Linux startup, upgrades, and uninstalling.
 

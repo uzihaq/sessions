@@ -4,17 +4,17 @@ The native application is now the product package. The Go daemon, runner, and
 CLI remain the runtime inside that package; the React UI remains shared by the
 native client and the daemon-served browser client.
 
-## Now: ship Sessions.app for macOS
+## Shipped: Sessions.app for macOS
 
 Sessions.app proves the lifetime boundary: it provides tray status and scoped
 windows, while quitting the app leaves the daemon and every runner alive. Its
 release build now bundles the signed Go runtime and implements idempotent
 launchd installation, session-baseline rollback, and the signed updater flow.
-The remaining release work is:
+Sessions 0.1.0 shipped publicly on 2026-07-21:
 
-1. Configure the dedicated Apple and updater secrets for the tag-driven GitHub Actions release lane.
-2. Push the reviewed v0.1.0 tag; CI will repeat the full gate, notarize, verify, and publish immutable app and runtime artifacts.
-3. Promote the generated manifest on Somewhere only after those artifacts exist, then exercise the updater through the same channel customers will use.
+1. The app and nested runtime are Developer ID signed, notarized, stapled, and Gatekeeper accepted.
+2. GitHub tag `v0.1.0` publishes the native app, updater, and checksummed macOS/Linux runtime archives.
+3. Somewhere serves the byte-verified signed updater manifest, and the public Homebrew tap serves the app cask and runtime formula.
 
 The native conversation surface now treats structured provider history as its
 UI boundary. Codex app-server sessions display streaming answers, progress,
@@ -30,9 +30,9 @@ later, joint Node-to-Go cutover after the app itself has shipped.
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
 contract.
 
-## Next: Android
+## Now: exercise v0.1.0, then Android
 
-After the macOS app ships, reuse the Tauri 2 client and React UI for Android.
+Exercise the public first-install and updater route without touching the production mini. Then reuse the Tauri 2 client and React UI for Android.
 The Android app is a paired client for a user's Mac daemon, not a mobile daemon
 host. Native work includes FCM delivery over Sessions' existing encrypted push
 path, secure credential storage, widgets, and a Quick Settings entry point.

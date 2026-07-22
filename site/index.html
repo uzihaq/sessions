@@ -364,9 +364,9 @@
         <h3>On your Mac</h3>
         <p class="when">Same machine, right now — no account, no network config, nothing.</p>
         <ol class="steps">
-          <li><span class="k">1</span><code>brew install uzihaq/tap/sessions</code></li>
-          <li><span class="k">2</span><code>sessions install</code></li>
-          <li><span class="k">3</span>open the local app — done.</li>
+          <li><span class="k">1</span><code>brew install --cask uzihaq/tap/sessions-app</code></li>
+          <li><span class="k">2</span>open <code>Sessions.app</code></li>
+          <li><span class="k">3</span>first launch installs the signed runtime — done.</li>
         </ol>
         <a class="go" href="setup.html#install">Set up on this Mac →</a>
       </div>
@@ -397,29 +397,29 @@
     </div>
 
     <div class="install-box">
-      <span class="c"># Homebrew — no Node, npm, or install script:</span><br>
+      <span class="c"># Native app — signed, notarized, no Node or build tools:</span><br>
+      <span class="prompt">$</span> <span class="cmd">brew install --cask uzihaq/tap/sessions-app</span><br>
+      <span class="c"># Headless/agent runtime:</span><br>
       <span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/sessions</span><br>
       <span class="prompt">$</span> <span class="cmd">sessions install</span> &nbsp;<span class="c"># registers the daemon, prints your local URL</span><br>
-      <span class="c"># or download the static archive directly:</span><br>
-      <span class="prompt">$</span> <span class="cmd">curl -fLO https://github.com/uzihaq/sessions/releases/download/v&lt;version&gt;/sessions_&lt;version&gt;_darwin_arm64.tar.gz</span><br>
       <span class="prompt">$</span> <span class="cmd">sessions pair</span> &nbsp;<span class="c"># optional — one-time QR, per-device credential</span>
     </div>
 
-    <p class="status">Early access — once you're running, keep the <a href="docs.html">Go CLI reference</a> close for sessions, lanes, recovery, and remote access.</p>
+    <p class="status">Sessions 0.1.0 is public — once you're running, keep the <a href="docs.html">Go CLI reference</a> close for sessions, lanes, recovery, and remote access.</p>
   </section>
 
   <section id="building">
     <p class="kicker">building next</p>
-    <h2>The local core is here.<br><em>The native app is next.</em></h2>
-    <p class="lead">The durable local runtime is shipped. The next release packages it as a native Mac app, then carries the paired client to Android.</p>
+    <h2>The native Mac app is here.<br><em>Android is next.</em></h2>
+    <p class="lead">Sessions 0.1.0 packages the durable local runtime as a signed, notarized native Mac app. The next client carries the paired experience to Android.</p>
     <div class="roadmap">
-      <div class="roadmap-item"><span class="state">shipping next</span><h3>Sessions for Mac</h3><p>The signed menu-bar shell and scoped windows are built. The release step bundles and safely updates the background Go service without ever owning session lifetime.</p></div>
+      <div class="roadmap-item"><span class="state">shipped</span><h3>Sessions for Mac</h3><p>The notarized native app bundles and safely updates the background Go service without ever owning session lifetime.</p></div>
       <div class="roadmap-item"><span class="state">shipped</span><h3>Push when you are needed</h3><p>Done, waiting, and lost events already feed encrypted browser push. Android FCM delivery follows the shipped Mac app.</p></div>
       <div class="roadmap-item"><span class="state">shipped</span><h3>One worktree per task</h3><p><code>sessions new --worktree</code> creates the branch and worktree; cleanup refuses live, dirty, or unmerged work.</p></div>
       <div class="roadmap-item"><span class="state">later</span><h3>One fleet, many machines</h3><p>After the native clients: search and move work across your computers, then add an optional always-on VM through somewhere when local hardware should not be the ceiling.</p></div>
     </div>
     <p class="somewhere"><strong>Sessions stays free.</strong> <a href="https://somewhere.tech">somewhere</a> is the platform behind it — the optional home for encrypted backup and, later, always-on compute. The local runtime does not require a cloud account.</p>
-    <p class="fine">Roadmap source: <code>docs/WHY.md</code>. Mac packaging is next; Android follows after the Mac app ships. The production mini is not being cut over yet.</p>
+    <p class="fine">Roadmap source: <code>docs/WHY.md</code>. Mac v0.1.0 is public; Android follows next. The production mini is not being cut over yet.</p>
   </section>
 
   <footer>
