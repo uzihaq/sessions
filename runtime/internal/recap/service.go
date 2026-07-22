@@ -25,7 +25,10 @@ import (
 )
 
 const maxNarrativeBytes = 64 * 1024
+const maxProviderPromptBytes = 32 * 1024
+const maxProviderInputBytes = 30 * 1024
 const maxPromptActivities = 60
+const maxPromptModels = 12
 
 type DayInput struct {
 	Date       string                         `json:"date"`
@@ -37,7 +40,6 @@ type DayInput struct {
 type Document struct {
 	Date        string `json:"date"`
 	Provider    string `json:"provider"`
-	Model       string `json:"model,omitempty"`
 	GeneratedAt string `json:"generatedAt"`
 	InputDigest string `json:"inputDigest"`
 	Markdown    string `json:"markdown"`
@@ -137,12 +139,16 @@ func (s *Service) Generate(ctx context.Context, settings state.RecapSettings, in
 		if err != nil {
 			return Document{}, err
 		}
-		if current != nil && current.InputDigest == digest && current.Provider == normalized.Provider && current.Model == normalized.Model {
+		if current != nil && current.InputDigest == digest && current.Provider == normalized.Provider {
 			return *current, nil
 		}
 	}
 
-	markdown, err := s.run(ctx, normalized, recapPrompt(providerInput))
+	prompt := recapPrompt(providerInput)
+	if len(prompt) > maxProviderPromptBytes {
+		return Document{}, fmt.Errorf("daily recap prompt exceeds %d bytes", maxProviderPromptBytes)
+	}
+	markdown, err := s.run(ctx, normalized, prompt)
 	if err != nil {
 		return Document{}, err
 	}
@@ -154,7 +160,7 @@ func (s *Service) Generate(ctx context.Context, settings state.RecapSettings, in
 		return Document{}, fmt.Errorf("the recap agent returned %d bytes; expected at most %d", len(markdown), maxNarrativeBytes)
 	}
 	document := Document{
-		Date: input.Date, Provider: normalized.Provider, Model: normalized.Model,
+		Date: input.Date, Provider: normalized.Provider,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339), InputDigest: digest, Markdown: markdown,
 	}
 	if err := s.save(document); err != nil {
@@ -199,20 +205,37 @@ func encodeProviderInput(input DayInput) ([]byte, error) {
 			ProvenanceStatus: safeText(activity.ProvenanceStatus, 80),
 		})
 	}
+	models := input.Usage.Models
+	if len(models) > maxPromptModels {
+		models = models[len(models)-maxPromptModels:]
+	}
+	safeModels := make([]string, 0, len(models))
+	for _, model := range models {
+		safeModels = append(safeModels, safeText(model, 80))
+	}
 	payload := promptDay{
 		Date: input.Date, Timezone: input.Timezone, Activities: activities,
 		OmittedActivities: start,
 		Usage: promptUsage{
-			Models: append([]string(nil), input.Usage.Models...), Tokens: input.Usage.Tokens,
+			Models: safeModels, Tokens: input.Usage.Tokens,
 			CostUSD: input.Usage.CostUSD, Entries: input.Usage.Entries,
 			MissingPricing: input.Usage.MissingPricing,
 		},
 	}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("encode provider-safe daily recap input: %w", err)
+	for {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("encode provider-safe daily recap input: %w", err)
+		}
+		if len(encoded) <= maxProviderInputBytes {
+			return encoded, nil
+		}
+		if len(payload.Activities) <= 1 {
+			return nil, fmt.Errorf("provider-safe daily recap input exceeds %d bytes", maxProviderInputBytes)
+		}
+		payload.Activities = payload.Activities[1:]
+		payload.OmittedActivities++
 	}
-	return encoded, nil
 }
 
 func safeText(value string, maximumRunes int) string {
@@ -244,8 +267,8 @@ func safeTags(tags map[string]string) map[string]string {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	if len(keys) > 20 {
-		keys = keys[:20]
+	if len(keys) > 8 {
+		keys = keys[:8]
 	}
 	safe := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -350,16 +373,9 @@ func runProvider(ctx context.Context, settings state.RecapSettings, prompt strin
 
 func providerArguments(settings state.RecapSettings) []string {
 	if settings.Provider == state.RecapProviderClaude {
-		args := []string{"-p", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "text"}
-		if settings.Model != "" {
-			args = append(args, "--model", settings.Model)
-		}
-		return args
+		return []string{"-p", "--effort", "low", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "text"}
 	}
-	args := []string{"--ask-for-approval", "never"}
-	if settings.Model != "" {
-		args = append(args, "--model", settings.Model)
-	}
+	args := []string{"--ask-for-approval", "never", "-c", `model_reasoning_effort="low"`}
 	return append(args, "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never", "-")
 }
 

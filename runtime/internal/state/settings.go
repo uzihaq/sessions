@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"unicode"
 )
 
 const (
@@ -30,11 +29,10 @@ type NotifySettings struct {
 }
 
 // RecapSettings is deliberately opt-in. Provider "off" means Sessions never
-// launches a model for daily synthesis. Model is an optional provider-native
-// alias so users can choose a cheaper model their existing account exposes.
+// launches a model for daily synthesis. The selected CLI chooses its own
+// default model; Sessions only requests the provider's lowest reasoning effort.
 type RecapSettings struct {
 	Provider string `json:"provider"`
-	Model    string `json:"model,omitempty"`
 }
 
 func DefaultRecapSettings() RecapSettings {
@@ -43,18 +41,11 @@ func DefaultRecapSettings() RecapSettings {
 
 func NormalizeRecapSettings(settings RecapSettings) (RecapSettings, error) {
 	settings.Provider = strings.ToLower(strings.TrimSpace(settings.Provider))
-	settings.Model = strings.TrimSpace(settings.Model)
 	if settings.Provider == "" {
 		settings.Provider = RecapProviderOff
 	}
 	if settings.Provider != RecapProviderOff && settings.Provider != RecapProviderCodex && settings.Provider != RecapProviderClaude {
 		return RecapSettings{}, fmt.Errorf("unknown recap provider %q; choose off, codex, or claude", settings.Provider)
-	}
-	if len(settings.Model) > 120 {
-		return RecapSettings{}, errors.New("recap model must be at most 120 characters")
-	}
-	if strings.IndexFunc(settings.Model, unicode.IsControl) >= 0 {
-		return RecapSettings{}, errors.New("recap model cannot contain control characters")
 	}
 	return settings, nil
 }

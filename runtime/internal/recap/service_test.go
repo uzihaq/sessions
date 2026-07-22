@@ -10,11 +10,11 @@ import (
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
-func TestGenerateCachesByInputProviderAndModel(t *testing.T) {
+func TestGenerateCachesByInputAndProvider(t *testing.T) {
 	calls := 0
 	service := NewServiceWithRunner(t.TempDir(), func(_ context.Context, settings state.RecapSettings, prompt string) (string, error) {
 		calls++
-		if settings.Provider != state.RecapProviderCodex || settings.Model != "luna" {
+		if settings.Provider != state.RecapProviderCodex {
 			t.Fatalf("settings = %#v", settings)
 		}
 		if !strings.Contains(prompt, "SESSIONS_DAY_JSON") || !strings.Contains(prompt, "Session A") {
@@ -26,7 +26,7 @@ func TestGenerateCachesByInputProviderAndModel(t *testing.T) {
 		return "# Daily recap\n\nWorked on Sessions.", nil
 	})
 	input := DayInput{Date: "2026-07-22", Timezone: "America/Los_Angeles", Activities: []session.DailyActivity{{ID: "private-session-id", Name: "Session A"}}}
-	settings := state.RecapSettings{Provider: "CODEX", Model: " luna "}
+	settings := state.RecapSettings{Provider: "CODEX"}
 	first, err := service.Generate(context.Background(), settings, input, false)
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +40,31 @@ func TestGenerateCachesByInputProviderAndModel(t *testing.T) {
 	}
 	if _, err := service.Generate(context.Background(), state.DefaultRecapSettings(), input, false); err == nil {
 		t.Fatal("off recap unexpectedly generated")
+	}
+}
+
+func TestProviderInputHasHardByteBoundAndKeepsLatestActivity(t *testing.T) {
+	activities := make([]session.DailyActivity, maxPromptActivities)
+	for index := range activities {
+		activities[index] = session.DailyActivity{
+			ID: fmt.Sprintf("secret-id-%d", index), Name: strings.Repeat("activity ", 50),
+			Summary: strings.Repeat("large summary ", 80), Tags: map[string]string{"large": strings.Repeat("value ", 80)},
+		}
+	}
+	activities[len(activities)-1].Name = "latest-activity-kept"
+	encoded, err := encodeProviderInput(DayInput{Date: "2026-07-22", Activities: activities})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maxProviderInputBytes {
+		t.Fatalf("provider input = %d bytes, want at most %d", len(encoded), maxProviderInputBytes)
+	}
+	if len(recapPrompt(encoded)) > maxProviderPromptBytes {
+		t.Fatalf("provider prompt = %d bytes, want at most %d", len(recapPrompt(encoded)), maxProviderPromptBytes)
+	}
+	text := string(encoded)
+	if !strings.Contains(text, "latest-activity-kept") || !strings.Contains(text, `"omittedActivities":`) {
+		t.Fatalf("bounded provider input did not preserve latest work or omission count: %s", text)
 	}
 }
 
@@ -68,15 +93,18 @@ func TestProviderInputAliasesHierarchyAndBoundsActivityCount(t *testing.T) {
 }
 
 func TestProviderArgumentsDisableToolsAndPersistence(t *testing.T) {
-	claude := strings.Join(providerArguments(state.RecapSettings{Provider: state.RecapProviderClaude, Model: "tera"}), " ")
-	if !strings.Contains(claude, "--tools  --strict-mcp-config --no-session-persistence") || !strings.Contains(claude, "--model tera") {
+	claude := strings.Join(providerArguments(state.RecapSettings{Provider: state.RecapProviderClaude}), " ")
+	if !strings.Contains(claude, "--effort low") || !strings.Contains(claude, "--tools  --strict-mcp-config --no-session-persistence") || strings.Contains(claude, "--model") {
 		t.Fatalf("claude args = %q", claude)
 	}
-	codex := strings.Join(providerArguments(state.RecapSettings{Provider: state.RecapProviderCodex, Model: "luna"}), " ")
-	for _, required := range []string{"--ask-for-approval never", "--model luna", "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox read-only"} {
+	codex := strings.Join(providerArguments(state.RecapSettings{Provider: state.RecapProviderCodex}), " ")
+	for _, required := range []string{"--ask-for-approval never", `model_reasoning_effort="low"`, "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox read-only"} {
 		if !strings.Contains(codex, required) {
 			t.Fatalf("codex args %q missing %q", codex, required)
 		}
+	}
+	if strings.Contains(codex, "--model") {
+		t.Fatalf("codex args hardcode a model: %q", codex)
 	}
 }
 

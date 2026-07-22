@@ -113,6 +113,21 @@ export async function getNativeRuntimeStatus(): Promise<NativeRuntimeStatus | nu
   return invoke<NativeRuntimeStatus>('runtime_status');
 }
 
+export interface SomewhereCLIStatus {
+  installed: boolean;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  installCommand: string;
+  updateCommand: string;
+  detail: string;
+}
+
+export async function getSomewhereCLIStatus(): Promise<SomewhereCLIStatus | null> {
+  if (!isTauri()) return null;
+  return invoke<SomewhereCLIStatus>('somewhere_cli_status');
+}
+
 export interface NativeUpdateInfo {
   currentVersion: string;
   version: string;

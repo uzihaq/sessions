@@ -8,6 +8,7 @@ import {
   type NativeConnectionSettings
 } from '../lib/tauriBridge';
 import { configureNativeLocalPort } from '../lib/servers';
+import { SomewhereCard } from './SomewhereCard';
 
 interface RemoteState {
   enabled: boolean;
@@ -189,6 +190,8 @@ export function ConnectionsView(): JSX.Element {
             </div>
           ) : null}
         </section>
+
+        <SomewhereCard />
       </div>
     </div>
   );

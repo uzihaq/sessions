@@ -35,9 +35,11 @@ contract.
 The next Mac release is implemented in source and awaits the user's local app test. It adds a polished Today journal
 with local usage and session/lane evidence plus an opt-in, cached Codex-or-Claude daily recap; a native Connections
 center for loopback port, same-Wi-Fi LAN, Tailscale Serve, and one-time device pairing; and automatic signed-update
-discovery with an in-app badge and once-per-version native notification. Model calls remain off by default, Codex is
-recommended, compact provider input is bounded and excludes transcripts and durable session IDs, and update install
-remains explicit.
+discovery with an in-app badge and once-per-version native notification. Connections also promotes the optional
+Somewhere platform and reports whether its CLI is absent, current, or updateable without mutating the user's global
+install. Model calls remain off by default, Codex is recommended, the CLI chooses its default model, recap effort is
+set to the lowest supported provider setting, provider input is hard-capped at 32 KiB and excludes transcripts and
+durable session IDs, and update install remains explicit (`runtime/internal/recap/service.go`, `src-tauri/src/lib.rs`).
 
 Exercise that source build and the existing public first-install/updater route without touching the production mini.
 Then reuse the Tauri 2 client and React UI for Android.

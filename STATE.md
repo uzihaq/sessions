@@ -99,15 +99,18 @@ paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTE
 ## Implemented in source for the next Mac release (2026-07-22; not public yet)
 - A polished **Today** journal combines authoritative local usage totals with the day's session/lane hierarchy,
   summaries, tags, projects, and outcomes. Written synthesis is opt-in (`off` by default), recommends the user's
-  already-authenticated Codex CLI, supports Claude and an optional provider-native cheap-model alias, makes one
-  call (Codex ephemeral/read-only with user configuration and rules ignored; Claude tool-disabled and session-less),
-  sends bounded compact metadata rather than transcripts or durable session IDs, and caches the Markdown locally
-  by day/input/provider/model.
+  already-authenticated Codex CLI, supports Claude, and lets the selected CLI choose its default model. Each manual
+  call requests the lowest supported reasoning effort (Codex ephemeral/read-only with user configuration and rules
+  ignored; Claude tool-disabled and session-less), sends at most 32 KiB of compact metadata rather than transcripts
+  or durable session IDs, and caches the Markdown locally by day/input/provider
+  (`runtime/internal/recap/service.go`, `frontend/src/components/TodayView.tsx`).
 - A native **Connections** center exposes the real access ladder: this Mac, same-Wi-Fi LAN, and tailnet-only
   Tailscale Serve. It creates single-use device pairing links, explains the Certificate Transparency tradeoff,
   and can safely change the installed daemon's loopback port. Port migration captures the live-runner baseline,
   verifies re-adoption on the new port, and restores the old service even if an unrelated process races onto the
-  requested port.
+  requested port. An optional Somewhere card links to `somewhere.tech`, detects the local Somewhere CLI version,
+  checks for an available npm release, and offers copyable install/update/docs commands without auto-installing or
+  changing the global CLI (`src-tauri/src/lib.rs`, `frontend/src/components/SomewhereCard.tsx`).
 - The signed updater now checks quietly on launch and every six hours, shows an in-app badge, and sends at most one
   native notification per available version. Installation remains an explicit user action; relaunch still replaces
   only the UI while launchd and every runner remain alive.

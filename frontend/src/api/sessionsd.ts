@@ -286,7 +286,6 @@ export type RecapProvider = 'off' | 'codex' | 'claude';
 
 export interface RecapSettings {
   provider: RecapProvider;
-  model?: string;
 }
 
 export interface RecapActivity {
@@ -311,7 +310,6 @@ export interface RecapActivity {
 export interface RecapDocument {
   date: string;
   provider: Exclude<RecapProvider, 'off'>;
-  model?: string;
   generatedAt: string;
   inputDigest: string;
   markdown: string;

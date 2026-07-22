@@ -67,16 +67,17 @@ and its runners continue independently.
 
 ## Mac management surfaces
 
-The shared React client now has two native-oriented product surfaces:
+The shared React client now has native-oriented product surfaces:
 
 - **Today** renders local day totals plus factual session/lane activity without
   requiring a model. Written recap generation is opt-in and off by default. It
-  uses one pre-authenticated Codex or Claude CLI call. Codex runs ephemeral and
-  read-only with user configuration and rules ignored; Claude runs without
-  tools or session persistence. The service bounds the number and size of
-  activity summaries, replaces durable IDs with per-call aliases, omits full
-  transcripts, and caches the Markdown under daemon state by
-  date/input/provider/model.
+  uses one pre-authenticated Codex or Claude CLI call and never overrides the
+  CLI's default model. Codex runs ephemeral and read-only with user configuration
+  and rules ignored; Claude runs without tools or session persistence. Both use
+  the lowest supported reasoning effort. The service passes the prompt on stdin,
+  hard-caps provider-safe input at 32 KiB, replaces durable IDs with per-call
+  aliases, omits full transcripts, and caches the Markdown under daemon state by
+  date/input/provider (`runtime/internal/recap/service.go`).
 - **Connections** exposes loopback, same-Wi-Fi LAN, Tailscale Serve, and
   one-time device pairing in one ladder. It uses the bundled CLI for the same
   verified LAN/remote/pairing behavior as terminal users. Changing the
@@ -85,6 +86,12 @@ The shared React client now has two native-oriented product surfaces:
   re-adoption, persists the preference, and restores the prior port and plist
   on failure. A process which races onto the requested new port cannot prevent
   that restoration.
+- **Somewhere** is an optional card within Connections, not a Sessions account
+  requirement. The native command reports whether the CLI is installed, its
+  version, and whether the npm registry advertises a newer release. The card
+  links to `somewhere.tech` and copies the relevant install/update/docs command;
+  it never mutates the user's global CLI (`src-tauri/src/lib.rs`,
+  `frontend/src/components/SomewhereCard.tsx`).
 
 Neither surface changes ownership: Tauri remains a client/management plane,
 sessionsd remains launchd-owned, and every active session remains runner-owned.

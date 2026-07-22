@@ -16,7 +16,7 @@ func TestRecapSettingsAndGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	daemon.handler.recaps = recap.NewServiceWithRunner(daemon.config.StateRoot, func(_ context.Context, settings state.RecapSettings, prompt string) (string, error) {
-		if settings.Provider != state.RecapProviderCodex || settings.Model != "luna" {
+		if settings.Provider != state.RecapProviderCodex {
 			t.Fatalf("settings = %#v", settings)
 		}
 		if !strings.Contains(prompt, `"date":"2026-07-22"`) {
@@ -29,7 +29,7 @@ func TestRecapSettingsAndGeneration(t *testing.T) {
 	if off.Code != http.StatusOK || !strings.Contains(off.Body.String(), `"provider":"off"`) {
 		t.Fatalf("off settings: status=%d body=%s", off.Code, off.Body.String())
 	}
-	updated := serve(t, daemon.handler, http.MethodPut, "/api/recap/settings", strings.NewReader(`{"provider":"codex","model":"luna"}`), "127.0.0.1:1", nil)
+	updated := serve(t, daemon.handler, http.MethodPut, "/api/recap/settings", strings.NewReader(`{"provider":"codex"}`), "127.0.0.1:1", nil)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update settings: status=%d body=%s", updated.Code, updated.Body.String())
 	}

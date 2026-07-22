@@ -61,11 +61,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 }
 
 func TestNormalizeRecapSettings(t *testing.T) {
-	settings, err := NormalizeRecapSettings(RecapSettings{Provider: " CODEX ", Model: " luna "})
+	settings, err := NormalizeRecapSettings(RecapSettings{Provider: " CODEX "})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if settings.Provider != RecapProviderCodex || settings.Model != "luna" {
+	if settings.Provider != RecapProviderCodex {
 		t.Fatalf("settings = %#v", settings)
 	}
 	if _, err := NormalizeRecapSettings(RecapSettings{Provider: "hosted"}); err == nil {

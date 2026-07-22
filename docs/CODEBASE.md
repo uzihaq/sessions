@@ -12,7 +12,9 @@ each claim when behavior changes. Protocol compatibility requirements live in
 around the shared React build. `src-tauri/src/lib.rs` owns native window and
 tray behavior: scoped server/tool/session windows, persisted window geometry,
 local status polling, native LAN/remote/pairing commands, configurable daemon
-port state, and lifecycle status exposed to the frontend.
+port state, Somewhere CLI version/update discovery, and lifecycle status exposed
+to the frontend. The Somewhere command is read-only; its card only copies
+explicit install/update/docs commands (`frontend/src/components/SomewhereCard.tsx`).
 `scripts/build-app-runtime.sh` builds and signs the three arm64 Go binaries,
 while `src-tauri/src/lifecycle.rs` verifies their manifest, stages immutable
 runtime versions, installs `tech.somewhere.sessions.daemon`, waits for health
@@ -199,9 +201,12 @@ pre-authenticated Codex CLI in an ephemeral read-only sandbox with user
 configuration and rules ignored, or Claude with tools and session persistence
 disabled. Provider API-key environment variables are stripped so this feature
 uses the CLI's existing account authentication rather than silently changing
-billing paths. Documents are keyed by date and cached
-by the factual input digest plus provider/model; this package never calculates
-usage totals or owns provider credentials.
+billing paths. Sessions does not supply a model override; each CLI chooses its
+default while the service requests its lowest supported reasoning effort. The
+provider-safe JSON is passed over stdin, hard-capped at 32 KiB, and never placed
+in a visible composer. Documents are keyed by date and cached by the factual
+input digest plus provider; this package never calculates usage totals or owns
+provider credentials.
 
 ### `recovery`
 
@@ -239,7 +244,7 @@ attached session's replay/event state (`runtime/internal/state/config.go`,
 `runtime/internal/state/registry.go`, `runtime/internal/state/session.go`).
 Runner artifacts have defined suffixes in `runtime/internal/state/paths.go`,
 and the in-memory replay plus persisted event log are bounded. Additive daemon
-settings persist notification, LAN, and opt-in recap provider/model choices
+settings persist notification, LAN, and opt-in recap provider choices
 without coupling them to runner state (`runtime/internal/state/settings.go`). This is
 low-level runtime state; product lifecycle policy stays in `internal/session`.
 

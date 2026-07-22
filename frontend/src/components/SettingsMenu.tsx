@@ -441,18 +441,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
                 <option value="claude">Claude</option>
               </select>
             </label>
-            <label className="settings-menu-field">
-              <span>Cheap model override</span>
-              <input
-                className="settings-menu-input"
-                value={recapSettings.model ?? ''}
-                disabled={recapBusy || recapSettings.provider === 'off'}
-                onChange={(event) => setRecapSettings({ ...recapSettings, model: event.currentTarget.value })}
-                onBlur={() => void saveRecapSettings(recapSettings)}
-                placeholder="Provider default, tera, or luna"
-              />
-            </label>
-            <span className="settings-menu-field-hint">One compact, manually requested call. Full transcripts are not sent.</span>
+            <span className="settings-menu-field-hint">One manually requested call, capped at 32 KiB and lowest reasoning effort. Your CLI chooses its default model; full transcripts are never sent.</span>
             {recapMessage ? <div className="settings-menu-status">{recapMessage}</div> : null}
           </div>
           {isTauri() ? (

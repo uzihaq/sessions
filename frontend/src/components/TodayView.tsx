@@ -138,15 +138,6 @@ export function TodayView(): JSX.Element {
                     <option value="codex">Codex · recommended</option>
                     <option value="claude">Claude</option>
                   </select>
-                  <input
-                    type="text"
-                    value={day.settings.model ?? ''}
-                    disabled={day.settings.provider === 'off' || savingSettings || generating}
-                    onChange={(event) => setDay({ ...day, settings: { ...day.settings, model: event.currentTarget.value } })}
-                    onBlur={() => void saveSettings(day.settings)}
-                    placeholder="Default model, or tera/luna"
-                    aria-label="Optional recap model"
-                  />
                   <button type="button" className="btn today-generate" disabled={day.settings.provider === 'off' || generating || savingSettings} onClick={() => void generate()}>
                     {generating ? 'Writing…' : day.document ? 'Refresh recap' : 'Generate recap'}
                   </button>
@@ -161,12 +152,12 @@ export function TodayView(): JSX.Element {
               ) : day.document ? (
                 <>
                   <div className="today-markdown" dangerouslySetInnerHTML={{ __html: renderContent(day.document.markdown) }} />
-                  <footer>Generated {new Date(day.document.generatedAt).toLocaleString()} with {day.document.provider}{day.document.model ? ` · ${day.document.model}` : ''}. Stored only on this Mac.</footer>
+                  <footer>Generated {new Date(day.document.generatedAt).toLocaleString()} with {day.document.provider}. Final answer stored only on this Mac.</footer>
                 </>
               ) : (
                 <div className="today-opt-in">
                   <strong>Ready to write with {day.settings.provider === 'codex' ? 'Codex' : 'Claude'}.</strong>
-                  <p>Sessions sends only this day’s compact metadata, final summaries, tags, and authoritative totals—not full transcripts.</p>
+                  <p>Sessions sends at most 32 KiB of compact metadata, final summaries, tags, and authoritative totals—not full transcripts. Your CLI chooses its default model.</p>
                 </div>
               )}
             </section>
