@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
 )
 
 func TestLaunchdRunnerProgramArguments(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 // NewLocalService applies the daemon's local state and provider-profile roots

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
 )
 
 func TestProfileMetadataSurvivesRunnerDiscovery(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestWaitStateReportsClassifierEvidence(t *testing.T) {

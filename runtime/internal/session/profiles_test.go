@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	"github.com/uzihaq/sessions/runtime/internal/state"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 func TestProfileCreateInjectsPrivateToolHomesAndRecordsProvenance(t *testing.T) {

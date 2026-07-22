@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
 )
 
 func TestDiscoveryAttachesKnownSocketsAndPreservesUnknownOnes(t *testing.T) {

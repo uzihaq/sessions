@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/uzihaq/sessions/runtime/internal/integrations"
+	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
 )
 
 func (s *Server) handleIntegrationsRoute(response http.ResponseWriter, request *http.Request, corsOrigin string) bool {

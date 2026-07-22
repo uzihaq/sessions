@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 type SessionCreator interface {

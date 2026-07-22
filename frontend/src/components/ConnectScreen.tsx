@@ -220,7 +220,7 @@ export function ConnectScreen({
           <ol>
             <li>
               <span>Install and start Sessions on the Mac that owns your sessions.</span>
-              <code>brew install uzihaq/tap/sessions &amp;&amp; sessions install</code>
+              <code>brew install somewhere-tech/tap/sessions &amp;&amp; sessions install</code>
             </li>
             <li>
               <span>Enable direct HTTPS access over your own Tailscale network.</span>

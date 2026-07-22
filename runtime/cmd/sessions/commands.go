@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 var keyBytes = map[string]string{

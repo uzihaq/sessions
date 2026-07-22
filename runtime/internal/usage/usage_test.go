@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestReportIndexesClaudeAndCodexIncrementallyWithTags(t *testing.T) {

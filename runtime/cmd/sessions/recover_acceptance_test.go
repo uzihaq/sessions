@@ -12,14 +12,14 @@ import (
 	"strings"
 	"testing"
 
-	daemonapi "github.com/uzihaq/sessions/runtime/internal/api"
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	"github.com/uzihaq/sessions/runtime/internal/recovery"
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
-	"github.com/uzihaq/sessions/runtime/internal/state"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
+	daemonapi "github.com/somewhere-tech/sessions/runtime/internal/api"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/recovery"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 func TestRecoverCLIEndToEndAgainstScratchManager(t *testing.T) {

@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	"golang.org/x/crypto/hkdf"
 )
 

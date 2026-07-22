@@ -33,9 +33,9 @@ transfer needed — the durable record IS the handoff.
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/sessions/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
-- **Sessions 0.1.0 is public and shipped.** Tag `v0.1.0` points to `b297052`; the repository and 13-asset
+- **Sessions 0.1.0 is public and shipped under `Somewhere-Tech/sessions`.** Tag `v0.1.0` points to `b297052`; the repository and 13-asset
   GitHub release are public, Sessions.app is notarized/stapled/Gatekeeper-accepted, the signed updater manifest
-  is live at `https://sessions.somewhere.tech/releases/latest.json`, and `uzihaq/homebrew-tap` serves both the
+  is live at `https://sessions.somewhere.tech/releases/latest.json`, and `somewhere-tech/homebrew-tap` serves both the
   `sessions` runtime formula and `sessions-app` cask.
 - Cron is OFF. soak-d2 is the sacred durable session (survives every reload; verify it lives after any
   daemon restart).

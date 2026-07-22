@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/claudep"
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/claudep"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 // claudeStructuredRunner is the durable socket/history owner for a structured

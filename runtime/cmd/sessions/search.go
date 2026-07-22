@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	historysearch "github.com/uzihaq/sessions/runtime/internal/search"
+	historysearch "github.com/somewhere-tech/sessions/runtime/internal/search"
 )
 
 func (a *app) cmdSearch(args []string) error {

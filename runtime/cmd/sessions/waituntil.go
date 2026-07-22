@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/waitcond"
+	"github.com/somewhere-tech/sessions/runtime/internal/waitcond"
 )
 
 const waitUntilUsage = "usage: sessions wait <id> --until commit [--timeout 30s] | sessions wait <id> --until-file-contains FILE STRING [--timeout 30s] | sessions wait <id> --until-idle-stable DUR [--timeout 30s] [--any]"

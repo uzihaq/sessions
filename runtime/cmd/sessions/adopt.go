@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/uzihaq/sessions/runtime/internal/recovery"
+	"github.com/somewhere-tech/sessions/runtime/internal/recovery"
 )
 
 func (a *app) cmdAdopt(args []string) error {

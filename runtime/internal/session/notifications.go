@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/claudep"
-	"github.com/uzihaq/sessions/runtime/internal/codexapp"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/claudep"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 type queuedSessionNotification struct {

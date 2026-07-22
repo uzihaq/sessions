@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	historysearch "github.com/uzihaq/sessions/runtime/internal/search"
+	historysearch "github.com/somewhere-tech/sessions/runtime/internal/search"
 )
 
 func (s *Server) handleSearchRoute(response http.ResponseWriter, request *http.Request, corsOrigin string) bool {

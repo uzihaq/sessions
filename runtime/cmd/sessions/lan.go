@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"time"
 
-	lanutil "github.com/uzihaq/sessions/runtime/internal/lan"
+	lanutil "github.com/somewhere-tech/sessions/runtime/internal/lan"
 )
 
 type lanState struct {

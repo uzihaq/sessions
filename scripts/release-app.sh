@@ -66,7 +66,7 @@ if [[ "$(tr -d '\r\n' < "$KEY_PATH.pub")" != "$(tr -d '\r\n' < "$EXPECTED_PUBLIC
 fi
 
 ARTIFACT_NAME="Sessions.app.tar.gz"
-ARTIFACT_URL="https://github.com/uzihaq/sessions/releases/download/v${VERSION}/${ARTIFACT_NAME}"
+ARTIFACT_URL="https://github.com/somewhere-tech/sessions/releases/download/v${VERSION}/${ARTIFACT_NAME}"
 OUTPUT_DIR="$ROOT/release/out/v${VERSION}"
 APP="$ROOT/src-tauri/target/release/bundle/macos/Sessions.app"
 ARTIFACT="$ROOT/src-tauri/target/release/bundle/macos/$ARTIFACT_NAME"

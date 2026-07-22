@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
 )
 
 type profileService interface {

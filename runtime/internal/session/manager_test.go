@@ -13,12 +13,12 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/uzihaq/sessions/runtime/internal/claudep"
-	"github.com/uzihaq/sessions/runtime/internal/codexapp"
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/claudep"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 type recordingUsage struct {

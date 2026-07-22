@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/uzihaq/sessions/runtime/internal/verdict"
+	"github.com/somewhere-tech/sessions/runtime/internal/verdict"
 )
 
 func (s *Server) handleVerdictRoute(

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	verdictprotocol "github.com/uzihaq/sessions/runtime/internal/verdict"
+	verdictprotocol "github.com/somewhere-tech/sessions/runtime/internal/verdict"
 )
 
 func (a *app) cmdVerdict(args []string) error {

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/uzihaq/sessions/runtime/internal/codexapp"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func listLiveCodexModels(ctx context.Context, codexPath string) ([]codexapp.Model, error) {

@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	daemonapi "github.com/uzihaq/sessions/runtime/internal/api"
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	daemonapi "github.com/somewhere-tech/sessions/runtime/internal/api"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestStatusJSONCarriesProfileAndConfigDir(t *testing.T) {

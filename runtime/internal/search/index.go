@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/uzihaq/sessions/runtime/internal/integrations"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	_ "modernc.org/sqlite"
 )
 

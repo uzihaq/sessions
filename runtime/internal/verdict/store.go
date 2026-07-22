@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
 )
 
 const maxRecordBytes = 2*1024*1024 + 64*1024

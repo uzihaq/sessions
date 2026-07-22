@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	historysearch "github.com/uzihaq/sessions/runtime/internal/search"
+	historysearch "github.com/somewhere-tech/sessions/runtime/internal/search"
 )
 
 func TestSearchCLIForwardsFiltersAndGroupsHumanOutput(t *testing.T) {

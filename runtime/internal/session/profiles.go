@@ -9,7 +9,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 type ProfileSession struct {

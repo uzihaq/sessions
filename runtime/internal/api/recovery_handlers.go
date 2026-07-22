@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/recovery"
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/recovery"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
 )
 
 // Recovery mutations are serialized inside one daemon. Together with the

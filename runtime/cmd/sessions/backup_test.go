@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	backupstore "github.com/uzihaq/sessions/runtime/internal/backup"
+	backupstore "github.com/somewhere-tech/sessions/runtime/internal/backup"
 )
 
 func TestBackupEnableStatusAndNow(t *testing.T) {

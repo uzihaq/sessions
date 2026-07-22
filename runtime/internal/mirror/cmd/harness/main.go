@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/uzihaq/sessions/runtime/internal/mirror"
+	"github.com/somewhere-tech/sessions/runtime/internal/mirror"
 )
 
 type result struct {

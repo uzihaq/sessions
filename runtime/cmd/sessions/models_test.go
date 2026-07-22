@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/uzihaq/sessions/runtime/internal/codexapp"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
 )
 
 func TestModelsCommandPrintsHumanAndJSONCatalog(t *testing.T) {

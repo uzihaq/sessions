@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 // handleWaitRoute exposes only the daemon facts needed by observational

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/uzihaq/sessions/runtime/internal/usage"
+	"github.com/somewhere-tech/sessions/runtime/internal/usage"
 )
 
 func (a *app) cmdUsage(args []string) error {

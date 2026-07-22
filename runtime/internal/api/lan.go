@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	lanutil "github.com/uzihaq/sessions/runtime/internal/lan"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	lanutil "github.com/somewhere-tech/sessions/runtime/internal/lan"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 type LANState struct {

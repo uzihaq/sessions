@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/codexapp"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
 )
 
 type cliFailure struct {

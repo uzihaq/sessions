@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/backup"
-	"github.com/uzihaq/sessions/runtime/internal/state"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
+	"github.com/somewhere-tech/sessions/runtime/internal/backup"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 const SchemaVersion = 1

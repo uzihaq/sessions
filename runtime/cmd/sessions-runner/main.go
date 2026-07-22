@@ -24,8 +24,8 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 const idleShutdown = 30 * time.Second

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	historysearch "github.com/uzihaq/sessions/runtime/internal/search"
-	"github.com/uzihaq/sessions/runtime/internal/state"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
+	historysearch "github.com/somewhere-tech/sessions/runtime/internal/search"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {

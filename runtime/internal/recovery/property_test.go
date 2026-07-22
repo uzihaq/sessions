@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/quick"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
 )
 
 func TestRecoveryClassificationPropertiesRandomFleets(t *testing.T) {

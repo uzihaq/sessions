@@ -13,7 +13,7 @@ the runtime independent of npm, install scripts, and node-gyp.
 5. Dumb pipe: zero LLM calls, observation never interpretation. Sessions are sacred: no code path may mass-remove runners without an explicit forced flag (the mass-kill guard is IN the design here).
 
 ## Module layout
-module github.com/uzihaq/sessions/runtime
+module github.com/somewhere-tech/sessions/runtime
   cmd/sessionsd/   — daemon main
   cmd/sessions-runner/    — runner main
   cmd/sessions/    — CLI main

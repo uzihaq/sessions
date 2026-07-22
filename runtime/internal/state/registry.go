@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
 )
 
 const (

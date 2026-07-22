@@ -25,17 +25,17 @@ agent CLI you want to run separately.
 
 Sessions.app is the primary macOS package. The signed, notarized Apple Silicon
 v0.1.0 release is available from
-[GitHub Releases](https://github.com/uzihaq/sessions/releases/tag/v0.1.0) or
+[GitHub Releases](https://github.com/somewhere-tech/sessions/releases/tag/v0.1.0) or
 Homebrew:
 
 ```sh
-brew install --cask uzihaq/tap/sessions-app
+brew install --cask somewhere-tech/tap/sessions-app
 ```
 
 For agents, headless machines, and Linux, install the three-binary runtime:
 
 ```sh
-brew install uzihaq/tap/sessions
+brew install somewhere-tech/tap/sessions
 sessions install
 ```
 
@@ -46,7 +46,7 @@ web page:
 ```sh
 VERSION=0.1.0
 ARCHIVE="sessions_${VERSION}_darwin_arm64.tar.gz"
-gh release download "v${VERSION}" --repo uzihaq/sessions \
+gh release download "v${VERSION}" --repo somewhere-tech/sessions \
   --pattern "$ARCHIVE" --pattern "$ARCHIVE.sha256"
 shasum -a 256 -c "$ARCHIVE.sha256"
 tar -xzf "$ARCHIVE"

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestSimilarLaneDeathsCoalesceAtThirdNotification(t *testing.T) {

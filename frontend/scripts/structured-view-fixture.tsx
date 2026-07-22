@@ -37,7 +37,7 @@ const events: StructuredSessionEvent[] = [
     item: {
       id: 'command-1', type: 'commandExecution', status: 'completed',
       command: 'go test ./...', cwd: '/Users/uzair/sessions',
-      aggregatedOutput: 'ok   github.com/uzihaq/sessions/runtime/internal/codexapp\n',
+      aggregatedOutput: 'ok   github.com/somewhere-tech/sessions/runtime/internal/codexapp\n',
       exitCode: 0, durationMs: 881
     }
   },

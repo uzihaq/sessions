@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/codexapp"
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 const structuredScannerBuffer = 8 * 1024 * 1024

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
 )
 
 func TestDecodeRejectsJunk(t *testing.T) {

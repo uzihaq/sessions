@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/uzihaq/sessions/runtime/internal/migrate"
+	"github.com/somewhere-tech/sessions/runtime/internal/migrate"
 )
 
 func (s *Server) handleMoveRoute(response http.ResponseWriter, request *http.Request, corsOrigin string) bool {

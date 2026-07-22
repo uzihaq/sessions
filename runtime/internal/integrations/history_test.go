@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestHistoryNormalizesCodexRolloutThroughWatchContract(t *testing.T) {

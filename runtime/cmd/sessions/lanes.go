@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/waitcond"
+	"github.com/somewhere-tech/sessions/runtime/internal/waitcond"
 )
 
 const laneExitKind waitcond.Kind = "lane_exit"

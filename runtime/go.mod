@@ -1,4 +1,4 @@
-module github.com/uzihaq/sessions/runtime
+module github.com/somewhere-tech/sessions/runtime
 
 go 1.26.5
 

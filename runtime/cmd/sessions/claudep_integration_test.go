@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/api"
-	"github.com/uzihaq/sessions/runtime/internal/claudep"
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/api"
+	"github.com/somewhere-tech/sessions/runtime/internal/claudep"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 // Run explicitly with:

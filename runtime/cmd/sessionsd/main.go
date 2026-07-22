@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/api"
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/session"
-	"github.com/uzihaq/sessions/runtime/internal/state"
-	"github.com/uzihaq/sessions/runtime/internal/usage"
+	"github.com/somewhere-tech/sessions/runtime/internal/api"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/usage"
 )
 
 var anyHosts = map[string]struct{}{"0.0.0.0": {}, "::": {}, "::0": {}, "*": {}}

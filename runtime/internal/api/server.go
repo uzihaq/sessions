@@ -17,13 +17,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/uzihaq/sessions/runtime/internal/backup"
-	"github.com/uzihaq/sessions/runtime/internal/integrations"
-	sessionruntime "github.com/uzihaq/sessions/runtime/internal/session"
-	"github.com/uzihaq/sessions/runtime/internal/state"
-	"github.com/uzihaq/sessions/runtime/internal/usage"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
-	"github.com/uzihaq/sessions/runtime/internal/webassets"
+	"github.com/somewhere-tech/sessions/runtime/internal/backup"
+	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
+	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/usage"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
+	"github.com/somewhere-tech/sessions/runtime/internal/webassets"
 )
 
 const (

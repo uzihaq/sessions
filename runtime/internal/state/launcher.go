@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
 )
 
 // LaunchdLauncher boots the plist already written by Registry and then

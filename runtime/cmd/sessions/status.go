@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	verdictprotocol "github.com/uzihaq/sessions/runtime/internal/verdict"
+	verdictprotocol "github.com/somewhere-tech/sessions/runtime/internal/verdict"
 )
 
 type gitStatus struct {

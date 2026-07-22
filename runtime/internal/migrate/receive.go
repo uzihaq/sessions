@@ -13,8 +13,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 var providerUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f-]{8,}$`)

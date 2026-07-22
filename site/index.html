@@ -316,7 +316,7 @@
         <p><code>sessions backup … --encrypt</code> applies XChaCha20-Poly1305 on your Mac before your history reaches your own somewhere project. The recovery key stays with you; nobody without it — including us — can read the backup.</p>
       </div>
     </div>
-    <p class="toolbelt"><strong>Built for agents running agents:</strong> install the bundled <a href="https://github.com/uzihaq/sessions/blob/main/skills/sessions/SKILL.md">sessions skill</a>, use <code>--mine</code> to query work by provenance, and add <code>--description</code> so every lane says why it exists. If you omit one, sessions can derive the purpose from the first message.</p>
+    <p class="toolbelt"><strong>Built for agents running agents:</strong> install the bundled <a href="https://github.com/somewhere-tech/sessions/blob/main/skills/sessions/SKILL.md">sessions skill</a>, use <code>--mine</code> to query work by provenance, and add <code>--description</code> so every lane says why it exists. If you omit one, sessions can derive the purpose from the first message.</p>
     <p class="fine">Feature sources: <code>docs/WHY.md</code>, <code>docs/CLI.md</code>, <code>runtime/cmd/sessions/help.go</code>, <code>runtime/internal/api/pair.go</code>, and <code>runtime/internal/backup/encrypt.go</code>.</p>
   </section>
 
@@ -364,7 +364,7 @@
         <h3>On your Mac</h3>
         <p class="when">Same machine, right now — no account, no network config, nothing.</p>
         <ol class="steps">
-          <li><span class="k">1</span><code>brew install --cask uzihaq/tap/sessions-app</code></li>
+          <li><span class="k">1</span><code>brew install --cask somewhere-tech/tap/sessions-app</code></li>
           <li><span class="k">2</span>open <code>Sessions.app</code></li>
           <li><span class="k">3</span>first launch installs the signed runtime — done.</li>
         </ol>
@@ -398,9 +398,9 @@
 
     <div class="install-box">
       <span class="c"># Native app — signed, notarized, no Node or build tools:</span><br>
-      <span class="prompt">$</span> <span class="cmd">brew install --cask uzihaq/tap/sessions-app</span><br>
+      <span class="prompt">$</span> <span class="cmd">brew install --cask somewhere-tech/tap/sessions-app</span><br>
       <span class="c"># Headless/agent runtime:</span><br>
-      <span class="prompt">$</span> <span class="cmd">brew install uzihaq/tap/sessions</span><br>
+      <span class="prompt">$</span> <span class="cmd">brew install somewhere-tech/tap/sessions</span><br>
       <span class="prompt">$</span> <span class="cmd">sessions install</span> &nbsp;<span class="c"># registers the daemon, prints your local URL</span><br>
       <span class="prompt">$</span> <span class="cmd">sessions pair</span> &nbsp;<span class="c"># optional — one-time QR, per-device credential</span>
     </div>
@@ -424,7 +424,7 @@
 
   <footer>
     <span>sessions — the free local tool by <a href="https://somewhere.tech">somewhere</a>.</span>
-    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/uzihaq/sessions">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
+    <span><a href="docs.html">docs</a>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="https://github.com/somewhere-tech/sessions">source</a>&nbsp;&nbsp;·&nbsp;&nbsp;macOS + Linux · MIT</span>
   </footer>
 </main>
 </body>

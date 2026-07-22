@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 const defaultAPIBase = "https://api.somewhere.tech"

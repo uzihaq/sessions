@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/proto/prototest"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto/prototest"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 const testToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 type ErrorInput struct {

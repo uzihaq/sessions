@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/mirror"
-	"github.com/uzihaq/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/mirror"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
 )
 
 type Session struct {

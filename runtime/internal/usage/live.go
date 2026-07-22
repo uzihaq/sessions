@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 // RecordStructured writes one provider-native usage event as it crosses the

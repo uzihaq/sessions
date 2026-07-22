@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/uzihaq/sessions/runtime/internal/mirror"
+	"github.com/somewhere-tech/sessions/runtime/internal/mirror"
 )
 
 func main() {

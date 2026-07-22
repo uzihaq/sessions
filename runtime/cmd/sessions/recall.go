@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/uzihaq/sessions/runtime/internal/integrations"
+	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
 )
 
 // cmdRecall is intentionally a thin view over the versioned integration API.

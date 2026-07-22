@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/migrate"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/migrate"
 )
 
 func (a *app) cmdMove(args []string) error {

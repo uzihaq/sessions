@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/proto"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
 )
 
 func (s *Session) recordCodexLocked(event *proto.Event) int64 {

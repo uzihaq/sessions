@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/uzihaq/sessions/runtime/internal/backup"
-	"github.com/uzihaq/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/backup"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestBackupRoutesUseInjectedDirectPushService(t *testing.T) {

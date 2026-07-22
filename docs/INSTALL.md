@@ -37,7 +37,7 @@ daemon; quitting the app does not end the daemon or any session.
 Install the native app through Homebrew with:
 
 ```sh
-brew install --cask uzihaq/tap/sessions-app
+brew install --cask somewhere-tech/tap/sessions-app
 ```
 
 ## Homebrew runtime install on macOS
@@ -46,12 +46,12 @@ Homebrew is the npm-like package-manager channel for the three standalone
 runtime binaries:
 
 ```sh
-brew install uzihaq/tap/sessions
+brew install somewhere-tech/tap/sessions
 sessions install
 open http://localhost:8787
 ```
 
-The public `uzihaq/homebrew-tap` repository pins the immutable v0.1.0 URLs and
+The public `somewhere-tech/homebrew-tap` repository pins the immutable v0.1.0 URLs and
 SHA-256 digests. It installs native binaries directly; Node and npm are not
 runtime dependencies.
 
@@ -84,7 +84,7 @@ private; no repository checkout, npm, Node, or install script is involved:
 VERSION=0.1.0
 ARCHIVE="sessions_${VERSION}_darwin_arm64.tar.gz"
 DOWNLOAD_DIR="$(mktemp -d)"
-gh release download "v${VERSION}" --repo uzihaq/sessions \
+gh release download "v${VERSION}" --repo somewhere-tech/sessions \
   --pattern "$ARCHIVE" --pattern "$ARCHIVE.sha256" \
   --dir "$DOWNLOAD_DIR"
 (cd "$DOWNLOAD_DIR" && shasum -a 256 -c "$ARCHIVE.sha256")
@@ -103,8 +103,8 @@ that do not have `gh` can use the direct HTTPS form:
 ```sh
 VERSION=0.1.0
 ARCHIVE="sessions_${VERSION}_darwin_arm64.tar.gz"
-curl -fLO "https://github.com/uzihaq/sessions/releases/download/v${VERSION}/${ARCHIVE}"
-curl -fLO "https://github.com/uzihaq/sessions/releases/download/v${VERSION}/${ARCHIVE}.sha256"
+curl -fLO "https://github.com/somewhere-tech/sessions/releases/download/v${VERSION}/${ARCHIVE}"
+curl -fLO "https://github.com/somewhere-tech/sessions/releases/download/v${VERSION}/${ARCHIVE}.sha256"
 shasum -a 256 -c "${ARCHIVE}.sha256"
 tar -xzf "$ARCHIVE"
 mkdir -p "$HOME/.local/bin"

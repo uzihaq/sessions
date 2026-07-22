@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/uzihaq/sessions/runtime/internal/ledger"
-	"github.com/uzihaq/sessions/runtime/internal/watch"
+	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 func ResolveSource(ctx context.Context, store *ledger.Store, source SourceSession) (ReceiveRequest, error) {
