@@ -25,13 +25,30 @@ For local native-app development and the public release gate, use
 - Claude Code and/or Codex installed separately if you plan to run those tools
 - Tailscale on both devices only if you enable early-access remote access
 
-## Early-access Homebrew install on macOS
+## Native macOS app
+
+The release page provides `Sessions_<version>_darwin_arm64.zip` for the first
+install and `Sessions.app.tar.gz` plus its updater signature for the in-app
+updater. The app zip is signed, notarized, stapled, and checked by Gatekeeper in
+CI before the GitHub Release becomes visible. Extract it, move `Sessions.app` to
+Applications, and open it normally. First run installs or adopts the independent
+daemon; quitting the app does not end the daemon or any session.
+
+## Homebrew runtime install on macOS
+
+Homebrew is the planned npm-like package-manager channel for the three
+standalone runtime binaries:
 
 ```sh
 brew install uzihaq/tap/sessions
 sessions install
 open http://localhost:8787
 ```
+
+Do not use that command until the first release announcement confirms the
+public `uzihaq/homebrew-tap` repository has been populated. The formula in this
+source repository is a release template, not a live tap; its placeholder
+checksums intentionally prevent installation.
 
 `sessions install` writes
 `~/Library/LaunchAgents/tech.somewhere.sessions.dev.daemon.plist`, starts the per-user
@@ -41,7 +58,7 @@ configured with `SESSIONS_DAEMON_LABEL`. The generated plist always includes
 the selected host/port and the absolute adjacent `sessions-runner` path. It does not
 install or modify Claude Code, Codex, or Tailscale.
 
-## Early-access static archive
+## Static archive and autonomous agent install
 
 Release assets use these names:
 
@@ -53,6 +70,30 @@ Release assets use these names:
 
 Set a release version without the leading `v`, select the archive, and download
 it directly from GitHub Releases. This example is for Apple Silicon macOS:
+
+With GitHub CLI, agents can select an immutable tag without parsing a web page.
+`gh` uses the agent's existing GitHub authentication while the repository is
+private; no repository checkout, npm, Node, or install script is involved:
+
+```sh
+VERSION=0.1.0
+ARCHIVE="sessions_${VERSION}_darwin_arm64.tar.gz"
+DOWNLOAD_DIR="$(mktemp -d)"
+gh release download "v${VERSION}" --repo uzihaq/sessions \
+  --pattern "$ARCHIVE" --pattern "$ARCHIVE.sha256" \
+  --dir "$DOWNLOAD_DIR"
+(cd "$DOWNLOAD_DIR" && shasum -a 256 -c "$ARCHIVE.sha256")
+tar -xzf "$DOWNLOAD_DIR/$ARCHIVE" -C "$DOWNLOAD_DIR"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 \
+  "$DOWNLOAD_DIR/sessions" \
+  "$DOWNLOAD_DIR/sessionsd" \
+  "$DOWNLOAD_DIR/sessions-runner" \
+  "$HOME/.local/bin/"
+```
+
+For a public repository, the same command works without authentication. Agents
+that do not have `gh` can use the direct HTTPS form:
 
 ```sh
 VERSION=0.1.0
@@ -107,7 +148,7 @@ implementation. Treat both locations as private user data.
 
 ## Upgrade
 
-Homebrew:
+Homebrew, after the public tap is announced:
 
 ```sh
 brew update

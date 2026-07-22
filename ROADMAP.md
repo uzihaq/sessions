@@ -12,9 +12,9 @@ release build now bundles the signed Go runtime and implements idempotent
 launchd installation, session-baseline rollback, and the signed updater flow.
 The remaining release work is:
 
-1. Prepare the clean versioned release commit and notes, then run the release preflight.
-2. Notarize the app before distributing it outside the development machine.
-3. Publish the first manifest only after its notarized artifact exists, then exercise the updater through the same channel customers will use.
+1. Configure the dedicated Apple and updater secrets for the tag-driven GitHub Actions release lane.
+2. Push the reviewed v0.1.0 tag; CI will repeat the full gate, notarize, verify, and publish immutable app and runtime artifacts.
+3. Promote the generated manifest on Somewhere only after those artifacts exist, then exercise the updater through the same channel customers will use.
 
 The native conversation surface now treats structured provider history as its
 UI boundary. Codex app-server sessions display streaming answers, progress,

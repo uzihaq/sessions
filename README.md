@@ -21,16 +21,26 @@ daemon restart and can be reopened from another browser.
 Sessions does not replace Claude Code or Codex. Install and authenticate the
 agent CLI you want to run separately.
 
-## Install (current early access)
+## Install
 
-Sessions.app is being completed as the primary installer and updater. Until its
-v2 release gate is complete, the standalone Go package remains the honest
-early-access path:
+Sessions.app is the primary macOS package. Its first public download will appear
+on [GitHub Releases](https://github.com/uzihaq/sessions/releases) after the
+notarized v0.1.0 release gate completes. Until then, standalone Go archives are
+the early-access and headless path.
 
-On Apple Silicon macOS:
+Release automation also produces static archives for macOS arm64 and Linux
+arm64/amd64. An authenticated agent can fetch an exact version even while the
+repository is private:
 
 ```sh
-brew install uzihaq/tap/sessions
+VERSION=0.1.0
+ARCHIVE="sessions_${VERSION}_darwin_arm64.tar.gz"
+gh release download "v${VERSION}" --repo uzihaq/sessions \
+  --pattern "$ARCHIVE" --pattern "$ARCHIVE.sha256"
+shasum -a 256 -c "$ARCHIVE.sha256"
+tar -xzf "$ARCHIVE"
+mkdir -p "$HOME/.local/bin"
+install -m 0755 sessions sessionsd sessions-runner "$HOME/.local/bin/"
 sessions install
 open http://localhost:8787
 ```
@@ -41,18 +51,12 @@ label explicitly with `SESSIONS_DAEMON_LABEL` when needed. Direct loopback use i
 zero-setup; LAN and remote clients normally authenticate with the token printed
 by the command. Print it again later with `sessions token`.
 
-Static archives are published for macOS arm64 and Linux arm64/amd64. Download
-the archive for your platform from [GitHub Releases](https://github.com/uzihaq/sessions/releases),
-then install all three adjacent binaries:
-
-```sh
-tar -xzf sessions_<version>_<os>_<arch>.tar.gz
-mkdir -p "$HOME/.local/bin"
-install -m 0755 sessions sessionsd sessions-runner "$HOME/.local/bin/"
-```
-
-There is no `curl | sh` installer. See [installation details](docs/INSTALL.md)
-for exact archive names, PATH setup, Linux startup, upgrades, and uninstalling.
+Once the first release exists and the public Homebrew tap is populated,
+`brew install uzihaq/tap/sessions` will be the npm-like one-command runtime
+install. It is not advertised as live before that repository and its real
+checksums exist. There is no `curl | sh` installer. See
+[installation details](docs/INSTALL.md) for exact archive names, agent-safe
+downloads, PATH setup, Linux startup, upgrades, and uninstalling.
 
 ## Quickstart
 

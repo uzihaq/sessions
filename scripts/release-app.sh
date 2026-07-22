@@ -115,7 +115,8 @@ if [[ ! -f "$ARTIFACT" || ! -f "$ARTIFACT.sig" ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-shasum -a 256 "$ARTIFACT" > "$OUTPUT_DIR/$ARTIFACT_NAME.sha256"
+artifact_digest="$(shasum -a 256 "$ARTIFACT" | awk '{print $1}')"
+printf '%s  %s\n' "$artifact_digest" "$ARTIFACT_NAME" > "$OUTPUT_DIR/$ARTIFACT_NAME.sha256"
 node "$ROOT/scripts/render-updater-manifest.mjs" \
   --version "$VERSION" \
   --artifact "$ARTIFACT" \
