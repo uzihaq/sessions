@@ -59,3 +59,19 @@ func TestSettingsRoundTrip(t *testing.T) {
 		t.Fatal("unknown notification kind was accepted")
 	}
 }
+
+func TestNormalizeRecapSettings(t *testing.T) {
+	settings, err := NormalizeRecapSettings(RecapSettings{Provider: " CODEX ", Model: " luna "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Provider != RecapProviderCodex || settings.Model != "luna" {
+		t.Fatalf("settings = %#v", settings)
+	}
+	if _, err := NormalizeRecapSettings(RecapSettings{Provider: "hosted"}); err == nil {
+		t.Fatal("unknown provider was accepted")
+	}
+	if got := (Settings{}).EffectiveRecap(); got.Provider != RecapProviderOff {
+		t.Fatalf("default recap = %#v", got)
+	}
+}

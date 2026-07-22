@@ -19,6 +19,7 @@ import (
 
 	"github.com/somewhere-tech/sessions/runtime/internal/backup"
 	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
+	"github.com/somewhere-tech/sessions/runtime/internal/recap"
 	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	"github.com/somewhere-tech/sessions/runtime/internal/usage"
@@ -42,6 +43,7 @@ type Server struct {
 	backups              *backup.Service
 	integrationEndpoints *integrations.Service
 	usage                *usage.Service
+	recaps               *recap.Service
 }
 
 type sessionService interface {
@@ -89,6 +91,11 @@ func NewWithUsage(config state.Config, registry sessionService, localUsage *usag
 		localUsage = usage.NewLocalService(config)
 	}
 	server.usage = localUsage
+	recapRoot := config.StateRoot
+	if recapRoot == "" {
+		recapRoot = config.UserStateRoot
+	}
+	server.recaps = recap.NewService(recapRoot)
 	server.lan = newLANListener(config, server)
 	// Create the token while the daemon is starting, including when the open
 	// escape hatch is present. This keeps a fresh install secure without an
@@ -232,6 +239,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if s.handleUsageRoute(response, request, corsOrigin) {
+		return
+	}
+	if s.handleRecapRoute(response, request, corsOrigin) {
 		return
 	}
 	if s.handleProfilesRoute(response, request, corsOrigin) {

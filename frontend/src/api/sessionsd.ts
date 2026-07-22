@@ -115,8 +115,34 @@ export interface ServerHealth {
   name: string;
   version: string;
   listen: { host: string; port: number };
+  lan: { enabled: boolean; url: string | null };
   discovering: boolean;
   sessionsLoaded: number;
+}
+
+export async function fetchActiveServerHealth(signal?: AbortSignal): Promise<ServerHealth> {
+  const server = getActiveServer();
+  const r = await serverFetch(server, `${httpBaseForServer(server)}/api/health`, { signal }, false);
+  return json<ServerHealth>(r);
+}
+
+export interface LANState {
+  enabled: boolean;
+  url: string | null;
+}
+
+export async function fetchLANState(signal?: AbortSignal): Promise<LANState> {
+  const r = await apiFetch(`${httpBase()}/api/lan`, { signal });
+  return json<LANState>(r);
+}
+
+export async function setLANEnabled(enabled: boolean): Promise<LANState> {
+  const r = await apiFetch(`${httpBase()}/api/lan`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  });
+  return json<LANState>(r);
 }
 
 // Fleet probes never mutate the active-server store. Every request is
@@ -254,6 +280,79 @@ export async function fetchUsage(options: UsageOptions, signal?: AbortSignal): P
   if (options.dimension) query.set('dimension', options.dimension);
   const r = await apiFetch(`${httpBase()}/api/usage?${query.toString()}`, { signal });
   return json<UsageReport>(r);
+}
+
+export type RecapProvider = 'off' | 'codex' | 'claude';
+
+export interface RecapSettings {
+  provider: RecapProvider;
+  model?: string;
+}
+
+export interface RecapActivity {
+  id: string;
+  name: string;
+  description?: string;
+  summary?: string;
+  outcome: 'working' | 'idle' | 'done' | 'error';
+  tool: string;
+  cwd: string;
+  branch?: string;
+  sourceRepo?: string;
+  tags?: Record<string, string>;
+  createdAt: number;
+  lastActivityAt: number;
+  exitedAt?: number;
+  parentSessionId?: string;
+  creatorAncestry?: string[];
+  provenanceStatus?: string;
+}
+
+export interface RecapDocument {
+  date: string;
+  provider: Exclude<RecapProvider, 'off'>;
+  model?: string;
+  generatedAt: string;
+  inputDigest: string;
+  markdown: string;
+}
+
+export interface RecapDay {
+  date: string;
+  timezone: string;
+  settings: RecapSettings;
+  activities: RecapActivity[];
+  usage: UsageRow;
+  document: RecapDocument | null;
+}
+
+export async function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
+  const r = await apiFetch(`${httpBase()}/api/recap/settings`, { signal });
+  return json<RecapSettings>(r);
+}
+
+export async function updateRecapSettings(settings: RecapSettings): Promise<RecapSettings> {
+  const r = await apiFetch(`${httpBase()}/api/recap/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(settings)
+  });
+  return json<RecapSettings>(r);
+}
+
+export async function fetchRecap(date: string, signal?: AbortSignal): Promise<RecapDay> {
+  const query = new URLSearchParams({ date });
+  const r = await apiFetch(`${httpBase()}/api/recap?${query.toString()}`, { signal });
+  return json<RecapDay>(r);
+}
+
+export async function generateRecap(date: string, force = false): Promise<RecapDay> {
+  const r = await apiFetch(`${httpBase()}/api/recap/generate`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ date, force })
+  });
+  return json<RecapDay>(r);
 }
 
 export interface Snapshot {

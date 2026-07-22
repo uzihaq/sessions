@@ -211,6 +211,26 @@ export const useServers = create<ServersStore>((set, get) => ({
   }
 }));
 
+// The installed native shell can move its managed loopback daemon away from
+// 8787. Hydrate that persisted native choice before ConnectedApp mounts so the
+// first API request, WS, tray, and visible server selector all agree.
+export function configureNativeLocalPort(port: number): void {
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) return;
+  const store = useServers.getState();
+  const existing = store.servers.find((server) => server.id === 'local')
+    ?? store.servers.find((server) => server.isDefault && isLocalServer(server));
+  const local: ServerConfig = existing
+    ? { ...existing, host: 'localhost', port, scheme: 'http', isDefault: true }
+    : { id: 'local', name: 'This machine', host: 'localhost', port, scheme: 'http', isDefault: true };
+  const servers = existing
+    ? store.servers.map((server) => server.id === existing.id ? local : server)
+    : [local, ...store.servers];
+  const activeId = store.activeId ?? local.id;
+  writeServers(servers);
+  writeActiveId(activeId);
+  useServers.setState({ servers, activeId });
+}
+
 function currentOriginServer(): ServerConfig {
   const scheme = window.location.protocol === 'https:' ? 'https' : 'http';
   const port = window.location.port

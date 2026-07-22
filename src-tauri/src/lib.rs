@@ -6,7 +6,11 @@
 mod lifecycle;
 
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, path::PathBuf, sync::Mutex, thread, time::Duration};
+use serde_json::Value;
+use std::{
+    collections::HashMap, env, fs, path::PathBuf, process::Command, sync::Mutex, thread,
+    time::Duration,
+};
 use tauri::{
     menu::{Menu, MenuItem, SubmenuBuilder},
     tray::TrayIconBuilder,
@@ -15,7 +19,6 @@ use tauri::{
 };
 
 const TRAY_ID: &str = "sessions-status";
-const LOCAL_SESSIONS_URL: &str = "http://localhost:8787/api/sessions";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +67,21 @@ struct TrayState {
 
 struct RuntimeState {
     status: Mutex<lifecycle::RuntimeStatus>,
+    port: Mutex<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeConnectionSettings {
+    port: u16,
+    runtime: lifecycle::RuntimeStatus,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeConnectionCommand {
+    data: Value,
+    detail: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -335,6 +353,134 @@ fn runtime_status(app: AppHandle) -> Result<lifecycle::RuntimeStatus, String> {
         .map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn native_connection_settings(app: AppHandle) -> Result<NativeConnectionSettings, String> {
+    let state = app.state::<RuntimeState>();
+    let port = *state.port.lock().map_err(|error| error.to_string())?;
+    let runtime = state
+        .status
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+    Ok(NativeConnectionSettings { port, runtime })
+}
+
+#[tauri::command]
+async fn set_runtime_port(app: AppHandle, port: u16) -> Result<NativeConnectionSettings, String> {
+    let worker = app.clone();
+    let status =
+        tauri::async_runtime::spawn_blocking(move || lifecycle::reconfigure_port(&worker, port))
+            .await
+            .map_err(|error| format!("port-change worker failed: {error}"))??;
+    {
+        let state = app.state::<RuntimeState>();
+        *state.port.lock().map_err(|error| error.to_string())? = port;
+        *state.status.lock().map_err(|error| error.to_string())? = status.clone();
+    }
+    let app_for_menu = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = refresh_tray(&app_for_menu) {
+            log::warn!("refresh tray after port change: {error}");
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    Ok(NativeConnectionSettings {
+        port,
+        runtime: status,
+    })
+}
+
+#[tauri::command]
+async fn native_connection_action(
+    app: AppHandle,
+    kind: String,
+    action: String,
+    name: Option<String>,
+) -> Result<NativeConnectionCommand, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_connection_action(&app, &kind, &action, name.as_deref())
+    })
+    .await
+    .map_err(|error| format!("connection worker failed: {error}"))?
+}
+
+fn run_connection_action(
+    app: &AppHandle,
+    kind: &str,
+    action: &str,
+    name: Option<&str>,
+) -> Result<NativeConnectionCommand, String> {
+    let mut command_args = match (kind, action) {
+        ("lan", "status" | "enable" | "disable") => vec!["lan".to_string(), action.to_string()],
+        ("remote", "status" | "enable" | "disable") => {
+            vec!["remote".to_string(), action.to_string()]
+        }
+        ("pair", "create") => vec!["pair".to_string()],
+        _ => return Err("unsupported native connection action".to_string()),
+    };
+    if kind == "pair" {
+        if let Some(name) = name.map(str::trim).filter(|value| !value.is_empty()) {
+            if name.len() > 80 || name.chars().any(char::is_control) {
+                return Err(
+                    "device name must be at most 80 characters without control characters"
+                        .to_string(),
+                );
+            }
+            command_args.extend(["--name".to_string(), name.to_string()]);
+        }
+    }
+    let port = *app
+        .state::<RuntimeState>()
+        .port
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let resources = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("resolve Sessions resources: {error}"))?;
+    let executable = resources.join("runtime").join("sessions");
+    if !executable.is_file() {
+        return Err(format!(
+            "bundled Sessions CLI is missing: {}",
+            executable.display()
+        ));
+    }
+    let mut command = Command::new(executable);
+    let port_string = port.to_string();
+    command.args([
+        "--json",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        port_string.as_str(),
+    ]);
+    command.args(&command_args);
+    let inherited_path = env::var("PATH").unwrap_or_default();
+    command.env(
+        "PATH",
+        format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{inherited_path}"),
+    );
+    let output = command
+        .output()
+        .map_err(|error| format!("run bundled Sessions CLI: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !output.status.success() {
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(if detail.is_empty() {
+            format!("sessions {kind} {action} failed with {}", output.status)
+        } else {
+            detail
+        });
+    }
+    let data = serde_json::from_str(&stdout)
+        .map_err(|error| format!("Sessions returned invalid connection data: {error}"))?;
+    Ok(NativeConnectionCommand {
+        data,
+        detail: stderr,
+    })
+}
+
 fn tray_tooltip(snapshot: TraySnapshot) -> String {
     let suffix = if snapshot.reachable {
         String::new()
@@ -369,9 +515,9 @@ fn tray_snapshot(response: SessionsResponse) -> TraySnapshot {
     snapshot
 }
 
-fn fetch_tray_snapshot(client: &reqwest::blocking::Client) -> TraySnapshot {
+fn fetch_tray_snapshot(client: &reqwest::blocking::Client, port: u16) -> TraySnapshot {
     client
-        .get(LOCAL_SESSIONS_URL)
+        .get(format!("http://localhost:{port}/api/sessions"))
         .send()
         .and_then(|response| response.error_for_status())
         .and_then(|response| response.json::<SessionsResponse>())
@@ -531,7 +677,12 @@ fn start_tray_poll(app: AppHandle) {
             .build()
             .expect("build loopback session client");
         loop {
-            let next = fetch_tray_snapshot(&client);
+            let port = *app
+                .state::<RuntimeState>()
+                .port
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let next = fetch_tray_snapshot(&client, port);
             let changed = {
                 let state = app.state::<TrayState>();
                 let mut snapshot = state.snapshot.lock().unwrap_or_else(|e| e.into_inner());
@@ -559,20 +710,30 @@ fn start_tray_poll(app: AppHandle) {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(TrayState::default())
         .invoke_handler(tauri::generate_handler![
             open_scoped_window,
             set_tray_servers,
-            runtime_status
+            runtime_status,
+            native_connection_settings,
+            set_runtime_port,
+            native_connection_action
         ])
         .setup(|app| {
+            let configured_port =
+                lifecycle::configured_port(app.handle()).unwrap_or_else(|error| {
+                    log::error!("Sessions native connection settings: {error}");
+                    lifecycle::default_port()
+                });
             let runtime_status = lifecycle::install_for_app(app.handle());
             if runtime_status.state == "error" {
                 log::error!("Sessions background service: {}", runtime_status.detail);
             }
             app.manage(RuntimeState {
                 status: Mutex::new(runtime_status),
+                port: Mutex::new(configured_port),
             });
 
             let geometry_path = app.path().app_config_dir()?.join("window-geometry.json");

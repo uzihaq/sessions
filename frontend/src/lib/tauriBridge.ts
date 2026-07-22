@@ -79,6 +79,35 @@ export interface NativeRuntimeStatus {
   runtimeVersion: string | null;
 }
 
+export interface NativeConnectionSettings {
+  port: number;
+  runtime: NativeRuntimeStatus;
+}
+
+export interface NativeConnectionCommand<T = Record<string, unknown>> {
+  data: T;
+  detail: string;
+}
+
+export async function getNativeConnectionSettings(): Promise<NativeConnectionSettings | null> {
+  if (!isTauri()) return null;
+  return invoke<NativeConnectionSettings>('native_connection_settings');
+}
+
+export async function setNativeRuntimePort(port: number): Promise<NativeConnectionSettings> {
+  if (!isTauri()) throw new Error('The browser client cannot reconfigure the Mac background service');
+  return invoke<NativeConnectionSettings>('set_runtime_port', { port });
+}
+
+export async function runNativeConnectionAction<T = Record<string, unknown>>(
+  kind: 'lan' | 'remote' | 'pair',
+  action: 'status' | 'enable' | 'disable' | 'create',
+  name?: string
+): Promise<NativeConnectionCommand<T>> {
+  if (!isTauri()) throw new Error('This connection action is available in Sessions.app');
+  return invoke<NativeConnectionCommand<T>>('native_connection_action', { kind, action, name });
+}
+
 export async function getNativeRuntimeStatus(): Promise<NativeRuntimeStatus | null> {
   if (!isTauri()) return null;
   return invoke<NativeRuntimeStatus>('runtime_status');
@@ -99,22 +128,45 @@ export interface NativeUpdateProgress {
 type PendingUpdate = Awaited<ReturnType<typeof import('@tauri-apps/plugin-updater')['check']>>;
 
 let pendingUpdate: PendingUpdate = null;
+let pendingUpdateCheck: Promise<NativeUpdateInfo | null> | null = null;
 
 export async function checkForNativeUpdate(): Promise<NativeUpdateInfo | null> {
   if (!isTauri()) return null;
-  if (pendingUpdate) {
-    await pendingUpdate.close();
-    pendingUpdate = null;
+  if (pendingUpdateCheck) return pendingUpdateCheck;
+  pendingUpdateCheck = (async () => {
+    if (pendingUpdate) {
+      await pendingUpdate.close();
+      pendingUpdate = null;
+    }
+    const { check } = await import('@tauri-apps/plugin-updater');
+    pendingUpdate = await check({ timeout: 12_000 });
+    if (!pendingUpdate) return null;
+    return {
+      currentVersion: pendingUpdate.currentVersion,
+      version: pendingUpdate.version,
+      notes: pendingUpdate.body ?? null,
+      publishedAt: pendingUpdate.date ?? null
+    };
+  })();
+  try {
+    return await pendingUpdateCheck;
+  } finally {
+    pendingUpdateCheck = null;
   }
-  const { check } = await import('@tauri-apps/plugin-updater');
-  pendingUpdate = await check({ timeout: 12_000 });
-  if (!pendingUpdate) return null;
-  return {
-    currentVersion: pendingUpdate.currentVersion,
-    version: pendingUpdate.version,
-    notes: pendingUpdate.body ?? null,
-    publishedAt: pendingUpdate.date ?? null
-  };
+}
+
+export async function notifyNativeUpdate(info: NativeUpdateInfo): Promise<void> {
+  if (!isTauri()) return;
+  const notification = await import('@tauri-apps/plugin-notification');
+  let granted = await notification.isPermissionGranted();
+  if (!granted) {
+    granted = (await notification.requestPermission()) === 'granted';
+  }
+  if (!granted) return;
+  notification.sendNotification({
+    title: `Sessions ${info.version} is ready`,
+    body: 'Open Sessions Settings to review the notes and update. Running sessions will keep working.'
+  });
 }
 
 export async function installNativeUpdate(

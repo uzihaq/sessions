@@ -1,4 +1,4 @@
-# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-21)
+# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-22)
 
 > **New orchestrator (Codex or returning Claude): start here, then read `AGENTS.md`.**
 > This file + `AGENTS.md` + `docs/WHY.md` + the somewhere board = everything the previous
@@ -67,8 +67,9 @@ The app IS the product package. v2 makes "one update updates everything, nothing
 mini yet. Its later first Sessions.app install remains the joint Node-to-Go cutover (interop-proven by
 `TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
 
-## NEXT: Android (see board + WHY.md)
-**Immediate:** Android app (Tauri2 paired client + FCM; push machinery ready). Later:
+## NEXT: exercise the Mac 0.2 source build, then Android (see board + WHY.md)
+**Immediate:** test and release the Mac 0.2 product pass below, then build the Android app
+(Tauri2 paired client + FCM; push machinery ready). Later:
 semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
 paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
@@ -88,6 +89,22 @@ paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTE
   forcing Codex into Terminal: live answer deltas, progress commentary, reasoning summaries, plan state, commands,
   MCP/tool activity, unified file diffs, context usage, model/effort identity, and safe turn interruption. Terminal
   remains one click away and the independent runner still owns the conversation.
+
+## Implemented in source for the next Mac release (2026-07-22; not public yet)
+- A polished **Today** journal combines authoritative local usage totals with the day's session/lane hierarchy,
+  summaries, tags, projects, and outcomes. Written synthesis is opt-in (`off` by default), recommends the user's
+  already-authenticated Codex CLI, supports Claude and an optional provider-native cheap-model alias, makes one
+  call (Codex ephemeral/read-only with user configuration and rules ignored; Claude tool-disabled and session-less),
+  sends bounded compact metadata rather than transcripts or durable session IDs, and caches the Markdown locally
+  by day/input/provider/model.
+- A native **Connections** center exposes the real access ladder: this Mac, same-Wi-Fi LAN, and tailnet-only
+  Tailscale Serve. It creates single-use device pairing links, explains the Certificate Transparency tradeoff,
+  and can safely change the installed daemon's loopback port. Port migration captures the live-runner baseline,
+  verifies re-adoption on the new port, and restores the old service even if an unrelated process races onto the
+  requested port.
+- The signed updater now checks quietly on launch and every six hours, shows an in-app badge, and sends at most one
+  native notification per available version. Installation remains an explicit user action; relaunch still replaces
+  only the UI while launchd and every runner remain alive.
 
 ## OPEN USER DECISIONS (blockers only)
 1. **Public-build permission default** — keep skip-perms (owner default) vs constrain-by-default.

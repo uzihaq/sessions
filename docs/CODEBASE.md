@@ -11,14 +11,19 @@ each claim when behavior changes. Protocol compatibility requirements live in
 `src-tauri/` is the primary macOS client and release package. It uses Tauri 2
 around the shared React build. `src-tauri/src/lib.rs` owns native window and
 tray behavior: scoped server/tool/session windows, persisted window geometry,
-local status polling, and lifecycle status exposed to the frontend.
+local status polling, native LAN/remote/pairing commands, configurable daemon
+port state, and lifecycle status exposed to the frontend.
 `scripts/build-app-runtime.sh` builds and signs the three arm64 Go binaries,
 while `src-tauri/src/lifecycle.rs` verifies their manifest, stages immutable
 runtime versions, installs `tech.somewhere.sessions.daemon`, waits for health
 and discovery, verifies the live-session baseline, and rolls back on failure.
 The signed app-bundle updater is configured in `src-tauri/tauri.conf.json` and
 exposed through the native-only settings flow in
-`frontend/src/lib/tauriBridge.ts`. `scripts/release-app.sh` validates the
+`frontend/src/lib/tauriBridge.ts`; the bridge serializes update discovery and
+delivers once-per-version native notifications. `frontend/src/components/TodayView.tsx`
+renders the local work journal and opt-in recap, while
+`frontend/src/components/ConnectionsView.tsx` presents loopback, LAN, Tailscale,
+pairing, and safe port migration. `scripts/release-app.sh` validates the
 version, signing key, notarization credentials, nested signatures, stapling,
 Gatekeeper assessment, and renders the static Tauri manifest. Its release
 contract lives in [`NATIVE_APP.md`](NATIVE_APP.md).
@@ -80,13 +85,14 @@ command table rather than a copied list.
 
 ## Internal packages
 
-There are 19 production packages under `runtime/internal/`. The neighboring
+There are 20 production packages under `runtime/internal/`. The neighboring
 `runtime/internal/interop/` directory is a compatibility test fixture, not a
 production package (`runtime/internal/interop/cutover_test.go`).
 
 ### `api`
 
-`api` serves health, authenticated API/WebSocket routes, LAN controls, and the
+`api` serves health, authenticated API/WebSocket routes, LAN controls, daily
+recap settings/generation, and the
 SPA (`runtime/internal/api/server.go`, `runtime/internal/api/ws.go`). Loopback
 peers bypass token authentication unless a forwarding header makes the peer
 ambiguous; non-loopback clients use the configured bearer or query token unless
@@ -97,6 +103,9 @@ unauthenticated, rate-limited `POST /api/pair/claim`, which mints per-device
 tokens stored as SHA-256 hashes with list/revoke management
 (`runtime/internal/api/pair.go`); device tokens authorize anywhere the master
 token does.
+Daily recap routes combine local usage totals with compact factual activity and
+delegate only optional narrative generation to `internal/recap`
+(`runtime/internal/api/recap_handlers.go`).
 Browser-origin checks are a separate CORS and WebSocket boundary, not a second
 authentication factor.
 
@@ -180,6 +189,20 @@ live traffic; semantic runner capabilities are exposed through
 `runtime/internal/proto/runner.go`. Structured provider events use the protocol's
 extension frame instead of masquerading as terminal output.
 
+### `recap`
+
+`recap` owns the explicitly opt-in daily narrative call and its private local
+cache (`runtime/internal/recap/service.go`). It accepts already-aggregated usage
+and compact `session.DailyActivity` facts, aliases durable session IDs, bounds
+activity count and text size, avoids full transcripts, and runs either the
+pre-authenticated Codex CLI in an ephemeral read-only sandbox with user
+configuration and rules ignored, or Claude with tools and session persistence
+disabled. Provider API-key environment variables are stripped so this feature
+uses the CLI's existing account authentication rather than silently changing
+billing paths. Documents are keyed by date and cached
+by the factual input digest plus provider/model; this package never calculates
+usage totals or owns provider credentials.
+
 ### `recovery`
 
 `recovery` reconciles ledger state with live runners and provider files without
@@ -204,7 +227,10 @@ notifications (`runtime/internal/session/manager.go`,
 `runtime/internal/session/idle.go`). Structured lifecycle events are
 authoritative when present; PTY output classification is the fallback
 (`runtime/internal/session/classifier.go`). Creation and user-kill intent are
-recorded before the corresponding process action.
+recorded before the corresponding process action. Its daily activity projection
+selects sessions and lanes active in a local day, carries hierarchy/tags/outcome,
+and uses only final structured assistant summaries for optional recap input
+(`runtime/internal/session/daily_activity.go`).
 
 ### `state`
 
@@ -212,7 +238,9 @@ recorded before the corresponding process action.
 attached session's replay/event state (`runtime/internal/state/config.go`,
 `runtime/internal/state/registry.go`, `runtime/internal/state/session.go`).
 Runner artifacts have defined suffixes in `runtime/internal/state/paths.go`,
-and the in-memory replay plus persisted event log are bounded. This is
+and the in-memory replay plus persisted event log are bounded. Additive daemon
+settings persist notification, LAN, and opt-in recap provider/model choices
+without coupling them to runner state (`runtime/internal/state/settings.go`). This is
 low-level runtime state; product lifecycle policy stays in `internal/session`.
 
 ### `usage`

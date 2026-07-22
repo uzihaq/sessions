@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     env, fs,
     io::Write,
-    net::{SocketAddr, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Command, Output},
     thread,
@@ -13,10 +13,15 @@ use tauri::{AppHandle, Manager};
 
 const SERVICE_LABEL: &str = "tech.somewhere.sessions.daemon";
 const LOOPBACK_HOST: &str = "127.0.0.1";
-const LOOPBACK_PORT: u16 = 8787;
+const DEFAULT_LOOPBACK_PORT: u16 = 8787;
 const REQUIRED_BINARIES: [&str; 3] = ["sessions", "sessionsd", "sessions-runner"];
 
 type LifecycleResult<T> = Result<T, String>;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct NativePreferences {
+    port: Option<u16>,
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -112,6 +117,93 @@ pub fn install_for_app(app: &AppHandle) -> RuntimeStatus {
     }
 }
 
+pub fn default_port() -> u16 {
+    DEFAULT_LOOPBACK_PORT
+}
+
+pub fn configured_port(app: &AppHandle) -> LifecycleResult<u16> {
+    let path = preferences_path(app)?;
+    let encoded = match fs::read(&path) {
+        Ok(encoded) => encoded,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(DEFAULT_LOOPBACK_PORT)
+        }
+        Err(error) => {
+            return Err(format!(
+                "read native connection settings {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let preferences: NativePreferences = serde_json::from_slice(&encoded).map_err(|error| {
+        format!(
+            "parse native connection settings {}: {error}",
+            path.display()
+        )
+    })?;
+    let port = preferences.port.unwrap_or(DEFAULT_LOOPBACK_PORT);
+    validate_port(port)?;
+    Ok(port)
+}
+
+pub fn reconfigure_port(app: &AppHandle, port: u16) -> LifecycleResult<RuntimeStatus> {
+    validate_port(port)?;
+    if cfg!(debug_assertions) {
+        return Err("port changes are available in the installed Sessions.app; development builds use the separately managed dev daemon".to_string());
+    }
+    if cfg!(mobile) {
+        return Err("mobile clients do not own the Mac background-service port".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let old = RuntimeConfig::from_app(app)?;
+        if old.port == port {
+            let (outcome, version) = install_runtime(&old)?;
+            return Ok(RuntimeStatus::ready(outcome, version));
+        }
+        ensure_port_available(port)?;
+        let mut new = old.clone();
+        new.port = port;
+        let installed = stage_runtime(&new)?;
+        let old_plist = fs::read(&old.plist_path).map_err(|error| {
+            format!(
+                "read existing background-service definition {}: {error}",
+                old.plist_path.display()
+            )
+        })?;
+        if !service_is_loaded(&old)? {
+            return Err(format!(
+                "{} is not loaded; reopen Sessions to repair the background service before changing its port",
+                old.label
+            ));
+        }
+        let new_plist = daemon_plist(&new, &installed.directory).into_bytes();
+        let baseline = capture_baseline(&old)?;
+        migrate_loaded_service(&old, &new, &old_plist, &new_plist, &baseline)?;
+        if let Err(save_error) = save_configured_port(app, port) {
+            let rollback = migrate_loaded_service(&new, &old, &new_plist, &old_plist, &baseline);
+            return match rollback {
+                Ok(()) => Err(format!("could not save the new Sessions port and rolled back safely: {save_error}")),
+                Err(rollback_error) => Err(format!(
+                    "could not save the new Sessions port: {save_error}; rolling the service back also failed: {rollback_error}"
+                )),
+            };
+        }
+        Ok(RuntimeStatus::ready(
+            InstallOutcome::Updated {
+                preserved: baseline.len(),
+            },
+            installed.manifest.runtime_version,
+        ))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("this platform is a client and does not own a local Sessions daemon".to_string())
+    }
+}
+
 #[derive(Clone, Debug)]
 struct RuntimeConfig {
     source_dir: PathBuf,
@@ -170,7 +262,7 @@ impl RuntimeConfig {
             label: SERVICE_LABEL.to_string(),
             domain: format!("gui/{uid}"),
             host: LOOPBACK_HOST.to_string(),
-            port: LOOPBACK_PORT,
+            port: configured_port(app)?,
             launchctl: PathBuf::from("/bin/launchctl"),
             codesign: PathBuf::from("/usr/bin/codesign"),
             shasum: PathBuf::from("/usr/bin/shasum"),
@@ -193,6 +285,43 @@ impl RuntimeConfig {
     fn sessions_url(&self) -> String {
         format!("http://{}:{}/api/sessions", self.host, self.port)
     }
+}
+
+fn validate_port(port: u16) -> LifecycleResult<()> {
+    if port < 1024 {
+        return Err("Sessions port must be between 1024 and 65535".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_port_available(port: u16) -> LifecycleResult<()> {
+    TcpListener::bind((LOOPBACK_HOST, port))
+        .map(|listener| drop(listener))
+        .map_err(|error| format!("port {port} is already in use on {LOOPBACK_HOST}: {error}"))
+}
+
+fn preferences_path(app: &AppHandle) -> LifecycleResult<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join("connections.json"))
+        .map_err(|error| format!("resolve native settings directory: {error}"))
+}
+
+fn save_configured_port(app: &AppHandle, port: u16) -> LifecycleResult<()> {
+    let path = preferences_path(app)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("invalid native settings path: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|error| {
+        format!(
+            "create native settings directory {}: {error}",
+            parent.display()
+        )
+    })?;
+    set_directory_mode(parent, 0o700)?;
+    let encoded = serde_json::to_vec_pretty(&NativePreferences { port: Some(port) })
+        .map_err(|error| format!("encode native connection settings: {error}"))?;
+    write_atomic(&path, &encoded, 0o600)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -283,6 +412,7 @@ fn install_runtime(config: &RuntimeConfig) -> LifecycleResult<(InstallOutcome, S
 }
 
 fn validate_config(config: &RuntimeConfig) -> LifecycleResult<()> {
+    validate_port(config.port)?;
     if config.label.is_empty()
         || !config
             .label
@@ -435,7 +565,8 @@ fn validate_manifest(manifest: &RuntimeManifest) -> LifecycleResult<()> {
     }
     if manifest.binaries.len() != REQUIRED_BINARIES.len() {
         return Err(
-            "bundled runtime manifest must name exactly sessions, sessionsd, and sessions-runner".to_string(),
+            "bundled runtime manifest must name exactly sessions, sessionsd, and sessions-runner"
+                .to_string(),
         );
     }
     for binary in REQUIRED_BINARIES {
@@ -629,6 +760,42 @@ fn update_loaded_service(
         )),
         Err(rollback_error) => Err(format!(
             "Sessions background-service update failed: {update_error}; rollback also failed: {rollback_error}"
+        )),
+    }
+}
+
+fn migrate_loaded_service(
+    old: &RuntimeConfig,
+    new: &RuntimeConfig,
+    old_plist: &[u8],
+    new_plist: &[u8],
+    baseline: &BTreeSet<String>,
+) -> LifecycleResult<()> {
+    prepare_service_directories(new)?;
+    bootout(old)?;
+    wait_for_port_release(old)?;
+    write_atomic(&new.plist_path, new_plist, 0o644)?;
+    let update_result = bootstrap(new).and_then(|_| wait_until_ready(new, baseline));
+    if update_result.is_ok() {
+        return Ok(());
+    }
+
+    let update_error = update_result.unwrap_err();
+    let rollback_result = (|| -> LifecycleResult<()> {
+        bootout_if_loaded(new)?;
+        // The rollback returns to the old port. Do not let an unrelated
+        // process which raced onto the requested new port prevent restoring
+        // the known-good service definition.
+        write_atomic(&old.plist_path, old_plist, 0o644)?;
+        bootstrap(old)?;
+        wait_until_ready(old, baseline)
+    })();
+    match rollback_result {
+        Ok(()) => Err(format!(
+            "Sessions rejected the port change and rolled back safely: {update_error}"
+        )),
+        Err(rollback_error) => Err(format!(
+            "Sessions port change failed: {update_error}; rollback also failed: {rollback_error}"
         )),
     }
 }
@@ -953,6 +1120,13 @@ fn path_text(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_port_rejects_privileged_range() {
+        assert!(validate_port(1023).is_err());
+        assert!(validate_port(1024).is_ok());
+        assert!(validate_port(65_535).is_ok());
+    }
     use std::{io::Read, net::TcpListener};
 
     const HELPER_ENV: &str = "SESSIONS_LAUNCHD_TEST_HELPER";
@@ -1093,6 +1267,30 @@ mod tests {
         let updated = install_runtime(&config).unwrap();
         assert_eq!(updated.0, InstallOutcome::Updated { preserved: 2 });
         assert!(health_once(&config).is_ok());
+
+        let moved_port_probe = TcpListener::bind("127.0.0.1:0").unwrap();
+        let moved_port = moved_port_probe.local_addr().unwrap().port();
+        drop(moved_port_probe);
+        let mut moved = config.clone();
+        moved.port = moved_port;
+        let old_plist = fs::read(&config.plist_path).unwrap();
+        let moved_plist = daemon_plist(&moved, &config.managed_root.join("v2")).into_bytes();
+        let baseline = capture_baseline(&config).unwrap();
+        migrate_loaded_service(&config, &moved, &old_plist, &moved_plist, &baseline).unwrap();
+        assert!(health_once(&moved).is_ok());
+        assert!(health_once(&config).is_err());
+
+        let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut blocked = moved.clone();
+        blocked.port = occupied.local_addr().unwrap().port();
+        let blocked_plist = daemon_plist(&blocked, &config.managed_root.join("v2")).into_bytes();
+        let error =
+            migrate_loaded_service(&moved, &blocked, &moved_plist, &blocked_plist, &baseline)
+                .unwrap_err();
+        assert!(error.contains("rolled back safely"), "{error}");
+        assert!(health_once(&moved).is_ok());
+        drop(occupied);
+        config = moved;
 
         write_fixture_runtime(&config, "v3-broken", Some(Path::new("/usr/bin/false")));
         let error = install_runtime(&config).unwrap_err();

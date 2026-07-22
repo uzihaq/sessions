@@ -6,13 +6,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"unicode"
 )
 
 const (
 	NotifyDone    = "done"
 	NotifyWaiting = "waiting"
 	NotifyLost    = "lost"
+
+	RecapProviderOff    = "off"
+	RecapProviderCodex  = "codex"
+	RecapProviderClaude = "claude"
 )
 
 var settingsMu sync.Mutex
@@ -21,6 +27,36 @@ type NotifySettings struct {
 	Done    bool `json:"done"`
 	Waiting bool `json:"waiting"`
 	Lost    bool `json:"lost"`
+}
+
+// RecapSettings is deliberately opt-in. Provider "off" means Sessions never
+// launches a model for daily synthesis. Model is an optional provider-native
+// alias so users can choose a cheaper model their existing account exposes.
+type RecapSettings struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
+}
+
+func DefaultRecapSettings() RecapSettings {
+	return RecapSettings{Provider: RecapProviderOff}
+}
+
+func NormalizeRecapSettings(settings RecapSettings) (RecapSettings, error) {
+	settings.Provider = strings.ToLower(strings.TrimSpace(settings.Provider))
+	settings.Model = strings.TrimSpace(settings.Model)
+	if settings.Provider == "" {
+		settings.Provider = RecapProviderOff
+	}
+	if settings.Provider != RecapProviderOff && settings.Provider != RecapProviderCodex && settings.Provider != RecapProviderClaude {
+		return RecapSettings{}, fmt.Errorf("unknown recap provider %q; choose off, codex, or claude", settings.Provider)
+	}
+	if len(settings.Model) > 120 {
+		return RecapSettings{}, errors.New("recap model must be at most 120 characters")
+	}
+	if strings.IndexFunc(settings.Model, unicode.IsControl) >= 0 {
+		return RecapSettings{}, errors.New("recap model cannot contain control characters")
+	}
+	return settings, nil
 }
 
 func DefaultNotifySettings() NotifySettings {
@@ -64,6 +100,7 @@ func (n *NotifySettings) Set(kind string, enabled bool) error {
 type Settings struct {
 	LAN    bool            `json:"lan"`
 	Notify *NotifySettings `json:"notify,omitempty"`
+	Recap  *RecapSettings  `json:"recap,omitempty"`
 }
 
 func (s Settings) EffectiveNotify() NotifySettings {
@@ -71,6 +108,13 @@ func (s Settings) EffectiveNotify() NotifySettings {
 		return DefaultNotifySettings()
 	}
 	return *s.Notify
+}
+
+func (s Settings) EffectiveRecap() RecapSettings {
+	if s.Recap == nil {
+		return DefaultRecapSettings()
+	}
+	return *s.Recap
 }
 
 func LoadSettings(path string) (Settings, error) {

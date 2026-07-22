@@ -30,9 +30,17 @@ later, joint Node-to-Go cutover after the app itself has shipped.
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
 contract.
 
-## Now: exercise v0.1.0, then Android
+## Now: Mac 0.2 polish, then Android
 
-Exercise the public first-install and updater route without touching the production mini. Then reuse the Tauri 2 client and React UI for Android.
+The next Mac release is implemented in source and awaits the user's local app test. It adds a polished Today journal
+with local usage and session/lane evidence plus an opt-in, cached Codex-or-Claude daily recap; a native Connections
+center for loopback port, same-Wi-Fi LAN, Tailscale Serve, and one-time device pairing; and automatic signed-update
+discovery with an in-app badge and once-per-version native notification. Model calls remain off by default, Codex is
+recommended, compact provider input is bounded and excludes transcripts and durable session IDs, and update install
+remains explicit.
+
+Exercise that source build and the existing public first-install/updater route without touching the production mini.
+Then reuse the Tauri 2 client and React UI for Android.
 The Android app is a paired client for a user's Mac daemon, not a mobile daemon
 host. Native work includes FCM delivery over Sessions' existing encrypted push
 path, secure credential storage, widgets, and a Quick Settings entry point.

@@ -9,9 +9,11 @@ import { ConnectionStatus, fromTerminalStatus } from './components/ConnectionSta
 import { GridView } from './components/GridView';
 import { FleetView } from './components/FleetView';
 import { UsageDashboard } from './components/UsageDashboard';
+import { TodayView } from './components/TodayView';
+import { ConnectionsView } from './components/ConnectionsView';
 import { SearchView } from './components/SearchView';
 import { useSessions } from './store/sessions';
-import { useServers, getActiveServer } from './lib/servers';
+import { useServers, configureNativeLocalPort, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { ParserIcon } from './components/ParserIcon';
@@ -19,7 +21,7 @@ import { ConnectScreen } from './components/ConnectScreen';
 import { formatServerEndpoint } from './lib/serverEndpoint';
 import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOrder';
 import { useTabLabel } from './lib/tabLabels';
-import { getNativeRuntimeStatus, isTauri, notify, syncTrayServers } from './lib/tauriBridge';
+import { getNativeConnectionSettings, getNativeRuntimeStatus, isTauri, notify, syncTrayServers } from './lib/tauriBridge';
 import { readTextSize } from './lib/textSize';
 import type { SessionTool } from './types';
 
@@ -63,12 +65,12 @@ function readSingleModeParams(): { sessionId: string } | null {
 // (active-machine monitor tiles).
 // Persisted per-window in localStorage so each window remembers its
 // last choice. Grid is best when N ≥ 2 and the window is wide.
-type LayoutMode = 'tabs' | 'fleet' | 'search' | 'usage' | 'grid';
+type LayoutMode = 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'connections' | 'grid';
 const LAYOUT_KEY = 'sessions:layout-mode';
 function readStoredLayout(): LayoutMode {
   try {
     const v = window.localStorage.getItem(LAYOUT_KEY);
-    if (v === 'tabs' || v === 'fleet' || v === 'search' || v === 'usage' || v === 'grid') return v;
+    if (v === 'tabs' || v === 'today' || v === 'fleet' || v === 'search' || v === 'usage' || v === 'connections' || v === 'grid') return v;
   } catch { /* ignore */ }
   return 'tabs';
 }
@@ -78,11 +80,22 @@ function isMessageObject(value: unknown): value is Record<string, unknown> {
 }
 
 export function App(): JSX.Element {
+  const [nativeHydrated, setNativeHydrated] = useState(!isTauri());
   const activeServerId = useServers((state) => state.activeId);
   const servers = useServers((state) => state.servers);
   useEffect(() => {
+    if (!isTauri()) return;
+    let active = true;
+    void getNativeConnectionSettings()
+      .then((settings) => { if (active && settings) configureNativeLocalPort(settings.port); })
+      .catch(() => { /* runtime status screen will surface an actionable error */ })
+      .finally(() => { if (active) setNativeHydrated(true); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
     void syncTrayServers(servers);
   }, [servers]);
+  if (!nativeHydrated) return <div className="native-hydration">Connecting to the Sessions runtime…</div>;
   return activeServerId ? <ConnectedApp /> : <ConnectScreen />;
 }
 
@@ -303,6 +316,14 @@ function ConnectedApp(): JSX.Element {
           <div className="layout-toggle" role="tablist" aria-label="layout">
             <button
               type="button"
+              className={`layout-toggle-btn${layoutMode === 'today' ? ' is-active' : ''}`}
+              onClick={() => setLayoutMode('today')}
+              title="Daily work journal and local activity"
+            >
+              today
+            </button>
+            <button
+              type="button"
               className={`layout-toggle-btn${layoutMode === 'tabs' ? ' is-active' : ''}`}
               onClick={() => setLayoutMode('tabs')}
               title="Single session"
@@ -352,6 +373,7 @@ function ConnectedApp(): JSX.Element {
           textSize={textSize}
           onTextSizeChange={setTextSize}
           onNewSession={() => setDialogOpen("new")}
+          onOpenConnections={() => setLayoutMode('connections')}
         />
       </header>
 
@@ -363,10 +385,14 @@ function ConnectedApp(): JSX.Element {
           />
         ) : effectiveLayout === 'fleet' ? (
           <FleetView onOpenSession={openFleetSession} />
+        ) : effectiveLayout === 'today' ? (
+          <TodayView />
         ) : effectiveLayout === 'search' ? (
           <SearchView onOpenSession={openFleetSession} />
         ) : effectiveLayout === 'usage' ? (
           <UsageDashboard />
+        ) : effectiveLayout === 'connections' ? (
+          <ConnectionsView />
         ) : effectiveLayout === 'grid' ? (
           sessions.length > 0 ? (
             <GridView

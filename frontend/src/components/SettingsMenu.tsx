@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { getPushVapidPublicKey, subscribePush, unsubscribePush } from '../api/sessionsd';
+import {
+  fetchRecapSettings,
+  getPushVapidPublicKey,
+  subscribePush,
+  unsubscribePush,
+  updateRecapSettings,
+  type RecapProvider,
+  type RecapSettings
+} from '../api/sessionsd';
 import { type TextSize, nextSize, sizeLabel, writeTextSize } from '../lib/textSize';
 import {
   NEW_SESSION_DIMENSIONS,
@@ -17,6 +25,7 @@ import {
   checkForNativeUpdate,
   installNativeUpdate,
   isTauri,
+  notifyNativeUpdate,
   type NativeUpdateInfo,
   type NativeUpdateProgress
 } from '../lib/tauriBridge';
@@ -25,9 +34,13 @@ interface Props {
   textSize: TextSize;
   onTextSizeChange: (size: TextSize) => void;
   onNewSession?: () => void;
+  onOpenConnections?: () => void;
 }
 
 const PUSH_ENABLED_KEY = 'sessions:push-enabled';
+const UPDATE_CHECK_KEY = 'sessions:native-update-check-at';
+const UPDATE_NOTIFIED_KEY = 'sessions:native-update-notified-version';
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 
 const NEW_SESSION_TOOL_OPTIONS: { id: NewSessionTool; label: string }[] = [
   { id: 'claude-code', label: 'Claude Code' },
@@ -72,7 +85,7 @@ async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
 }
 
 // Settings popover anchored to a header button.
-export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props): JSX.Element {
+export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenConnections }: Props): JSX.Element {
   const [open, setOpen] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(readPushEnabled);
   const [pushBusy, setPushBusy] = useState(false);
@@ -84,6 +97,9 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
   const [updateProgress, setUpdateProgress] = useState<NativeUpdateProgress | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
+  const [recapSettings, setRecapSettings] = useState<RecapSettings>({ provider: 'off' });
+  const [recapBusy, setRecapBusy] = useState(false);
+  const [recapMessage, setRecapMessage] = useState<string | null>(null);
   const [sessionDefaults, setSessionDefaults] = useState<NewSessionDefaults>(readNewSessionDefaults);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
@@ -95,6 +111,42 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
   }, [open]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchRecapSettings(controller.signal)
+      .then(setRecapSettings)
+      .catch(() => { /* an older daemon may not have recap settings yet */ });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const automaticCheck = async (): Promise<void> => {
+      let last = 0;
+      try { last = Number(window.localStorage.getItem(UPDATE_CHECK_KEY) ?? 0); } catch { /* ignore */ }
+      if (Date.now() - last < UPDATE_CHECK_INTERVAL) return;
+      try {
+        const available = await checkForNativeUpdate();
+        if (cancelled) return;
+        try { window.localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now())); } catch { /* ignore */ }
+        if (!available) return;
+        setUpdateInfo(available);
+        let notified = '';
+        try { notified = window.localStorage.getItem(UPDATE_NOTIFIED_KEY) ?? ''; } catch { /* ignore */ }
+        if (notified !== available.version) {
+          await notifyNativeUpdate(available).catch(() => { /* in-app badge remains authoritative */ });
+          try { window.localStorage.setItem(UPDATE_NOTIFIED_KEY, available.version); } catch { /* ignore */ }
+        }
+      } catch {
+        // Automatic checks stay silent. Manual checks retain actionable errors.
+      }
+    };
+    const startup = window.setTimeout(() => void automaticCheck(), 1_500);
+    const interval = window.setInterval(() => void automaticCheck(), UPDATE_CHECK_INTERVAL);
+    return () => { cancelled = true; window.clearTimeout(startup); window.clearInterval(interval); };
+  }, []);
 
   const cycleSize = (): void => {
     const next = nextSize(textSize);
@@ -108,6 +160,21 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
       writeNewSessionDefaults(next);
       return next;
     });
+  };
+
+  const saveRecapSettings = async (next: RecapSettings): Promise<void> => {
+    if (recapBusy) return;
+    setRecapBusy(true);
+    setRecapMessage(null);
+    setRecapSettings(next);
+    try {
+      setRecapSettings(await updateRecapSettings(next));
+      setRecapMessage(next.provider === 'off' ? 'Daily model calls are off' : `${next.provider === 'codex' ? 'Codex' : 'Claude'} will write recaps only when requested`);
+    } catch (error) {
+      setRecapMessage(error instanceof Error ? error.message : 'Could not save recap settings');
+    } finally {
+      setRecapBusy(false);
+    }
   };
 
   const enablePush = async (): Promise<void> => {
@@ -247,6 +314,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
         title="Settings"
       >
         ⚙
+        {updateInfo ? <span className="settings-update-dot" aria-label={`Sessions ${updateInfo.version} available`} /> : null}
       </button>
       {open ? (
         <div className="settings-menu-popover" role="menu">
@@ -357,6 +425,36 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
           {pushMessage ? (
             <div className="settings-menu-status">{pushMessage}</div>
           ) : null}
+          <div className="settings-menu-divider" />
+          <div className="settings-menu-section" aria-label="Daily recap">
+            <div className="settings-menu-section-title">Daily recap</div>
+            <label className="settings-menu-field">
+              <span>Writer</span>
+              <select
+                className="settings-menu-input"
+                value={recapSettings.provider}
+                disabled={recapBusy}
+                onChange={(event) => void saveRecapSettings({ ...recapSettings, provider: event.currentTarget.value as RecapProvider })}
+              >
+                <option value="off">Off · no model calls</option>
+                <option value="codex">Codex · recommended</option>
+                <option value="claude">Claude</option>
+              </select>
+            </label>
+            <label className="settings-menu-field">
+              <span>Cheap model override</span>
+              <input
+                className="settings-menu-input"
+                value={recapSettings.model ?? ''}
+                disabled={recapBusy || recapSettings.provider === 'off'}
+                onChange={(event) => setRecapSettings({ ...recapSettings, model: event.currentTarget.value })}
+                onBlur={() => void saveRecapSettings(recapSettings)}
+                placeholder="Provider default, tera, or luna"
+              />
+            </label>
+            <span className="settings-menu-field-hint">One compact, manually requested call. Full transcripts are not sent.</span>
+            {recapMessage ? <div className="settings-menu-status">{recapMessage}</div> : null}
+          </div>
           {isTauri() ? (
             <>
               <div className="settings-menu-divider" />
@@ -403,6 +501,20 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession }: Props
                   <div className="settings-menu-update-safe">Sessions keep running while the app restarts.</div>
                 ) : null}
               </div>
+            </>
+          ) : null}
+          {onOpenConnections ? (
+            <>
+              <div className="settings-menu-divider" />
+              <button
+                type="button"
+                className="settings-menu-row settings-menu-clickable"
+                onClick={() => { setOpen(false); onOpenConnections(); }}
+              >
+                <span className="settings-menu-icon">⌁</span>
+                <span className="settings-menu-label">Connections, Tailscale, and port</span>
+                <span className="settings-menu-value">Open</span>
+              </button>
             </>
           ) : null}
           {/* Server selector — "this machine" + IP picker. Tucked into
