@@ -141,7 +141,7 @@ jobs:
         run: |
           umask 077
           updater_key="$RUNNER_TEMP/sessions-updater.key"
-          printf '%s\n' "$SESSIONS_UPDATER_PRIVATE_KEY" > "$updater_key"
+          printf '%s' "$SESSIONS_UPDATER_PRIVATE_KEY" > "$updater_key"
           cp release/updater.pub "$updater_key.pub"
           printf 'SESSIONS_UPDATER_KEY_PATH=%s\n' "$updater_key" >> "$GITHUB_ENV"
           if [[ -n "$APPLE_API_PRIVATE_KEY" ]]; then
