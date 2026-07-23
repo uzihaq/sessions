@@ -92,3 +92,10 @@ type RunnerLauncher interface {
 	Launch(context.Context, LaunchRequest) (Runner, error)
 	Attach(context.Context, RunnerInfo) (Runner, error)
 }
+
+// RunnerLaunchPreflight is implemented by launchers that can validate a
+// launch without creating persistent state. Registry invokes it before the
+// lifecycle boundary, metadata, plist, and launch-started event.
+type RunnerLaunchPreflight interface {
+	Preflight(LaunchRequest) error
+}

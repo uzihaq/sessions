@@ -10,8 +10,11 @@ import { GridView } from './components/GridView';
 import { FleetView } from './components/FleetView';
 import { UsageDashboard } from './components/UsageDashboard';
 import { TodayView } from './components/TodayView';
-import { ConnectionsView } from './components/ConnectionsView';
 import { SearchView } from './components/SearchView';
+import { ProductSidebar, type ProductView, type ThemeMode } from './components/ProductSidebar';
+import { SessionNavigator } from './components/SessionNavigator';
+import { HomeView } from './components/HomeView';
+import { SettingsView } from './components/SettingsView';
 import { useSessions } from './store/sessions';
 import { useServers, configureNativeLocalPort, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
@@ -23,6 +26,7 @@ import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOr
 import { useTabLabel } from './lib/tabLabels';
 import { getNativeConnectionSettings, getNativeRuntimeStatus, isTauri, notify, syncTrayServers } from './lib/tauriBridge';
 import { readTextSize } from './lib/textSize';
+import { preloadUsage } from './lib/usageCache';
 import type { SessionTool } from './types';
 
 const TOOL_ICONS: Record<SessionTool, string> = {
@@ -65,14 +69,31 @@ function readSingleModeParams(): { sessionId: string } | null {
 // (active-machine monitor tiles).
 // Persisted per-window in localStorage so each window remembers its
 // last choice. Grid is best when N ≥ 2 and the window is wide.
-type LayoutMode = 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'connections' | 'grid';
+type LayoutMode = 'home' | 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'settings' | 'connections' | 'grid';
 const LAYOUT_KEY = 'sessions:layout-mode';
+const OPEN_TABS_KEY = 'sessions:open-tabs:v1';
+const THEME_KEY = 'sessions:theme:v1';
 function readStoredLayout(): LayoutMode {
   try {
     const v = window.localStorage.getItem(LAYOUT_KEY);
-    if (v === 'tabs' || v === 'today' || v === 'fleet' || v === 'search' || v === 'usage' || v === 'connections' || v === 'grid') return v;
+    if (v === 'home' || v === 'tabs' || v === 'today' || v === 'fleet' || v === 'search' || v === 'usage' || v === 'settings' || v === 'connections' || v === 'grid') return v;
   } catch { /* ignore */ }
   return 'tabs';
+}
+
+function readOpenTabs(): string[] {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(OPEN_TABS_KEY) ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string').slice(0, 12) : [];
+  } catch { return []; }
+}
+
+function readTheme(): ThemeMode {
+  try {
+    const saved = window.localStorage.getItem(THEME_KEY);
+    if (saved === 'dark' || saved === 'light') return saved;
+  } catch { /* ignore */ }
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 function isMessageObject(value: unknown): value is Record<string, unknown> {
@@ -139,8 +160,26 @@ function ConnectedApp(): JSX.Element {
   // 'resume' (opens with the resume picker pre-expanded). Two-state
   // open lets the toolbar's separate + and ↺ buttons route to the
   // right initial view of the same dialog.
-  const [dialogOpen, setDialogOpen] = useState<null | 'new' | 'resume'>(null);
+  const [dialogOpen, setDialogOpen] = useState<null | 'new' | 'resume' | { delegateFrom: string }>(null);
   const [activeStatus, setActiveStatus] = useState<ActiveStatus>(INITIAL_STATUS);
+  const [openTabIds, setOpenTabIds] = useState<string[]>(readOpenTabs);
+  const [theme, setTheme] = useState<ThemeMode>(readTheme);
+
+  const writeOpenTabs = useCallback((ids: string[]): void => {
+    try { window.localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(ids)); } catch { /* non-fatal */ }
+  }, []);
+  const openSession = useCallback((id: string): void => {
+    setOpenTabIds((current) => {
+      const next = current.includes(id) ? current : [...current, id].slice(-12);
+      writeOpenTabs(next);
+      return next;
+    });
+    setActive(id);
+    setLayoutMode('tabs');
+  // setLayoutMode is a stable React setter declared below; callbacks run only
+  // after the component has completed initialization.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setActive, writeOpenTabs]);
 
   // Bound how many sessions are kept LIVE (mounted SessionView → xterm
   // buffer + claudeEvents history + WS attach). Without this, every session
@@ -156,15 +195,16 @@ function ConnectedApp(): JSX.Element {
   const LIVE_SESSION_CAP = 3;
   const [liveIds, setLiveIds] = useState<string[]>(() => (activeId ? [activeId] : []));
   useEffect(() => {
-    if (!activeId) return;
+    if (!activeId || rawSessions.find((session) => session.id === activeId)?.exited) return;
     setLiveIds((prev) => (prev[0] === activeId
       ? prev
       : [activeId, ...prev.filter((id) => id !== activeId)].slice(0, LIVE_SESSION_CAP)));
-  }, [activeId]);
+  }, [activeId, rawSessions]);
   useEffect(() => {
-    // Drop ids for sessions that no longer exist (killed/exited).
+    // Historical rows use a read-only view and never consume a live transport
+    // slot. Drop ids for sessions that no longer exist or have ended.
     setLiveIds((prev) => {
-      const alive = prev.filter((id) => rawSessions.some((s) => s.id === id));
+      const alive = prev.filter((id) => rawSessions.some((s) => s.id === id && !s.exited));
       return alive.length === prev.length ? prev : alive;
     });
   }, [rawSessions]);
@@ -178,24 +218,52 @@ function ConnectedApp(): JSX.Element {
   useEffect(() => {
     try { window.localStorage.setItem(LAYOUT_KEY, layoutMode); } catch { /* ignore */ }
   }, [layoutMode]);
+  useEffect(() => {
+    try { window.localStorage.setItem(THEME_KEY, theme); } catch { /* ignore */ }
+  }, [theme]);
+  useEffect(() => {
+    if (!activeId || !rawSessions.some((session) => session.id === activeId)) return;
+    setOpenTabIds((current) => {
+      if (current.includes(activeId)) return current;
+      const next = [...current, activeId].slice(-12);
+      writeOpenTabs(next);
+      return next;
+    });
+  }, [activeId, rawSessions, writeOpenTabs]);
+  useEffect(() => {
+    setOpenTabIds((current) => {
+      const next = current.filter((id) => rawSessions.some((session) => session.id === id));
+      if (next.length === current.length) return current;
+      writeOpenTabs(next);
+      return next;
+    });
+  }, [rawSessions, writeOpenTabs]);
+
+  const closeTab = useCallback((id: string): void => {
+    setOpenTabIds((current) => {
+      const index = current.indexOf(id);
+      const next = current.filter((item) => item !== id);
+      writeOpenTabs(next);
+      if (activeId === id) setActive(next[Math.max(0, index - 1)] ?? next[0] ?? null);
+      return next;
+    });
+  }, [activeId, setActive, writeOpenTabs]);
 
   const openFleetSession = useCallback((serverId: string, sessionId: string): void => {
     useServers.getState().setActive(serverId);
-    setActive(sessionId);
-    setLayoutMode('tabs');
-  }, [setActive]);
+    openSession(sessionId);
+  }, [openSession]);
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
     const onMessage = (event: MessageEvent<unknown>): void => {
       const data = event.data;
       if (!isMessageObject(data)) return;
       if (data.type !== 'push-open-session' || typeof data.sessionId !== 'string') return;
-      setActive(data.sessionId);
-      setLayoutMode('tabs');
+      openSession(data.sessionId);
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     return () => navigator.serviceWorker.removeEventListener('message', onMessage);
-  }, [setActive]);
+  }, [openSession]);
 
   // (Previously: reset activeStatus to INITIAL_STATUS on tab switch so
   // a freshly-mounting SessionView wouldn't briefly show stale values.
@@ -220,6 +288,20 @@ function ConnectedApp(): JSX.Element {
     const id = window.setInterval(() => { void refresh(); }, 3000);
     return () => window.clearInterval(id);
   }, [refresh, activeServerId]);
+
+  // Warm the local usage index as part of app startup. Usage is derived from
+  // local provider files, so this stays on the selected machine and makes the
+  // dashboard current before the user visits it.
+  useEffect(() => {
+    if (!activeServerId) return;
+    const id = window.setTimeout(() => {
+      void preloadUsage(activeServerId).catch(() => {
+        // UsageDashboard owns the visible, actionable error state. Startup
+        // warming must never block the sessions inbox.
+      });
+    }, 350);
+    return () => window.clearTimeout(id);
+  }, [activeServerId]);
 
   // Build per-session status/icon maps. Inactive tabs use the daemon's
   // activity-derived `working` flag (computed from PTY byte rate) and
@@ -289,114 +371,64 @@ function ConnectedApp(): JSX.Element {
     );
   }
 
-  return (
-    <div className={`app-shell text-size-${textSize.toLowerCase()}`}>
-      <header className="app-header">
-        <div className="app-brand" aria-hidden>Sessions</div>
-        {/* Tabs stay in single-session, fleet, and grid modes — the
-            header always has the logo on the left, so reclaiming the
-            space had limited value. In grid mode the tab strip just
-            acts as a quick "jump back to single view" affordance plus
-            the same +/↺ buttons. */}
-        <SessionTabs
-          sessions={sessions}
-          activeId={activeId}
-          statusBySession={statusBySession}
-          iconBySession={iconBySession}
-          onSwitch={(id) => { setActive(id); setLayoutMode('tabs'); }}
-          onAdd={() => setDialogOpen("new")}
-          onResume={() => setDialogOpen("resume")}
-          onClose={(id) => kill(id)}
-          onReorder={reorderTab}
-        />
-        {/* Layout toggle is desktop-only — Grid is too cramped on
-            phones to add value, and the bottom MobileNav already gives
-            phone users a fast switcher. */}
-        {!isMobile ? (
-          <div className="layout-toggle" role="tablist" aria-label="layout">
-            <button
-              type="button"
-              className={`layout-toggle-btn${layoutMode === 'today' ? ' is-active' : ''}`}
-              onClick={() => setLayoutMode('today')}
-              title="Daily work journal and local activity"
-            >
-              today
-            </button>
-            <button
-              type="button"
-              className={`layout-toggle-btn${layoutMode === 'tabs' ? ' is-active' : ''}`}
-              onClick={() => setLayoutMode('tabs')}
-              title="Single session"
-            >
-              tabs
-            </button>
-            <button
-              type="button"
-              className={`layout-toggle-btn${layoutMode === 'fleet' ? ' is-active' : ''}`}
-              onClick={() => setLayoutMode('fleet')}
-              title="See sessions across every configured machine"
-            >
-              fleet
-            </button>
-            <button
-              type="button"
-              className={`layout-toggle-btn${layoutMode === 'search' ? ' is-active' : ''}`}
-              onClick={() => setLayoutMode('search')}
-              title="Search conversations across the fleet"
-            >
-              search
-            </button>
-            <button
-              type="button"
-              className={`layout-toggle-btn${layoutMode === 'usage' ? ' is-active' : ''}`}
-              onClick={() => setLayoutMode('usage')}
-              title="Local token usage and cost"
-            >
-              usage
-            </button>
-            <button
-              type="button"
-              className={`layout-toggle-btn${layoutMode === 'grid' ? ' is-active' : ''}`}
-              onClick={() => setLayoutMode('grid')}
-              title="Tile every session"
-            >
-              grid
-            </button>
-          </div>
-        ) : null}
-        <ConnectionStatus
-          status={effectiveLayout === 'tabs' && activeId
-            ? fromTerminalStatus(activeStatus.terminalStatus)
-            : null}
-        />
-        <SettingsMenu
-          textSize={textSize}
-          onTextSizeChange={setTextSize}
-          onNewSession={() => setDialogOpen("new")}
-          onOpenConnections={() => setLayoutMode('connections')}
-        />
-      </header>
+  const machine = getActiveServer().name;
+  const liveSessions = sessions.filter((session) => !session.exited);
+  const sessionWorkspace = effectiveLayout === 'tabs' || effectiveLayout === 'grid';
+  const openedSessions = sessions.filter((session) => openTabIds.includes(session.id));
+  const productView: ProductView = effectiveLayout === 'grid'
+    ? 'tabs'
+    : effectiveLayout === 'connections'
+      ? 'settings'
+      : effectiveLayout as ProductView;
+  const navigateProduct = (view: ProductView): void => setLayoutMode(view);
 
-      <main className="app-main">
+  return (
+    <div className={`app-shell operations-shell text-size-${textSize.toLowerCase()}`} data-theme={theme}>
+      {!isMobile ? <ProductSidebar active={productView} theme={theme} onNavigate={navigateProduct} onNewSession={() => setDialogOpen('new')} onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} /> : null}
+      <div className="operations-frame">
+        {sessionWorkspace && !isMobile ? <SessionNavigator sessions={sessions} activeId={activeId} machine={machine} onOpen={openSession} onNew={() => setDialogOpen('new')} /> : null}
+        <section className="operations-content">
+          {sessionWorkspace ? (
+            <header className="app-header operations-tabs-header">
+              <SessionTabs
+                sessions={openedSessions}
+                activeId={activeId}
+                statusBySession={statusBySession}
+                iconBySession={iconBySession}
+                onSwitch={openSession}
+                onAdd={() => setDialogOpen('new')}
+                onResume={() => setDialogOpen('resume')}
+                onClose={closeTab}
+                onReorder={reorderTab}
+              />
+              {!isMobile ? <div className="session-layout-switch"><button type="button" className={effectiveLayout === 'tabs' ? 'is-active' : ''} onClick={() => setLayoutMode('tabs')}>Tabs</button><button type="button" className={effectiveLayout === 'grid' ? 'is-active' : ''} onClick={() => setLayoutMode('grid')}>Grid</button></div> : null}
+              <ConnectionStatus status={effectiveLayout === 'tabs' && activeId ? fromTerminalStatus(activeStatus.terminalStatus) : null} />
+              <SettingsMenu textSize={textSize} onTextSizeChange={setTextSize} onNewSession={() => setDialogOpen('new')} onOpenConnections={() => setLayoutMode('settings')} />
+            </header>
+          ) : null}
+
+      <main className="app-main operations-main">
         {tokenRequiredServerId === activeServerId ? (
           <DaemonBanner
             error="sessionsd: authentication required (401)"
             onRetry={() => void refresh()}
           />
+        ) : effectiveLayout === 'home' ? (
+          <HomeView sessions={sessions} machine={machine} onOpen={openSession} onNew={() => setDialogOpen('new')} onNavigate={(view) => setLayoutMode(view)} />
         ) : effectiveLayout === 'fleet' ? (
           <FleetView onOpenSession={openFleetSession} />
         ) : effectiveLayout === 'today' ? (
           <TodayView />
         ) : effectiveLayout === 'search' ? (
-          <SearchView onOpenSession={openFleetSession} />
+          <SearchView />
         ) : effectiveLayout === 'usage' ? (
           <UsageDashboard />
-        ) : effectiveLayout === 'connections' ? (
-          <ConnectionsView />
+        ) : effectiveLayout === 'settings' || effectiveLayout === 'connections' ? (
+          <SettingsView theme={theme} onThemeChange={setTheme} />
         ) : effectiveLayout === 'grid' ? (
-          sessions.length > 0 ? (
+          liveSessions.length > 0 ? (
             <GridView
-              sessions={sessions}
+              sessions={liveSessions}
               statusBySession={statusBySession}
               iconBySession={iconBySession}
               onClose={(id) => kill(id)}
@@ -410,9 +442,11 @@ function ConnectedApp(): JSX.Element {
           ) : (
             <EmptyState onNew={() => setDialogOpen("new")} />
           )
-        ) : sessions.length === 0 ? (
+        ) : openedSessions.length === 0 ? (
           sessionsError && !sessionsHydrated ? (
             <DaemonBanner error={sessionsError} onRetry={() => void refresh()} />
+          ) : sessions.length > 0 ? (
+            <div className="session-workspace-empty"><span>Operations inbox</span><h1>Select a session</h1><p>Choose a manager or child from the navigator. It will open here without resuming or restarting anything.</p><button type="button" className="btn btn-primary" onClick={() => setDialogOpen('new')}>＋ New Session</button></div>
           ) : (
             <EmptyState onNew={() => setDialogOpen("new")} />
           )
@@ -436,19 +470,22 @@ function ConnectedApp(): JSX.Element {
                   sessionId={s.id}
                   isActive={s.id === activeId}
                   onStatusChange={s.id === activeId ? setActiveStatus : undefined}
+                  onDelegate={(id) => setDialogOpen({ delegateFrom: id })}
                 />
               </div>
             ))
         )}
       </main>
+        </section>
+      </div>
 
       <MobileNav
-        sessions={sessions}
+        sessions={liveSessions}
         activeId={activeId}
         layoutMode={effectiveLayout === 'grid' ? 'tabs' : effectiveLayout}
         statusBySession={statusBySession}
         iconBySession={iconBySession}
-        onSwitch={(id) => { setActive(id); setLayoutMode('tabs'); }}
+        onSwitch={openSession}
         onLayoutChange={setLayoutMode}
         onNew={() => setDialogOpen("new")}
         onResume={() => setDialogOpen("resume")}
@@ -464,6 +501,12 @@ function ConnectedApp(): JSX.Element {
         <ResumeDialog
           onClose={() => setDialogOpen(null)}
           onStartNew={() => setDialogOpen('new')}
+        />
+      ) : null}
+      {dialogOpen && typeof dialogOpen === 'object' ? (
+        <NewSessionDialog
+          parentSession={sessions.find((session) => session.id === dialogOpen.delegateFrom) ?? null}
+          onClose={() => setDialogOpen(null)}
         />
       ) : null}
     </div>

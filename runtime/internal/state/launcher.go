@@ -30,7 +30,20 @@ func (l *LaunchdLauncher) ProgramArguments(proto.LaunchRequest) []string {
 	return []string{l.config.RunnerPath}
 }
 
+func (l *LaunchdLauncher) Preflight(request proto.LaunchRequest) error {
+	if _, ok := runnerCommandPath(request.Info.Cmd, request.Info.Cwd, request.Env["PATH"]); !ok {
+		return fmt.Errorf(
+			"session command %q is not executable in the Sessions runner PATH; install it under ~/.local/bin, Homebrew, /usr/local/bin, or choose another agent",
+			request.Info.Cmd,
+		)
+	}
+	return nil
+}
+
 func (l *LaunchdLauncher) Launch(ctx context.Context, request proto.LaunchRequest) (proto.Runner, error) {
+	if err := l.Preflight(request); err != nil {
+		return nil, err
+	}
 	plist := plistPath(l.config.LaunchAgentsDir, request.Info.ID)
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	command := exec.Command("launchctl", "bootstrap", domain, plist)
@@ -45,6 +58,26 @@ func (l *LaunchdLauncher) Launch(ctx context.Context, request proto.LaunchReques
 		}
 	}
 	return l.waitAndAttach(ctx, request.Info)
+}
+
+func runnerCommandPath(command, cwd, pathValue string) (string, bool) {
+	if strings.ContainsRune(command, filepath.Separator) {
+		candidate := command
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(cwd, candidate)
+		}
+		return candidate, isExecutableFile(candidate)
+	}
+	for _, directory := range filepath.SplitList(pathValue) {
+		if directory == "" {
+			continue
+		}
+		candidate := filepath.Join(directory, command)
+		if isExecutableFile(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 func (l *LaunchdLauncher) Attach(ctx context.Context, info proto.RunnerInfo) (proto.Runner, error) {

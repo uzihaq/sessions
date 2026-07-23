@@ -33,3 +33,21 @@ func TestLaunchdRunnerProgramArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerCommandPathUsesRunnerEnvironment(t *testing.T) {
+	root := t.TempDir()
+	userBin := filepath.Join(root, ".local", "bin")
+	if err := os.MkdirAll(userBin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	claude := filepath.Join(userBin, "claude")
+	if err := os.WriteFile(claude, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := runnerCommandPath("claude", root, userBin+":/usr/bin"); !ok || got != claude {
+		t.Fatalf("runnerCommandPath(claude) = %q, %v; want %q, true", got, ok, claude)
+	}
+	if _, ok := runnerCommandPath("missing-agent", root, userBin+":/usr/bin"); ok {
+		t.Fatal("runnerCommandPath unexpectedly found missing agent")
+	}
+}

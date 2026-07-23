@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KEY_PATH="${SESSIONS_UPDATER_KEY_PATH:-$HOME/.config/sessions/sessions-updater.key}"
+NOTARIZATION_KEYCHAIN_SERVICE="${SESSIONS_NOTARIZATION_KEYCHAIN_SERVICE:-tech.somewhere.sessions.notarization}"
 EXPECTED_PUBLIC_KEY="$ROOT/release/updater.pub"
 VERSION=""
 NOTES_FILE=""
@@ -18,6 +19,10 @@ renders a Tauri latest.json manifest. It does not publish either artifact.
 Required release secrets:
   SESSIONS_UPDATER_KEY_PATH (defaults to ~/.config/sessions/sessions-updater.key)
   APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID, or App Store Connect API key vars
+
+On macOS, APPLE_ID and APPLE_PASSWORD are loaded automatically when a generic
+password exists in the login Keychain with service
+"tech.somewhere.sessions.notarization". The Keychain account is the Apple ID.
 EOF
 }
 
@@ -83,6 +88,24 @@ fi
 if ! git -C "$ROOT" diff --quiet || ! git -C "$ROOT" diff --cached --quiet; then
   echo "error: release builds require a clean reviewed worktree" >&2
   exit 1
+fi
+
+# Prefer an explicitly supplied credential (local shell or CI). For repeat
+# local releases, fall back to the login Keychain without ever printing or
+# persisting the app-specific password in this checkout. `security` can locate
+# the account attribute without reading the secret, then returns only the
+# password to this process for the duration of the release command.
+if [[ -z "${APPLE_PASSWORD:-}" ]] && command -v security >/dev/null 2>&1; then
+  keychain_record="$(security find-generic-password -s "$NOTARIZATION_KEYCHAIN_SERVICE" 2>/dev/null || true)"
+  keychain_account="$(printf '%s\n' "$keychain_record" | sed -n 's/^[[:space:]]*"acct"<blob>="\(.*\)"$/\1/p' | head -1)"
+  if [[ -n "$keychain_account" ]]; then
+    keychain_password="$(security find-generic-password -a "$keychain_account" -s "$NOTARIZATION_KEYCHAIN_SERVICE" -w 2>/dev/null || true)"
+    if [[ -n "$keychain_password" ]]; then
+      export APPLE_ID="${APPLE_ID:-$keychain_account}"
+      export APPLE_PASSWORD="$keychain_password"
+      export APPLE_TEAM_ID="${APPLE_TEAM_ID:-7GW9T5ZWW8}"
+    fi
+  fi
 fi
 
 has_apple_id=0

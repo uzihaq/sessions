@@ -57,12 +57,6 @@ export function SessionTabs({
   // the typed-but-not-committed string.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
-  // Two-step close confirmation — armed when the × is clicked on a
-  // non-exited session. The tab shows "Close? [Close] [Cancel]" instead
-  // of immediately killing hours of live AI work. Exited sessions bypass
-  // confirm (no active work to lose). Clears on any tab switch or drag.
-  const [closingId, setClosingId] = useState<string | null>(null);
-
   const startRename = (s: SessionInfo): void => {
     setEditingId(s.id);
     setEditingValue(shortLabel(s));
@@ -126,8 +120,8 @@ export function SessionTabs({
                 tabIndex={0}
                 data-tab-id={s.id}
                 draggable={!!onReorder}
-                className={`tab${isActive ? ' is-active' : ''}${isDragging ? ' is-dragging' : ''}${isDropTarget ? ' is-drop-target' : ''}${closingId === s.id ? ' is-closing' : ''}`}
-                onClick={() => { setClosingId(null); onSwitch(s.id); }}
+                className={`tab${isActive ? ' is-active' : ''}${isDragging ? ' is-dragging' : ''}${isDropTarget ? ' is-drop-target' : ''}`}
+                onClick={() => onSwitch(s.id)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
@@ -137,7 +131,6 @@ export function SessionTabs({
                 onDragStart={(e) => {
                   if (!onReorder) return;
                   setDragId(s.id);
-                  setClosingId(null); // drag cancels any pending confirm
                   e.dataTransfer.effectAllowed = 'move';
                   // Some browsers require dataTransfer to have some
                   // data set for the drag to proceed at all.
@@ -213,48 +206,15 @@ export function SessionTabs({
                 >
                   ↗
                 </button>
-                {closingId === s.id ? (
-                  // Two-step confirm: replaces the × while armed.
-                  // Exited sessions never reach this branch (see below).
-                  <>
-                    <span className="tab-close-label">Close?</span>
-                    <button
-                      type="button"
-                      className="tab-close-yes"
-                      aria-label={`Confirm close ${shortLabel(s)}`}
-                      onClick={(e) => { e.stopPropagation(); setClosingId(null); void onClose(s.id); }}
-                    >
-                      Close
-                    </button>
-                    <button
-                      type="button"
-                      className="tab-close-no"
-                      aria-label="Cancel close"
-                      onClick={(e) => { e.stopPropagation(); setClosingId(null); }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="tab-close"
-                    aria-label={`Close ${shortLabel(s)}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // Exited sessions have no live work — close without confirm.
-                      // Live sessions require an explicit second click to prevent
-                      // misclick kills of hours of running AI work.
-                      if (s.exited) {
-                        void onClose(s.id);
-                      } else {
-                        setClosingId(s.id);
-                      }
-                    }}
-                  >
-                    ×
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="tab-close"
+                  aria-label={`Close ${shortLabel(s)} tab`}
+                  title="Close tab — the session keeps running"
+                  onClick={(e) => { e.stopPropagation(); void onClose(s.id); }}
+                >
+                  ×
+                </button>
               </div>
             );
           })

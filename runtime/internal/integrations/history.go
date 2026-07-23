@@ -51,6 +51,7 @@ type TranscriptResponse struct {
 	SchemaVersion int                 `json:"schemaVersion"`
 	Session       HistorySession      `json:"session"`
 	Messages      []TranscriptMessage `json:"messages"`
+	Truncated     bool                `json:"truncated,omitempty"`
 }
 
 type HistoryOptions struct {
@@ -122,6 +123,34 @@ func (h *HistoryStore) Transcript(live []state.SessionInfo, id string) (Transcri
 // file. A non-positive limit preserves the unbounded recall behavior.
 func (h *HistoryStore) TranscriptLimited(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
 	return h.transcript(live, id, maxBytes)
+}
+
+// TranscriptPreview returns a tail-bounded window suitable for interactive
+// rendering. The full Transcript and Raw contracts remain available to
+// integrations that deliberately request the complete history.
+func (h *HistoryStore) TranscriptPreview(live []state.SessionInfo, id string, maxBytes int64, maxMessages int) (TranscriptResponse, error) {
+	source, ok := h.find(live, id)
+	if !ok {
+		return TranscriptResponse{}, ErrHistoryNotFound
+	}
+	session, path, tool, err := h.describe(source, false)
+	if err != nil {
+		return TranscriptResponse{}, err
+	}
+	if path == "" || !session.ConversationAvailable {
+		return TranscriptResponse{}, ErrHistoryNotFound
+	}
+	messages, truncated, err := normalizeTranscriptTail(path, tool, maxBytes, maxMessages)
+	if err != nil {
+		return TranscriptResponse{}, fmt.Errorf("read history transcript preview %s: %w", id, err)
+	}
+	session.MessageCount = len(messages)
+	return TranscriptResponse{
+		SchemaVersion: SchemaVersion,
+		Session:       session,
+		Messages:      messages,
+		Truncated:     truncated,
+	}, nil
 }
 
 func (h *HistoryStore) transcript(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
@@ -262,12 +291,65 @@ func normalizeTranscript(path, tool string, maxBytes int64) ([]TranscriptMessage
 	}
 	defer file.Close()
 
-	messages := make([]TranscriptMessage, 0)
 	var source io.Reader = file
 	if maxBytes > 0 {
 		source = io.LimitReader(file, maxBytes)
 	}
-	reader := bufio.NewReader(source)
+	return normalizeTranscriptReader(bufio.NewReader(source), path, tool)
+}
+
+func normalizeTranscriptTail(path, tool string, maxBytes int64, maxMessages int) ([]TranscriptMessage, bool, error) {
+	if maxBytes <= 0 || maxMessages <= 0 {
+		return nil, false, errors.New("preview limits must be positive")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, false, err
+	}
+	offset := max(int64(0), info.Size()-maxBytes)
+	truncated := offset > 0
+	var reader *bufio.Reader
+	if offset > 0 {
+		// Keep a record that begins exactly at the window boundary. Otherwise
+		// discard the partial first JSONL record before normalization.
+		if _, err := file.Seek(offset-1, io.SeekStart); err != nil {
+			return nil, false, err
+		}
+		previous := []byte{0}
+		if _, err := io.ReadFull(file, previous); err != nil {
+			return nil, false, err
+		}
+		reader = bufio.NewReader(io.LimitReader(file, maxBytes))
+		if previous[0] != '\n' {
+			if _, err := reader.ReadBytes('\n'); err != nil && !errors.Is(err, io.EOF) {
+				return nil, false, err
+			}
+		} else if _, err := file.Seek(offset, io.SeekStart); err != nil {
+			return nil, false, err
+		} else {
+			reader = bufio.NewReader(io.LimitReader(file, maxBytes))
+		}
+	} else {
+		reader = bufio.NewReader(io.LimitReader(file, maxBytes))
+	}
+	messages, err := normalizeTranscriptReader(reader, path, tool)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(messages) > maxMessages {
+		messages = messages[len(messages)-maxMessages:]
+		truncated = true
+	}
+	return messages, truncated, nil
+}
+
+func normalizeTranscriptReader(reader *bufio.Reader, path, tool string) ([]TranscriptMessage, error) {
+	messages := make([]TranscriptMessage, 0)
 	lineIndex := 0
 	for {
 		line, readErr := reader.ReadBytes('\n')

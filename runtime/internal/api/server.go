@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
 	"github.com/somewhere-tech/sessions/runtime/internal/recap"
 	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
+	"github.com/somewhere-tech/sessions/runtime/internal/smartsearch"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	"github.com/somewhere-tech/sessions/runtime/internal/usage"
 	"github.com/somewhere-tech/sessions/runtime/internal/watch"
@@ -44,6 +46,7 @@ type Server struct {
 	integrationEndpoints *integrations.Service
 	usage                *usage.Service
 	recaps               *recap.Service
+	smartSearch          *smartsearch.Service
 }
 
 type sessionService interface {
@@ -96,6 +99,7 @@ func NewWithUsage(config state.Config, registry sessionService, localUsage *usag
 		recapRoot = config.UserStateRoot
 	}
 	server.recaps = recap.NewService(recapRoot)
+	server.smartSearch = smartsearch.NewService()
 	server.lan = newLANListener(config, server)
 	// Create the token while the daemon is starting, including when the open
 	// escape hatch is present. This keeps a fresh install secure without an
@@ -136,6 +140,7 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 			"ok": true, "name": "sessionsd", "version": "0.1.0",
 			"listen":         map[string]any{"host": s.config.Host, "port": s.config.Port},
 			"lan":            s.lan.state(),
+			"system":         map[string]any{"os": goruntime.GOOS, "arch": goruntime.GOARCH},
 			"discovering":    s.registry.IsDiscovering(),
 			"sessionsLoaded": len(s.registry.List(true)),
 		}, corsOrigin)
@@ -244,6 +249,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if s.handleRecapRoute(response, request, corsOrigin) {
 		return
 	}
+	if s.handleClaudeSettingsRoute(response, request, corsOrigin) {
+		return
+	}
 	if s.handleProfilesRoute(response, request, corsOrigin) {
 		return
 	}
@@ -290,7 +298,22 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if path == "/api/claude-sessions" && request.Method == http.MethodGet {
-		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": watch.ScanResumableSessions()}, corsOrigin)
+		// Preserve the original endpoint shape for older clients. The provider
+		// fields live only on the generalized resumable-conversations route.
+		scanned := watch.ScanResumableSessions()
+		legacy := make([]map[string]any, 0, len(scanned))
+		for _, session := range scanned {
+			legacy = append(legacy, map[string]any{
+				"sessionId": session.SessionID, "cwd": session.Cwd,
+				"modifiedAt": session.ModifiedAt, "firstUserMessage": session.FirstUserMessage,
+				"sizeBytes": session.SizeBytes,
+			})
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": legacy}, corsOrigin)
+		return
+	}
+	if path == "/api/resumable-conversations" && request.Method == http.MethodGet {
+		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": watch.ScanResumableConversations()}, corsOrigin)
 		return
 	}
 

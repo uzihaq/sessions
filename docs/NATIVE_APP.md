@@ -36,6 +36,15 @@ then launchd owns the selected `sessionsd` version.
 
 ## macOS v2 release gate
 
+Local release signing is reusable without keeping secrets in the checkout. The
+updater keypair lives at `~/.config/sessions/sessions-updater.key{,.pub}` and the
+Developer ID identity lives in the login Keychain. Store the Apple app-specific
+password once as a generic Keychain password whose service is
+`tech.somewhere.sessions.notarization` and whose account is the Apple ID;
+`scripts/release-app.sh` loads it automatically when explicit `APPLE_*`
+environment variables are absent. CI continues to use repository environment
+secrets and takes precedence over the local fallback.
+
 A distributable build is complete only when all of these are true:
 
 1. The app bundle contains signed arm64 `sessions`, `sessionsd`, and `sessions-runner`

@@ -419,6 +419,19 @@ async fn native_connection_action(
 }
 
 #[tauri::command]
+async fn native_backup_action(
+    app: AppHandle,
+    action: String,
+    project: Option<String>,
+) -> Result<NativeConnectionCommand, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_backup_action(&app, &action, project.as_deref())
+    })
+    .await
+    .map_err(|error| format!("backup worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn somewhere_cli_status() -> Result<SomewhereCliStatus, String> {
     tauri::async_runtime::spawn_blocking(inspect_somewhere_cli)
         .await
@@ -563,6 +576,53 @@ fn run_connection_action(
             command_args.extend(["--name".to_string(), name.to_string()]);
         }
     }
+    run_bundled_sessions_json(app, &command_args, "connection")
+}
+
+fn run_backup_action(
+    app: &AppHandle,
+    action: &str,
+    project: Option<&str>,
+) -> Result<NativeConnectionCommand, String> {
+    let command_args = match action {
+        "status" => vec!["backup".to_string(), "status".to_string()],
+        "now" => vec!["backup".to_string(), "now".to_string()],
+        "enable" => {
+            let project = project
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "choose a Somewhere project for Sessions backups".to_string())?;
+            if project.len() > 120
+                || matches!(project, "." | "..")
+                || !project.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                })
+            {
+                return Err(
+                    "Somewhere project must use only letters, numbers, dots, dashes, or underscores"
+                        .to_string(),
+                );
+            }
+            vec![
+                "backup".to_string(),
+                "enable".to_string(),
+                "--project".to_string(),
+                project.to_string(),
+                "--interval".to_string(),
+                "15m".to_string(),
+                "--encrypt".to_string(),
+            ]
+        }
+        _ => return Err("unsupported native backup action".to_string()),
+    };
+    run_bundled_sessions_json(app, &command_args, "backup")
+}
+
+fn run_bundled_sessions_json(
+    app: &AppHandle,
+    command_args: &[String],
+    response_kind: &str,
+) -> Result<NativeConnectionCommand, String> {
     let port = *app
         .state::<RuntimeState>()
         .port
@@ -588,7 +648,7 @@ fn run_connection_action(
         "--port",
         port_string.as_str(),
     ]);
-    command.args(&command_args);
+    command.args(command_args);
     let inherited_path = env::var("PATH").unwrap_or_default();
     command.env(
         "PATH",
@@ -602,13 +662,16 @@ fn run_connection_action(
     if !output.status.success() {
         let detail = if stderr.is_empty() { stdout } else { stderr };
         return Err(if detail.is_empty() {
-            format!("sessions {kind} {action} failed with {}", output.status)
+            format!(
+                "sessions {response_kind} command failed with {}",
+                output.status
+            )
         } else {
             detail
         });
     }
     let data = serde_json::from_str(&stdout)
-        .map_err(|error| format!("Sessions returned invalid connection data: {error}"))?;
+        .map_err(|error| format!("Sessions returned invalid {response_kind} data: {error}"))?;
     Ok(NativeConnectionCommand {
         data,
         detail: stderr,
@@ -854,6 +917,7 @@ pub fn run() {
             native_connection_settings,
             set_runtime_port,
             native_connection_action,
+            native_backup_action,
             somewhere_cli_status
         ])
         .setup(|app| {

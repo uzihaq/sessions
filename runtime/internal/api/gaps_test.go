@@ -176,6 +176,20 @@ func TestAddedRouteShapeTable(t *testing.T) {
 	}
 }
 
+func TestHomeProjectScanSkipsCloudBackedCommonFolders(t *testing.T) {
+	home := t.TempDir()
+	mustMkdirAll(t, filepath.Join(home, "Desktop", ".git"))
+	mustMkdirAll(t, filepath.Join(home, "Documents"))
+	mustWriteFile(t, filepath.Join(home, "Documents", "package.json"), []byte("{}\n"))
+	mustMkdirAll(t, filepath.Join(home, "actual-project"))
+	mustWriteFile(t, filepath.Join(home, "actual-project", "go.mod"), []byte("module example.test/actual\n"))
+
+	projects := listProjectChildrenExcept(home, 20, homeProjectScanSkip)
+	if len(projects) != 1 || projects[0] != filepath.Join(home, "actual-project") {
+		t.Fatalf("home projects = %#v, want only actual-project", projects)
+	}
+}
+
 func TestFSListRejectsTraversal(t *testing.T) {
 	fixture := t.TempDir()
 	home := filepath.Join(fixture, "home")

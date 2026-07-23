@@ -12,6 +12,7 @@ import { eventsToMessages } from '../lib/claudeEvents';
 import { snapshot as fetchServerSnapshot } from '../api/sessionsd';
 import { classifySnapshotComposerState, type SnapshotComposerState } from '../lib/detectMultiChoice';
 import type { DispatchMessage } from '../hooks/useDispatch';
+import { ProviderMark, type Provider as ProviderIdentity } from './ProviderBadge';
 
 interface Props {
   sessionId: string;
@@ -36,6 +37,7 @@ interface Props {
   onOpenTerminal: () => void;
   provider: SessionTool;
   structuredKind?: string;
+  onDelegate?: () => void;
 }
 
 // Provider-neutral conversation view over the durable session transport.
@@ -61,10 +63,11 @@ export function RemoteView({
   cwd,
   onOpenTerminal,
   provider,
-  structuredKind
+  structuredKind,
+  onDelegate
 }: Props): JSX.Element {
   const providerName = provider === 'codex' ? 'Codex' : 'Claude';
-  const providerIcon = provider === 'codex' ? 'openai-icon.svg' : 'claude.png';
+  const providerIdentity: ProviderIdentity = provider === 'codex' ? 'codex' : 'claude';
   // Event-derived user contents — passed to useDispatch so pendings get
   // flipped to 'sent' when provider history confirms them (instead of timing out
   // as 'failed'). Computed once per events change; the Set is
@@ -327,16 +330,11 @@ export function RemoteView({
       >
         {messages.length === 0 ? (
           <div className="remote-empty">
-            <img
-              src={`${import.meta.env.BASE_URL}${providerIcon}`}
-              alt=""
-              aria-hidden
-              className="remote-empty-watermark"
-              draggable={false}
-            />
-            <p>No messages yet.</p>
+            <ProviderMark provider={providerIdentity} size={48} />
+            <span>Ready</span>
+            <h2>Start a {providerName} conversation</h2>
             <p className="remote-empty-hint">
-              Type below to start this {providerName} conversation.
+              Send the first request below. Terminal stays one click away whenever you need the raw session.
             </p>
           </div>
         ) : null}
@@ -360,6 +358,8 @@ export function RemoteView({
             key={m.id}
             message={m}
             cwd={cwd}
+            agentName={providerName}
+            provider={providerIdentity}
             isLatest={i === visibleMessages.length - 1}
             onRetry={() => retry(m.id)}
             onDelete={() => remove(m.id)}
@@ -408,6 +408,7 @@ export function RemoteView({
           recoverDraft={recoverDraft}
           provider={provider}
           structuredKind={structuredKind}
+          onDelegate={onDelegate}
         />
       </div>
     </div>
@@ -417,6 +418,8 @@ export function RemoteView({
 interface RemoteMessageProps {
   message: ReturnType<typeof useDispatch>['messages'][number];
   cwd?: string;
+  agentName: string;
+  provider: ProviderIdentity;
   isLatest: boolean;
   onRetry: () => void;
   onDelete: () => void;
@@ -436,6 +439,8 @@ interface RemoteMessageProps {
 function RemoteMessageInner({
   message: m,
   cwd,
+  agentName,
+  provider,
   isLatest,
   onRetry,
   onDelete
@@ -468,6 +473,13 @@ function RemoteMessageInner({
 
   return (
     <div className={cls}>
+      <header className="remote-message-author">
+        {isUser ? <span className="remote-user-mark" aria-hidden>You</span> : <ProviderMark provider={provider} size={29} />}
+        <div>
+          <strong>{isUser ? 'You' : agentName}</strong>
+          <span>{m.status === 'pending' ? 'Sending…' : m.status === 'failed' ? 'Needs attention' : 'Session history'}</span>
+        </div>
+      </header>
       {isUser ? (
         <div
           className="remote-bubble remote-bubble-user"
@@ -623,6 +635,7 @@ const RemoteMessage = memo(RemoteMessageInner, (a, b) => {
   // on every parent render but always do the same thing.
   if (a.isLatest !== b.isLatest) return false;
   if (a.cwd !== b.cwd) return false;
+  if (a.agentName !== b.agentName || a.provider !== b.provider) return false;
   const ma = a.message;
   const mb = b.message;
   // Reference equality on the same message object is the common case

@@ -38,6 +38,14 @@ func TestGenerateCachesByInputAndProvider(t *testing.T) {
 	if calls != 1 || first.InputDigest != second.InputDigest || first.Markdown != second.Markdown {
 		t.Fatalf("calls=%d first=%#v second=%#v", calls, first, second)
 	}
+	if !service.Current(&second, input, state.RecapProviderCodex) {
+		t.Fatal("fresh cached document was not current")
+	}
+	changed := input
+	changed.Usage.Entries++
+	if service.Current(&second, changed, state.RecapProviderCodex) || service.Current(&second, input, state.RecapProviderClaude) {
+		t.Fatal("stale input or provider was accepted as current")
+	}
 	if _, err := service.Generate(context.Background(), state.DefaultRecapSettings(), input, false); err == nil {
 		t.Fatal("off recap unexpectedly generated")
 	}
@@ -94,7 +102,10 @@ func TestProviderInputAliasesHierarchyAndBoundsActivityCount(t *testing.T) {
 
 func TestProviderArgumentsDisableToolsAndPersistence(t *testing.T) {
 	claude := strings.Join(providerArguments(state.RecapSettings{Provider: state.RecapProviderClaude}), " ")
-	if !strings.Contains(claude, "--effort low") || !strings.Contains(claude, "--tools  --strict-mcp-config --no-session-persistence") || strings.Contains(claude, "--model") {
+	if !strings.Contains(claude, "--effort low") || !strings.Contains(claude, "--tools  --strict-mcp-config") ||
+		!strings.Contains(claude, "--safe-mode") || !strings.Contains(claude, "--no-chrome") ||
+		!strings.Contains(claude, "--disable-slash-commands") || !strings.Contains(claude, "--no-session-persistence") ||
+		strings.Contains(claude, "--model") {
 		t.Fatalf("claude args = %q", claude)
 	}
 	codex := strings.Join(providerArguments(state.RecapSettings{Provider: state.RecapProviderCodex}), " ")

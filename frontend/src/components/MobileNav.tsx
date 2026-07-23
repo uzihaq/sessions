@@ -8,11 +8,11 @@ type MobileTabStatus = 'working' | 'finished' | 'idle';
 interface Props {
   sessions: SessionInfo[];
   activeId: string | null;
-  layoutMode: 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'connections';
+  layoutMode: 'home' | 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'settings' | 'connections';
   statusBySession: Record<string, MobileTabStatus>;
   iconBySession: Record<string, string>;
   onSwitch: (id: string) => void;
-  onLayoutChange: (mode: 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'connections') => void;
+  onLayoutChange: (mode: 'home' | 'tabs' | 'today' | 'fleet' | 'search' | 'usage' | 'settings' | 'connections') => void;
   onNew: () => void;
   onResume: () => void;
 }

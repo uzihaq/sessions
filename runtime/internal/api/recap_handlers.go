@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
 	"github.com/somewhere-tech/sessions/runtime/internal/recap"
 	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
@@ -118,16 +122,105 @@ func (s *Server) recapDay(ctx context.Context, rawDate string) (recapDayResponse
 		return recapDayResponse{}, recap.DayInput{}, err
 	}
 	activities := sessionruntime.BuildDailyActivity(s.registry.List(true), s.registry.Get, start, end)
+	observed, err := s.usage.ObservedSessions(ctx, start, end)
+	if err != nil {
+		return recapDayResponse{}, recap.DayInput{}, err
+	}
+	activities = append(activities, externalDailyActivities(report, observed, start, end)...)
+	sort.Slice(activities, func(i, j int) bool {
+		if activities[i].LastActivityAt != activities[j].LastActivityAt {
+			return activities[i].LastActivityAt < activities[j].LastActivityAt
+		}
+		return activities[i].ID < activities[j].ID
+	})
 	document, err := s.recaps.Load(date)
 	if err != nil {
 		return recapDayResponse{}, recap.DayInput{}, err
 	}
 	timezone := time.Local.String()
 	input := recap.DayInput{Date: date, Timezone: timezone, Activities: activities, Usage: report.Totals}
+	if !s.recaps.Current(document, input, settings.Provider) {
+		document = nil
+	}
 	return recapDayResponse{
 		Date: date, Timezone: timezone, Settings: settings,
 		Activities: activities, Usage: report.Totals, Document: document,
 	}, input, nil
+}
+
+func externalDailyActivities(report usage.Report, observed []usage.ObservedSession, start, end time.Time) []sessionruntime.DailyActivity {
+	managed := make(map[string]struct{})
+	for _, row := range report.Rows {
+		if row.SessionID != "" && row.Provider != "" && row.ProviderSessionID != "" {
+			managed[row.Provider+":"+row.ProviderSessionID] = struct{}{}
+		}
+	}
+	activities := make([]sessionruntime.DailyActivity, 0, len(observed))
+	for _, providerSession := range observed {
+		identity := providerSession.Provider + ":" + providerSession.ProviderSessionID
+		if _, exists := managed[identity]; exists {
+			continue
+		}
+		summary := integrations.ConversationDaySummary{}
+		for _, path := range providerSession.SourcePaths {
+			current, err := integrations.SummarizeConversationDay(path, providerSession.Provider, start, end, providerSession.TurnIDs)
+			if err != nil {
+				continue
+			}
+			mergeConversationSummary(&summary, current)
+		}
+		project := ""
+		if cleaned := filepath.Clean(strings.TrimSpace(summary.CWD)); cleaned != "." && cleaned != "" {
+			project = filepath.Base(cleaned)
+		}
+		providerName := "Codex"
+		if providerSession.Provider == "claude" {
+			providerName = "Claude"
+		}
+		name := providerName
+		if project != "" {
+			name += " · " + project
+		}
+		description := summary.LastUser
+		if description == "" {
+			description = summary.FirstUser
+		}
+		activities = append(activities, sessionruntime.DailyActivity{
+			ID: "provider:" + identity, Name: name,
+			Description: description, Summary: summary.LastAssistant,
+			Outcome: "observed", Tool: providerSession.Provider, CWD: summary.CWD,
+			SourceRepo: project, CreatedAt: providerSession.FirstActivityAt,
+			LastActivityAt:   providerSession.LastActivityAt,
+			ProvenanceStatus: "Outside Sessions", Source: "provider",
+			Origin: summary.Origin, ProviderSessionID: providerSession.ProviderSessionID,
+		})
+	}
+	return activities
+}
+
+func mergeConversationSummary(target *integrations.ConversationDaySummary, current integrations.ConversationDaySummary) {
+	if target.CWD == "" {
+		target.CWD = current.CWD
+	}
+	if current.Origin != "" {
+		target.Origin = current.Origin
+	}
+	if target.FirstUser == "" && current.FirstUser != "" {
+		target.FirstUser = current.FirstUser
+	}
+	if current.LastUser != "" {
+		target.LastUser = current.LastUser
+	}
+	if current.LastAssistant != "" {
+		target.LastAssistant = current.LastAssistant
+	}
+	if target.FirstAt == 0 || (current.FirstAt != 0 && current.FirstAt < target.FirstAt) {
+		target.FirstAt = current.FirstAt
+	}
+	if current.LastAt > target.LastAt {
+		target.LastAt = current.LastAt
+	}
+	target.MessageCount += current.MessageCount
 }
 
 func (s *Server) loadRecapSettings() (state.RecapSettings, error) {

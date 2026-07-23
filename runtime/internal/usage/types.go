@@ -82,3 +82,16 @@ type Report struct {
 	Rows          []ReportRow       `json:"rows"`
 	Totals        ReportRow         `json:"totals"`
 }
+
+// ObservedSession ties a provider conversation to the physical local logs
+// which contributed usage during a time window. It is intentionally local-only
+// metadata used to build Today without uploading or copying transcripts.
+type ObservedSession struct {
+	Provider          string
+	ProviderSessionID string
+	FirstActivityAt   int64
+	LastActivityAt    int64
+	Entries           int64
+	SourcePaths       []string
+	TurnIDs           []string
+}

@@ -14,9 +14,10 @@ const windowScope = readWindowScope();
 // references across the 3s poll. Without this, every poll replaces all
 // objects → every mounted SessionView re-renders on a timer (36 of them),
 // a periodic main-thread hitch that shows up as laggy terminal input.
-// lastDataAt is deliberately excluded — it climbs on every output byte but
-// drives nothing visible on its own (the `working` flag is the live signal),
-// and including it would defeat the reuse for any busy session.
+// lastDataAt is render-relevant now: Home and the operations navigator use it
+// for activity timestamps and ordering. The API is polled every three seconds,
+// so accepting one re-render per changed session per poll keeps that UI honest
+// without reverting to per-output-byte React updates.
 function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionInfo[] {
   const prevById = new Map(prev.map((s) => [s.id, s]));
   const next = fresh.map((f) => {
@@ -28,11 +29,27 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
       old.exitCode === f.exitCode &&
       old.exitSignal === f.exitSignal &&
       old.exitedAt === f.exitedAt &&
+      old.lastDataAt === f.lastDataAt &&
       old.lastUserMessageAt === f.lastUserMessageAt &&
       old.cwd === f.cwd &&
       old.cmd === f.cmd &&
       old.tool === f.tool &&
       old.kind === f.kind &&
+      old.name === f.name &&
+      old.description === f.description &&
+      old.profile === f.profile &&
+      old.configDir === f.configDir &&
+      old.worktreePath === f.worktreePath &&
+      old.branch === f.branch &&
+      old.base === f.base &&
+      old.sourceRepo === f.sourceRepo &&
+      old.parentSessionId === f.parentSessionId &&
+      old.creatorKind === f.creatorKind &&
+      old.creatorId === f.creatorId &&
+      old.rootCreatorKind === f.rootCreatorKind &&
+      old.rootCreatorId === f.rootCreatorId &&
+      old.provenanceStatus === f.provenanceStatus &&
+      arrayEqual(old.creatorAncestry, f.creatorAncestry) &&
       old.model === f.model &&
       old.effort === f.effort &&
       old.fast === f.fast &&
@@ -53,6 +70,12 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
   // (App, SessionTabs, GridView) don't re-render at all on an idle 3s poll.
   if (next.length === prev.length && next.every((s, i) => s === prev[i])) return prev;
   return next;
+}
+
+function arrayEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
 }
 
 function tagsEqual(
@@ -92,6 +115,8 @@ const ACTIVE_KEY = 'sessions:active-session:v1';
 
 interface CachedSession {
   id: string;
+  name?: string;
+  description?: string;
   tags?: Record<string, string>;
   cmd: string;
   args: string[];
@@ -106,6 +131,26 @@ interface CachedSession {
   effort?: string;
   fast?: boolean;
   conversationId?: string;
+  profile?: string;
+  configDir?: string;
+  worktreePath?: string;
+  branch?: string;
+  base?: string;
+  sourceRepo?: string;
+  parentSessionId?: string;
+  creatorKind?: string;
+  creatorId?: string;
+  creatorAncestry?: string[];
+  rootCreatorKind?: string;
+  rootCreatorId?: string;
+  provenanceStatus?: string;
+  working?: boolean;
+  lastDataAt?: number;
+  lastUserMessageAt?: number | null;
+  exited?: boolean;
+  exitCode?: number | null;
+  exitSignal?: string | null;
+  exitedAt?: number | null;
   // Cache Claude-side titles so the PWA cold-start renders the correct
   // tab label without a flash-of-wrong-name before live data arrives.
   claudeCustomTitle?: string;
@@ -122,13 +167,13 @@ function readCache(): { sessions: SessionInfo[]; activeId: string | null } {
           // overwritten by refresh() within ~1s of boot. We don't
           // pretend to know whether the cached session is still
           // working or even still alive.
-          working: false,
-          lastDataAt: c.createdAt,
-          lastUserMessageAt: null,
-          exited: false,
-          exitCode: null,
-          exitSignal: null,
-          exitedAt: null
+          working: c.working ?? false,
+          lastDataAt: c.lastDataAt ?? c.createdAt,
+          lastUserMessageAt: c.lastUserMessageAt ?? null,
+          exited: c.exited ?? false,
+          exitCode: c.exitCode ?? null,
+          exitSignal: c.exitSignal ?? null,
+          exitedAt: c.exitedAt ?? null
         }))
       : [], windowScope);
     const savedActiveId = window.localStorage.getItem(ACTIVE_KEY);
@@ -145,6 +190,8 @@ function writeCache(sessions: SessionInfo[], activeId: string | null): void {
   try {
     const stripped: CachedSession[] = sessions.map((s) => ({
       id: s.id,
+      name: s.name,
+      description: s.description,
       tags: s.tags,
       cmd: s.cmd,
       args: s.args,
@@ -159,6 +206,26 @@ function writeCache(sessions: SessionInfo[], activeId: string | null): void {
       effort: s.effort,
       fast: s.fast,
       conversationId: s.conversationId,
+      profile: s.profile,
+      configDir: s.configDir,
+      worktreePath: s.worktreePath,
+      branch: s.branch,
+      base: s.base,
+      sourceRepo: s.sourceRepo,
+      parentSessionId: s.parentSessionId,
+      creatorKind: s.creatorKind,
+      creatorId: s.creatorId,
+      creatorAncestry: s.creatorAncestry,
+      rootCreatorKind: s.rootCreatorKind,
+      rootCreatorId: s.rootCreatorId,
+      provenanceStatus: s.provenanceStatus,
+      working: s.working,
+      lastDataAt: s.lastDataAt,
+      lastUserMessageAt: s.lastUserMessageAt,
+      exited: s.exited,
+      exitCode: s.exitCode,
+      exitSignal: s.exitSignal,
+      exitedAt: s.exitedAt,
       // Persist titles so they survive a PWA cold-start without flashing.
       claudeCustomTitle: s.claudeCustomTitle,
       claudeAiTitle: s.claudeAiTitle
@@ -187,7 +254,9 @@ export const useSessions = create<SessionsState>((set, get) => ({
       const sessions = reconcileSessions(get().sessions, fresh);
       const active = get().activeId;
       const stillExists = active && sessions.some((s) => s.id === active);
-      const nextActive = stillExists ? active : (sessions[0]?.id ?? null);
+      const nextActive = stillExists
+        ? active
+        : (sessions.find((session) => !session.exited)?.id ?? sessions[0]?.id ?? null);
       set({ sessions, loading: false, hydrated: true, activeId: nextActive });
       writeCache(sessions, nextActive);
     } catch (err) {
@@ -211,12 +280,10 @@ export const useSessions = create<SessionsState>((set, get) => ({
 
   kill: async (id) => {
     await api.killSession(id);
-    set((s) => {
-      const remaining = s.sessions.filter((x) => x.id !== id);
-      const nextActive = s.activeId === id ? (remaining[0]?.id ?? null) : s.activeId;
-      writeCache(remaining, nextActive);
-      return { sessions: remaining, activeId: nextActive };
-    });
+    // Ending a process is not deleting its history. Refresh immediately so
+    // the row moves to Finished/Failed while its transcript and lineage stay
+    // available in the operations inbox.
+    await get().refresh();
   },
 
   updateTags: async (id, requested) => {

@@ -651,6 +651,11 @@ func (m *Manager) Create(ctx context.Context, request state.CreateSessionRequest
 		}
 		request.ConfigDir = configDir
 	}
+	resolvedClaudeRequest, err := m.applyClaudeDefaults(request)
+	if err != nil {
+		return state.SessionInfo{}, err
+	}
+	request = resolvedClaudeRequest
 	resolvedRequest, err := m.resolveCodexModelChoice(ctx, request)
 	if err != nil {
 		return state.SessionInfo{}, err

@@ -112,16 +112,20 @@ export function useTabLabel(sessionId: string, cwd?: string): string | null {
 // (SessionTabs, GridView, MobileNav, pop-out title, …) shows the same
 // name for the same session.
 //   1. Claude's /rename title (user-facing, cross-client authoritative)
-//   2. Claude's ai-title (auto-generated first-prompt summary)
-//   3. cwd basename — the project folder name, our traditional default
-//   4. cmd basename or short id as last resort
+//   2. Sessions' explicit durable name (for example the first launcher task)
+//   3. Claude's ai-title (auto-generated first-prompt summary)
+//   4. explicit durable description
+//   5. cwd basename — the project folder name, our traditional default
+//   6. cmd basename or short id as last resort
 //
 // User's sessions tab rename is layered ABOVE this by callers (via
 // getTabLabel / useTabLabel) so it always wins without being part of
 // this function.
 export function sessionLabel(session: SessionInfo): string {
   if (session.claudeCustomTitle && session.claudeCustomTitle.length > 0) return session.claudeCustomTitle;
+  if (session.name && session.name.length > 0) return session.name;
   if (session.claudeAiTitle && session.claudeAiTitle.length > 0) return session.claudeAiTitle;
+  if (session.description && session.description.length > 0) return session.description;
   if (session.cwd && session.cwd.length > 0) {
     const parts = session.cwd.split('/').filter(Boolean);
     const last = parts[parts.length - 1];

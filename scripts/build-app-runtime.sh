@@ -29,9 +29,24 @@ for required_command in go git codesign shasum; do
   fi
 done
 
-runtime_version="$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf 'dev')"
-if [[ ! "$runtime_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "build-app-runtime: unsafe runtime version from git: $runtime_version" >&2
+runtime_build_version="$(git -C "$repo_root" describe --tags --always 2>/dev/null || printf 'dev')"
+# Record tracked and untracked source state in the build label. The final
+# immutable runtime identity is derived from the signed binary bytes below,
+# because Developer ID timestamps can change an artifact without changing its
+# source tree.
+source_state="$(git -C "$repo_root" status --porcelain=v1 --untracked-files=all -- runtime frontend src-tauri scripts/build-app-runtime.sh)"
+if [[ -n "$source_state" ]]; then
+  dirty_fingerprint="$({
+    git -C "$repo_root" diff --no-ext-diff --binary HEAD -- runtime frontend src-tauri scripts/build-app-runtime.sh
+    while IFS= read -r -d '' untracked_path; do
+      printf 'untracked:%s\n' "$untracked_path"
+      shasum -a 256 "$repo_root/$untracked_path"
+    done < <(git -C "$repo_root" ls-files --others --exclude-standard -z -- runtime frontend src-tauri scripts/build-app-runtime.sh)
+  } | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
+  runtime_build_version="${runtime_build_version}-dirty-main.$dirty_fingerprint"
+fi
+if [[ ! "$runtime_build_version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "build-app-runtime: unsafe runtime build version from git: $runtime_build_version" >&2
   exit 1
 fi
 
@@ -52,12 +67,12 @@ mkdir -p "$embedded_assets"
 find "$embedded_assets" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -R "$frontend_dist"/. "$embedded_assets"/
 
-ldflags="-s -w -buildid=sessions/$runtime_version"
+ldflags="-s -w -buildid=sessions/$runtime_build_version"
 build_one() {
   local binary_name="$1"
   local build_tags="$2"
   local output="$build_staging/$binary_name"
-  echo "> Sessions runtime: building $binary_name ($runtime_version)"
+  echo "> Sessions runtime: building $binary_name ($runtime_build_version)"
   if [[ -n "$build_tags" ]]; then
     (
       cd "$go_root"
@@ -92,6 +107,12 @@ done
 sessions_sha="$(shasum -a 256 "$runtime_dir/sessions" | awk '{print $1}')"
 sessionsd_sha="$(shasum -a 256 "$runtime_dir/sessionsd" | awk '{print $1}')"
 runner_sha="$(shasum -a 256 "$runtime_dir/sessions-runner" | awk '{print $1}')"
+binary_fingerprint="$(printf '%s\n' "$sessions_sha" "$sessionsd_sha" "$runner_sha" | shasum -a 256 | awk '{print substr($1, 1, 12)}')"
+runtime_version="${runtime_build_version}-bin.$binary_fingerprint"
+if [[ ! "$runtime_version" =~ ^[A-Za-z0-9._-]+$ || ${#runtime_version} -gt 128 ]]; then
+	echo "build-app-runtime: unsafe artifact-derived runtime version: $runtime_version" >&2
+	exit 1
+fi
 printf '%s\n' \
   '{' \
   '  "schemaVersion": 1,' \

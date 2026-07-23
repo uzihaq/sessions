@@ -64,23 +64,24 @@ type SessionInfo struct {
 }
 
 type CreateSessionRequest struct {
-	Cmd         string            `json:"cmd,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	Cwd         string            `json:"cwd,omitempty"`
-	Cols        int               `json:"cols,omitempty"`
-	Rows        int               `json:"rows,omitempty"`
-	Env         map[string]string `json:"env,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Tags        map[string]string `json:"tags,omitempty"`
-	Profile     string            `json:"profile,omitempty"`
-	Worktree    bool              `json:"worktree,omitempty"`
-	Base        string            `json:"base,omitempty"`
-	Kind        string            `json:"kind,omitempty"`
-	SpecPath    string            `json:"specPath,omitempty"`
-	OnIdle      string            `json:"onIdle,omitempty"`
-	WaitReady   bool              `json:"waitReady,omitempty"`
-	Force       bool              `json:"force,omitempty"`
+	Cmd         string                `json:"cmd,omitempty"`
+	Args        []string              `json:"args,omitempty"`
+	Cwd         string                `json:"cwd,omitempty"`
+	Cols        int                   `json:"cols,omitempty"`
+	Rows        int                   `json:"rows,omitempty"`
+	Env         map[string]string     `json:"env,omitempty"`
+	Name        string                `json:"name,omitempty"`
+	Description string                `json:"description,omitempty"`
+	Tags        map[string]string     `json:"tags,omitempty"`
+	Profile     string                `json:"profile,omitempty"`
+	Worktree    bool                  `json:"worktree,omitempty"`
+	Base        string                `json:"base,omitempty"`
+	Kind        string                `json:"kind,omitempty"`
+	SpecPath    string                `json:"specPath,omitempty"`
+	OnIdle      string                `json:"onIdle,omitempty"`
+	WaitReady   bool                  `json:"waitReady,omitempty"`
+	Force       bool                  `json:"force,omitempty"`
+	Claude      *ClaudeSessionOptions `json:"claude,omitempty"`
 	// CreatorSessionID and CreatorOwnerID are populated from trusted HTTP
 	// headers at the daemon boundary. They are deliberately not JSON fields.
 	CreatorSessionID string `json:"-"`
@@ -90,6 +91,19 @@ type CreateSessionRequest struct {
 	WorktreeBranch   string `json:"-"`
 	WorktreeBase     string `json:"-"`
 	SourceRepo       string `json:"-"`
+}
+
+// ClaudeSessionOptions are explicit per-session overrides. Empty fields use
+// the persisted Sessions default; "inherit" asks Sessions to defer to Claude
+// itself for that setting.
+type ClaudeSessionOptions struct {
+	RemoteControl           string `json:"remoteControl,omitempty"`
+	PermissionMode          string `json:"permissionMode,omitempty"`
+	Model                   string `json:"model,omitempty"`
+	Effort                  string `json:"effort,omitempty"`
+	Chrome                  string `json:"chrome,omitempty"`
+	SomewhereMCP            string `json:"somewhereMcp,omitempty"`
+	RemoteControlNamePrefix string `json:"remoteControlNamePrefix,omitempty"`
 }
 
 type ClaudeEventsWindow struct {

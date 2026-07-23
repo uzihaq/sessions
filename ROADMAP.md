@@ -1,8 +1,10 @@
 # Sessions roadmap
 
 The native application is now the product package. The Go daemon, runner, and
-CLI remain the runtime inside that package; the React UI remains shared by the
-native client and the daemon-served browser client.
+CLI remain the runtime inside that package. React powers the signed native
+client; the daemon-served interactive browser UI is now a deprecated
+compatibility surface, not a product direction. If a browser surface survives,
+it will be read-only status/viewing rather than terminal or agent control.
 
 ## Shipped: Sessions.app for macOS
 
@@ -37,9 +39,44 @@ with local usage and session/lane evidence plus an opt-in, cached Codex-or-Claud
 center for loopback port, same-Wi-Fi LAN, Tailscale Serve, and one-time device pairing; and automatic signed-update
 discovery with an in-app badge and once-per-version native notification. Connections also promotes the optional
 Somewhere platform and reports whether its CLI is absent, current, or updateable without mutating the user's global
-install. Model calls remain off by default, Codex is recommended, the CLI chooses its default model, recap effort is
+install. Search now adds explicit query-only AI planning through the selected pre-authenticated Codex or Claude CLI,
+Claude/Codex and User/Agent filters, provider-colored results, persistent query state, and a read-only history viewer
+that does not accidentally resume a session. Planning allows one active model call, caches identical requests, and
+the viewer renders a bounded tail preview. Tabs and Grid are grouped beneath Sessions, and the Somewhere card uses
+the product logo as a direct link. Model calls remain explicit, Codex is recommended, the CLI chooses its default model, recap effort is
 set to the lowest supported provider setting, provider input is hard-capped at 32 KiB and excludes transcripts and
-durable session IDs, and update install remains explicit (`runtime/internal/recap/service.go`, `src-tauri/src/lib.rs`).
+durable session IDs; AI search input is capped at 4 KiB and contains only the user's query. Update install remains
+explicit (`runtime/internal/agentcall/agentcall.go`, `runtime/internal/smartsearch/service.go`,
+`frontend/src/components/SearchView.tsx`, `src-tauri/src/lib.rs`).
+
+Claude launches now have typed global defaults plus per-session overrides for
+Remote Control, permission mode, model, effort, Chrome, Remote Control naming,
+and the Somewhere MCP. The daemon resolves these settings for every client and
+does not modify Claude's own configuration. Somewhere MCP auth stays owned by
+the Somewhere CLI; an equivalent existing registration is adopted instead of
+duplicated.
+
+The desktop information architecture is also implemented in source as an **agent
+operations inbox**. A permanent product rail opens Home, Sessions, Today,
+Search, Fleet, Usage, and Settings. Sessions adds a second, lineage-aware
+navigator with up to five locally pinned manager sessions, real parent/child
+nesting from the daemon ledger, exited-session history, collapsed completed children, status/provider/
+machine/activity rows, and deterministic status/provider/project/date filters.
+Only explicitly opened sessions enter the tab strip; closing a tab does not end
+the runtime. Exited rows open a bounded read-only conversation/details view and
+never attach a terminal transport; Grid and mobile quick-switching remain live-
+session-only. A finished intermediary stays expanded while any descendant is
+live. Conversation, Terminal, and Details are separate modes, and the
+dangerous end action lives only in Details. Global creation starts from a task
+and recent workspace, while Delegate creates a real child through the trusted
+creator header and inherits the parent workspace, machine, tags, and profile.
+Profile inheritance is provider-safe: changing the delegated provider resets to
+that provider's default login. An optional initial task uses the same bracketed-
+paste plus separate-Enter PTY contract as the working composer. A newly created
+provider profile must finish login first and never receives an automatic task.
+Both dark and light themes follow the supplied native mockups. Richer inline
+child result cards and explicit per-feature model selection remain **Coming
+soon** rather than being presented as shipped.
 
 Exercise that source build and the existing public first-install/updater route without touching the production mini.
 Then reuse the Tauri 2 client and React UI for Android.
@@ -51,17 +88,35 @@ thin Kotlin client rather than changing the runtime boundary.
 
 ## Later
 
+- **Session forking:** branch an existing session from a chosen point into an
+  independent lane while keeping the source untouched. A fork records its
+  source and fork point, makes destination machine/provider/workspace choices
+  explicit, and copies only portable context. It remains distinct from Resume
+  (continue the same lane) and Delegate (create a child task). This is tracked
+  on the project board as `tsk_dcde9c9ad88744e0963736953e9355a7` and is not
+  part of the Mac mini cutover.
 - iOS client focused on APNs, widgets, and Live Activities.
 - Session sharing after the pairing and per-device credential ladder.
 - Standalone cross-turn diff review and inline comments back to an agent; event-level Codex diffs already render in the conversation activity feed.
-- Customer-owned always-on machines through somewhere.
+- **Somewhere account (coming soon):** use the existing `somewhere login` identity to make backup setup visible in Sessions, then provide private backup inventory/download, central usage rollups, explicitly opt-in server-indexed transcript search, and account-wide machine/session status. Client-side encrypted backups remain opaque and are never advertised as hosted-searchable. Password recovery wraps the existing XChaCha archive key with an Argon2id-derived key; bcrypt is not reversible encryption.
+- **Always-on worker v1 (coming soon):** one private Fly Machine and persistent volume per user, running a specialized Sessions worker with no public listener and no route or credential for any user-local daemon. The worker connects outbound to a narrow Somewhere gateway for status, structured conversations, terminal attach, scoped workspace files, and client-mediated session transfer. See [`docs/CLOUD_VM.md`](docs/CLOUD_VM.md).
+  ```text
+  Sessions.app / Android  --HTTPS/WSS-->  Somewhere auth + narrow gateway
+                                                   ^
+                                                   | outbound worker channel
+                                                   |
+                                  private per-user Fly Machine + volume
+  specialized Sessions worker; no public ingress
+  ```
+- **Inline child lifecycle cards:** the navigator and Details already show trusted hierarchy and child health. A later normalized event will project child-start and child-completion ledger facts into the conversation timeline without guessing from provider text.
 - Local semantic search only if FTS5 proves insufficient in real use.
 
 ## Explicitly not planned
 
-- A custom Sessions relay or cloud terminal-data plane.
+- A relay to a user's local Mac. The planned Somewhere gateway terminates native-client traffic only for Somewhere-owned private workers; it never creates VM-to-Mac reachability.
 - A required Sessions account or token markup.
 - Prompt queuing; the user rejected it as redundant.
 - A PWA rung before native mobile.
+- An interactive terminal or agent-control surface in a browser; native clients own that trust boundary.
 - Making the Tauri process own daemon or runner lifetime.
 - Any mini cutover before the macOS app has shipped and been exercised.

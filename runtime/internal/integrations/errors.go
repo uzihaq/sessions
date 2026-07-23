@@ -235,6 +235,10 @@ func (s *Service) TranscriptLimited(live []state.SessionInfo, id string, maxByte
 	return s.history.TranscriptLimited(live, id, maxBytes)
 }
 
+func (s *Service) TranscriptPreview(live []state.SessionInfo, id string, maxBytes int64, maxMessages int) (TranscriptResponse, error) {
+	return s.history.TranscriptPreview(live, id, maxBytes, maxMessages)
+}
+
 func (s *Service) Raw(live []state.SessionInfo, id string) ([]byte, error) {
 	return s.history.Raw(live, id)
 }

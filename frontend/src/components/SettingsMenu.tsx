@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  fetchAISettings,
   fetchRecapSettings,
   getPushVapidPublicKey,
   subscribePush,
   unsubscribePush,
+  updateAISettings,
   updateRecapSettings,
+  type AIProvider,
+  type AISettings,
   type RecapProvider,
   type RecapSettings
 } from '../api/sessionsd';
 import { type TextSize, nextSize, sizeLabel, writeTextSize } from '../lib/textSize';
+import { useServers } from '../lib/servers';
 import {
   NEW_SESSION_DIMENSIONS,
   isNewSessionTool,
@@ -86,6 +91,7 @@ async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
 
 // Settings popover anchored to a header button.
 export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenConnections }: Props): JSX.Element {
+  const activeServerId = useServers((state) => state.activeId);
   const [open, setOpen] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(readPushEnabled);
   const [pushBusy, setPushBusy] = useState(false);
@@ -99,9 +105,16 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [recapSettings, setRecapSettings] = useState<RecapSettings>({ provider: 'off' });
   const [recapBusy, setRecapBusy] = useState(false);
+  const [recapAvailable, setRecapAvailable] = useState(true);
   const [recapMessage, setRecapMessage] = useState<string | null>(null);
+  const [aiSettings, setAISettings] = useState<AISettings>({ provider: 'codex' });
+  const [aiBusy, setAIBusy] = useState(false);
+  const [aiAvailable, setAIAvailable] = useState(true);
+  const [aiMessage, setAIMessage] = useState<string | null>(null);
   const [sessionDefaults, setSessionDefaults] = useState<NewSessionDefaults>(readNewSessionDefaults);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const recapGeneration = useRef(0);
+  const aiGeneration = useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -113,12 +126,38 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
   }, [open]);
 
   useEffect(() => {
+    if (!isTauri()) return;
+    const nextRecapGeneration = recapGeneration.current + 1;
+    const nextAIGeneration = aiGeneration.current + 1;
+    recapGeneration.current = nextRecapGeneration;
+    aiGeneration.current = nextAIGeneration;
     const controller = new AbortController();
+    setRecapSettings({ provider: 'off' });
+    setAISettings({ provider: 'codex' });
+    setRecapBusy(false);
+    setAIBusy(false);
+    setRecapAvailable(true);
+    setAIAvailable(true);
+    setRecapMessage(null);
+    setAIMessage(null);
     void fetchRecapSettings(controller.signal)
-      .then(setRecapSettings)
-      .catch(() => { /* an older daemon may not have recap settings yet */ });
+      .then((settings) => { if (recapGeneration.current === nextRecapGeneration) setRecapSettings(settings); })
+      .catch(() => {
+        if (!controller.signal.aborted && recapGeneration.current === nextRecapGeneration) {
+          setRecapAvailable(false);
+          setRecapMessage('Daily recaps require a current Sessions runtime.');
+        }
+      });
+    void fetchAISettings(controller.signal)
+      .then((settings) => { if (aiGeneration.current === nextAIGeneration) setAISettings(settings); })
+      .catch(() => {
+        if (!controller.signal.aborted && aiGeneration.current === nextAIGeneration) {
+          setAIAvailable(false);
+          setAIMessage('AI search requires a current Sessions runtime.');
+        }
+      });
     return () => controller.abort();
-  }, []);
+  }, [activeServerId]);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -163,17 +202,48 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
   };
 
   const saveRecapSettings = async (next: RecapSettings): Promise<void> => {
-    if (recapBusy) return;
+    if (recapBusy || !recapAvailable) return;
+    const previous = recapSettings;
+    const generation = recapGeneration.current + 1;
+    recapGeneration.current = generation;
     setRecapBusy(true);
     setRecapMessage(null);
     setRecapSettings(next);
     try {
-      setRecapSettings(await updateRecapSettings(next));
-      setRecapMessage(next.provider === 'off' ? 'Daily model calls are off' : `${next.provider === 'codex' ? 'Codex' : 'Claude'} will write recaps only when requested`);
+      const saved = await updateRecapSettings(next);
+      if (recapGeneration.current !== generation) return;
+      setRecapSettings(saved);
+      setRecapMessage(saved.provider === 'off' ? 'Daily model calls are off' : `${saved.provider === 'codex' ? 'Codex' : 'Claude'} will write recaps only when requested`);
     } catch (error) {
-      setRecapMessage(error instanceof Error ? error.message : 'Could not save recap settings');
+      if (recapGeneration.current === generation) {
+        setRecapSettings(previous);
+        setRecapMessage(error instanceof Error ? error.message : 'Could not save recap settings');
+      }
     } finally {
-      setRecapBusy(false);
+      if (recapGeneration.current === generation) setRecapBusy(false);
+    }
+  };
+
+  const saveAISettings = async (next: AISettings): Promise<void> => {
+    if (aiBusy || !aiAvailable) return;
+    const previous = aiSettings;
+    const generation = aiGeneration.current + 1;
+    aiGeneration.current = generation;
+    setAIBusy(true);
+    setAIMessage(null);
+    setAISettings(next);
+    try {
+      const saved = await updateAISettings(next);
+      if (aiGeneration.current !== generation) return;
+      setAISettings(saved);
+      setAIMessage(`${saved.provider === 'codex' ? 'Codex' : 'Claude'} will plan explicitly requested AI searches`);
+    } catch (error) {
+      if (aiGeneration.current === generation) {
+        setAISettings(previous);
+        setAIMessage(error instanceof Error ? error.message : 'Could not save the smart-feature provider');
+      }
+    } finally {
+      if (aiGeneration.current === generation) setAIBusy(false);
     }
   };
 
@@ -425,25 +495,47 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
           {pushMessage ? (
             <div className="settings-menu-status">{pushMessage}</div>
           ) : null}
-          <div className="settings-menu-divider" />
-          <div className="settings-menu-section" aria-label="Daily recap">
-            <div className="settings-menu-section-title">Daily recap</div>
-            <label className="settings-menu-field">
-              <span>Writer</span>
-              <select
-                className="settings-menu-input"
-                value={recapSettings.provider}
-                disabled={recapBusy}
-                onChange={(event) => void saveRecapSettings({ ...recapSettings, provider: event.currentTarget.value as RecapProvider })}
-              >
-                <option value="off">Off · no model calls</option>
-                <option value="codex">Codex · recommended</option>
-                <option value="claude">Claude</option>
-              </select>
-            </label>
-            <span className="settings-menu-field-hint">One manually requested call, capped at 32 KiB and lowest reasoning effort. Your CLI chooses its default model; full transcripts are never sent.</span>
-            {recapMessage ? <div className="settings-menu-status">{recapMessage}</div> : null}
-          </div>
+          {isTauri() ? (
+            <>
+              <div className="settings-menu-divider" />
+              <div className="settings-menu-section" aria-label="Smart features">
+                <div className="settings-menu-section-title">Smart features</div>
+                <label className="settings-menu-field">
+                  <span>Provider</span>
+                  <select
+                    className="settings-menu-input"
+                    value={aiSettings.provider}
+                    disabled={aiBusy || !aiAvailable}
+                    onChange={(event) => void saveAISettings({ provider: event.currentTarget.value as AIProvider })}
+                  >
+                    <option value="codex">Codex · recommended</option>
+                    <option value="claude">Claude</option>
+                  </select>
+                </label>
+                <span className="settings-menu-field-hint">Used only when you explicitly submit an AI action. Search sends the natural-language query—not transcripts—then searches the local index. Your CLI chooses its default model.</span>
+                {aiMessage ? <div className="settings-menu-status">{aiMessage}</div> : null}
+              </div>
+              <div className="settings-menu-divider" />
+              <div className="settings-menu-section" aria-label="Daily recap">
+                <div className="settings-menu-section-title">Daily recap</div>
+                <label className="settings-menu-field">
+                  <span>Writer</span>
+                  <select
+                    className="settings-menu-input"
+                    value={recapSettings.provider}
+                    disabled={recapBusy || !recapAvailable}
+                    onChange={(event) => void saveRecapSettings({ ...recapSettings, provider: event.currentTarget.value as RecapProvider })}
+                  >
+                    <option value="off">Off · no model calls</option>
+                    <option value="codex">Codex · recommended</option>
+                    <option value="claude">Claude</option>
+                  </select>
+                </label>
+                <span className="settings-menu-field-hint">One manually requested call, capped at 32 KiB and lowest reasoning effort. Your CLI chooses its default model; full transcripts are never sent.</span>
+                {recapMessage ? <div className="settings-menu-status">{recapMessage}</div> : null}
+              </div>
+            </>
+          ) : null}
           {isTauri() ? (
             <>
               <div className="settings-menu-divider" />

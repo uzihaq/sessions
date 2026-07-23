@@ -26,6 +26,21 @@ const sessions = [
     id: 'shell-1', cmd: 'zsh', args: [], cwd: '/tmp/shell', cols: 120, rows: 40,
     createdAt: 3, pid: 103, tool: 'terminal', working: false, lastDataAt: 3,
     lastUserMessageAt: null, exited: false, exitCode: null, exitSignal: null, exitedAt: null
+  },
+  {
+    id: 'finished-parent', cmd: 'claude', args: [], cwd: '/tmp/parent', cols: 120, rows: 40,
+    createdAt: 4, pid: 104, tool: 'claude-code', working: false, lastDataAt: 4,
+    lastUserMessageAt: 4, exited: true, exitCode: 0, exitSignal: null, exitedAt: 4
+  },
+  {
+    id: 'finished-child', parentSessionId: 'finished-parent', cmd: 'codex', args: [], cwd: '/tmp/child', cols: 120, rows: 40,
+    createdAt: 5, pid: 105, tool: 'codex', working: false, lastDataAt: 5,
+    lastUserMessageAt: 5, exited: true, exitCode: 0, exitSignal: null, exitedAt: 5
+  },
+  {
+    id: 'live-grandchild', parentSessionId: 'finished-child', cmd: 'zsh', args: [], cwd: '/tmp/grandchild', cols: 120, rows: 40,
+    createdAt: 6, pid: 106, tool: 'terminal', working: true, lastDataAt: 6,
+    lastUserMessageAt: null, exited: false, exitCode: null, exitSignal: null, exitedAt: null
   }
 ];
 
@@ -43,13 +58,32 @@ function daemonServer(sessionPrefix) {
   let sessionRequests = 0;
   const server = http.createServer((request, response) => {
     response.setHeader('access-control-allow-origin', '*');
-    if (request.url === '/api/sessions') {
+    const requested = new URL(request.url ?? '/', 'http://sessions.test');
+    if (requested.pathname === '/api/sessions') {
+      if (requested.searchParams.get('include_exited') !== '1') {
+        response.writeHead(400, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: 'operations inbox must request exited sessions' }));
+        return;
+      }
       sessionRequests += 1;
       response.writeHead(200, { 'content-type': 'application/json' });
       const body = sessionPrefix
-        ? sessions.map((session) => ({ ...session, id: `${sessionPrefix}-${session.id}` }))
+        ? sessions.map((session) => ({
+            ...session,
+            id: `${sessionPrefix}-${session.id}`,
+            parentSessionId: session.parentSessionId ? `${sessionPrefix}-${session.parentSessionId}` : undefined
+          }))
         : sessions;
       response.end(JSON.stringify({ sessions: body }));
+      return;
+    }
+    if (requested.pathname.endsWith('/api/history/finished-parent/preview')) {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({
+        schemaVersion: 1,
+        session: { id: 'finished-parent', name: 'Finished parent', tool: 'claude', cwd: '/tmp/parent', machine: 'Primary', created_at: 4, last_activity_at: 4, message_count: 1, conversation_available: true },
+        messages: [{ role: 'assistant', text: 'Finished safely.', timestamp: '2026-07-22T00:00:00Z' }]
+      }));
       return;
     }
     response.writeHead(404, { 'content-type': 'application/json' });
@@ -137,8 +171,39 @@ async function tabIds(query) {
   return ids;
 }
 
+async function navigatorIds(query) {
+  const current = await openCase(query, '.session-nav-row[data-session-id]');
+  const ids = await current.page.$$eval(
+    '.session-nav-row[data-session-id]',
+    (nodes) => nodes.map((node) => node.getAttribute('data-session-id'))
+  );
+  assert.deepEqual(current.pageErrors, []);
+  await current.page.close();
+  return ids;
+}
+
+async function assertFinishedSessionIsReadOnly() {
+  const current = await openCase('', '.session-nav-row[data-session-id="finished-parent"]');
+  await current.page.click('.session-nav-row[data-session-id="finished-parent"]');
+  await current.page.waitForSelector('.session-view-host:not(.is-hidden) .session-history-body');
+  const state = await current.page.$eval('.session-view-host:not(.is-hidden)', (node) => ({
+    history: Boolean(node.querySelector('.session-history-body')),
+    terminal: Boolean(node.querySelector('.terminal-host')),
+    copy: node.textContent
+  }));
+  assert.equal(state.history, true);
+  assert.equal(state.terminal, false);
+  assert.match(state.copy ?? '', /viewing does not resume or send anything/i);
+  assert.deepEqual(current.pageErrors, []);
+  await current.page.close();
+}
+
 try {
-  assert.deepEqual(await tabIds(''), ['codex-1', 'claude-1', 'shell-1']);
+  // The operations-inbox contract keeps every scoped session in the
+  // navigator but only the explicitly opened/active one in the tab strip.
+  assert.deepEqual(await navigatorIds(''), ['finished-parent', 'finished-child', 'live-grandchild', 'shell-1', 'claude-1', 'codex-1']);
+  await assertFinishedSessionIsReadOnly();
+  assert.deepEqual(await tabIds(''), ['codex-1']);
   assert.deepEqual(await tabIds('?tool=codex'), ['codex-1']);
   assert.deepEqual(await tabIds('?tool=claude'), ['claude-1']);
   assert.deepEqual(await tabIds('?tool=shell'), ['shell-1']);
@@ -147,7 +212,7 @@ try {
   const scopedBefore = scoped.sessionRequests;
   assert.deepEqual(
     await tabIds('?server=scoped-server'),
-    ['scoped-codex-1', 'scoped-claude-1', 'scoped-shell-1']
+    ['scoped-codex-1']
   );
   assert.equal(primary.sessionRequests, primaryBefore);
   assert.ok(scoped.sessionRequests > scopedBefore);
@@ -159,7 +224,9 @@ try {
   await single.page.close();
 
   console.log(JSON.stringify({
-    normal: 3,
+    navigator: 6,
+    readOnlyHistory: true,
+    openTabs: 1,
     toolScopes: ['codex', 'claude', 'shell'],
     serverScope: 'scoped-server',
     singleSession: 'codex-1',

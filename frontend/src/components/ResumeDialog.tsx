@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSessions } from '../store/sessions';
-import { fetchResumableSessions, type ResumableSession } from '../api/sessionsd';
+import { adoptConversation, fetchResumableSessions, type ResumableSession } from '../api/sessionsd';
 import { getCwdLabel } from '../lib/tabLabels';
+import { ProviderBadge } from './ProviderBadge';
 
 // Dedicated resume picker — opened by the ↺ button in the tab strip
 // (separate from "+ New session"). The old design tucked resume inside
@@ -70,7 +71,8 @@ function extractClaudeSessionId(args: string[]): string | null {
 }
 
 export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
-  const create = useSessions((s) => s.create);
+  const refresh = useSessions((s) => s.refresh);
+  const setActive = useSessions((s) => s.setActive);
   const openSessions = useSessions((s) => s.sessions);
 
   const [resumable, setResumable] = useState<ResumableSession[] | null>([]);
@@ -79,6 +81,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>(readViewMode);
   const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<ResumableSession | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -92,12 +95,15 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
   // Filter out sessions that are already open as sessionsd tabs — picking
   // one would spawn a second `claude --resume <id>` against the live
   // JSONL the open tab is writing to, fighting for the file.
-  const openClaudeIds = useMemo(() => {
+  const openProviderIds = useMemo(() => {
     const ids = new Set<string>();
     for (const s of openSessions) {
-      if (s.tool !== 'claude-code') continue;
-      const id = extractClaudeSessionId(s.args);
-      if (id) ids.add(id);
+      if (s.tool === 'claude-code') {
+        const id = extractClaudeSessionId(s.args);
+        if (id) ids.add(`claude:${id}`);
+      } else if (s.tool === 'codex' && s.conversationId) {
+        ids.add(`codex:${s.conversationId}`);
+      }
     }
     return ids;
   }, [openSessions]);
@@ -105,15 +111,16 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
   const available = useMemo(() => {
     if (!resumable) return null;
     const q = query.trim().toLowerCase();
-    const list = resumable.filter((s) => !openClaudeIds.has(s.sessionId));
+    const list = resumable.filter((s) => !openProviderIds.has(`${s.tool}:${s.sessionId}`));
     if (!q) return list;
     return list.filter((s) => {
       const inMsg = s.firstUserMessage?.toLowerCase().includes(q) ?? false;
       const inFolder = shortFolder(s.cwd).toLowerCase().includes(q)
         || s.cwd.toLowerCase().includes(q);
-      return inMsg || inFolder;
+      const inProvider = s.tool.includes(q) || (s.origin?.toLowerCase().includes(q) ?? false);
+      return inMsg || inFolder || inProvider;
     });
-  }, [resumable, openClaudeIds, query]);
+  }, [resumable, openProviderIds, query]);
 
   // Flat = newest-first across all folders. Backend already sorts
   // resumable by modifiedAt desc, so we just keep that order.
@@ -139,18 +146,14 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
     writeViewMode(next);
   };
 
-  const resume = async (s: ResumableSession): Promise<void> => {
+  const resume = async (): Promise<void> => {
+    if (!selected) return;
     setBusy(true);
     setError(null);
     try {
-      // Skip-perms by default — matches what New Session defaults to,
-      // and resuming a conversation where the user had perms granted
-      // shouldn't suddenly start asking again.
-      await create({
-        cmd: 'claude',
-        args: ['--dangerously-skip-permissions', '--resume', s.sessionId],
-        cwd: s.cwd
-      });
+      const result = await adoptConversation(selected.sessionId);
+      await refresh();
+      setActive(result.laneId);
       onClose();
     } catch (err) {
       setError((err as Error).message);
@@ -161,7 +164,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
 
   const totalAvailable = available?.length ?? 0;
   const openCount = resumable
-    ? resumable.filter((s) => openClaudeIds.has(s.sessionId)).length
+    ? resumable.filter((s) => openProviderIds.has(`${s.tool}:${s.sessionId}`)).length
     : 0;
 
   return (
@@ -170,11 +173,14 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
         className="dialog dialog-wide resume-dialog"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
-        aria-label="Resume a Claude session"
+        aria-label="Bring an existing conversation into Sessions"
       >
         <header className="resume-dialog-head">
           <div className="resume-dialog-title-row">
-            <h2 className="resume-dialog-title">↺ Resume a Claude session</h2>
+            <div>
+              <span className="dialog-kicker">Same history · one active surface</span>
+              <h2 className="resume-dialog-title">Bring in a conversation</h2>
+            </div>
             <div className="resume-dialog-view-toggle" role="tablist" aria-label="Sort order">
               <button
                 type="button"
@@ -207,6 +213,10 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
         </header>
 
         <div className="resume-dialog-body">
+          <div className="resume-safety-note">
+            <strong>No transcript is copied.</strong>
+            <span>Choose an idle Claude or Codex conversation. Sessions resumes its existing provider identity; do not keep writing to it in another app at the same time.</span>
+          </div>
           {loading ? (
             <div className="resume-empty">Loading sessions…</div>
           ) : resumable === null ? (
@@ -217,8 +227,8 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
                 {query.trim()
                   ? `No sessions match "${query.trim()}".`
                   : openCount > 0 && (resumable?.length ?? 0) === openCount
-                    ? 'All resumable Claude sessions are already open in tabs.'
-                    : 'No prior Claude sessions found on this machine.'}
+                    ? 'All resumable conversations are already open in Sessions.'
+                    : 'No prior Claude or Codex conversations found on this machine.'}
               </p>
               <button
                 type="button"
@@ -231,7 +241,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
           ) : view === 'flat' ? (
             <div className="resume-cards">
               {flatList.map((s) => (
-                <ResumeCard key={s.sessionId} session={s} onPick={() => void resume(s)} disabled={busy} />
+                <ResumeCard key={`${s.tool}:${s.sessionId}`} session={s} selected={selected?.sessionId === s.sessionId && selected.tool === s.tool} onPick={() => setSelected(s)} disabled={busy} />
               ))}
             </div>
           ) : (
@@ -248,9 +258,10 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
                   <div className="resume-cards">
                     {g.items.map((s) => (
                       <ResumeCard
-                        key={s.sessionId}
+                        key={`${s.tool}:${s.sessionId}`}
                         session={s}
-                        onPick={() => void resume(s)}
+                        selected={selected?.sessionId === s.sessionId && selected.tool === s.tool}
+                        onPick={() => setSelected(s)}
                         disabled={busy}
                         hideFolder
                       />
@@ -270,6 +281,9 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={busy}>
             Close
           </button>
+          <button type="button" className="btn btn-primary" onClick={() => void resume()} disabled={busy || !selected}>
+            {busy ? 'Bringing in…' : selected ? `Bring ${selected.tool === 'codex' ? 'Codex' : 'Claude'} conversation into Sessions` : 'Choose a conversation'}
+          </button>
         </footer>
       </div>
     </div>
@@ -278,6 +292,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
 
 interface CardProps {
   session: ResumableSession;
+  selected: boolean;
   onPick: () => void;
   disabled: boolean;
   // In grouped view the folder is already in the section header, so we
@@ -285,7 +300,7 @@ interface CardProps {
   hideFolder?: boolean;
 }
 
-function ResumeCard({ session, onPick, disabled, hideFolder }: CardProps): JSX.Element {
+function ResumeCard({ session, selected, onPick, disabled, hideFolder }: CardProps): JSX.Element {
   const msg = session.firstUserMessage?.trim() || '(no user input yet)';
   const size = session.sizeBytes < 100_000
     ? `${Math.round(session.sizeBytes / 1024)} KB`
@@ -293,9 +308,10 @@ function ResumeCard({ session, onPick, disabled, hideFolder }: CardProps): JSX.E
   return (
     <button
       type="button"
-      className={`resume-card${hideFolder ? ' resume-card-no-folder' : ''}`}
+      className={`resume-card${hideFolder ? ' resume-card-no-folder' : ''}${selected ? ' is-selected' : ''}`}
       onClick={onPick}
       disabled={disabled}
+      aria-pressed={selected}
       title={`${session.sessionId} · ${size}`}
     >
       {!hideFolder ? (
@@ -306,9 +322,7 @@ function ResumeCard({ session, onPick, disabled, hideFolder }: CardProps): JSX.E
       ) : null}
       <div className="resume-card-right">
         <span className="resume-card-msg">{msg}</span>
-        {hideFolder ? (
-          <span className="resume-card-meta">{relativeWhen(session.modifiedAt)} · {size}</span>
-        ) : null}
+        <span className="resume-card-meta"><ProviderBadge provider={session.tool} compact /> {session.origin ?? ''}{hideFolder ? ` · ${relativeWhen(session.modifiedAt)} · ${size}` : ''}</span>
       </div>
     </button>
   );

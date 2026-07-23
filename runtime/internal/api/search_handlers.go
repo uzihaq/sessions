@@ -1,15 +1,29 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	historysearch "github.com/somewhere-tech/sessions/runtime/internal/search"
+	"github.com/somewhere-tech/sessions/runtime/internal/smartsearch"
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func (s *Server) handleSearchRoute(response http.ResponseWriter, request *http.Request, corsOrigin string) bool {
-	if request.URL.Path != "/api/search" {
+	switch request.URL.Path {
+	case "/api/ai/settings":
+		s.handleAISettings(response, request, corsOrigin)
+		return true
+	case "/api/search/plan":
+		s.handleSmartSearchPlan(response, request, corsOrigin)
+		return true
+	case "/api/search":
+		// Continue below to the local index.
+	default:
 		return false
 	}
 	if request.Method != http.MethodGet {
@@ -37,6 +51,81 @@ func (s *Server) handleSearchRoute(response http.ResponseWriter, request *http.R
 	}
 	s.sendJSON(response, http.StatusOK, result, corsOrigin)
 	return true
+}
+
+func (s *Server) handleAISettings(response http.ResponseWriter, request *http.Request, corsOrigin string) {
+	switch request.Method {
+	case http.MethodGet:
+		settings, err := s.loadAISettings()
+		if err != nil {
+			s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, settings, corsOrigin)
+	case http.MethodPut:
+		var requested state.AISettings
+		if err := readJSON(request, &requested); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		normalized, err := state.NormalizeAISettings(requested)
+		if err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		if err := state.UpdateSettings(s.lan.settingsPath, func(settings *state.Settings) error {
+			settings.AI = &normalized
+			return nil
+		}); err != nil {
+			s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, normalized, corsOrigin)
+	default:
+		s.sendJSON(response, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"}, corsOrigin)
+	}
+}
+
+func (s *Server) handleSmartSearchPlan(response http.ResponseWriter, request *http.Request, corsOrigin string) {
+	if request.Method != http.MethodPost {
+		s.sendJSON(response, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"}, corsOrigin)
+		return
+	}
+	var body struct {
+		Query string `json:"query"`
+	}
+	if err := readJSON(request, &body); err != nil {
+		s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+		return
+	}
+	settings, err := s.loadAISettings()
+	if err != nil {
+		s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
+		return
+	}
+	ctx, cancel := context.WithTimeout(request.Context(), 2*time.Minute)
+	defer cancel()
+	plan, err := s.smartSearch.Plan(ctx, settings, body.Query)
+	if err != nil {
+		status := http.StatusBadGateway
+		if smartsearch.IsBusy(err) {
+			status = http.StatusTooManyRequests
+			response.Header().Set("Retry-After", "2")
+		} else if strings.TrimSpace(body.Query) == "" || len(body.Query) > 4*1024 {
+			status = http.StatusBadRequest
+		}
+		s.sendJSON(response, status, map[string]any{"error": err.Error()}, corsOrigin)
+		return
+	}
+	s.sendJSON(response, http.StatusOK, plan, corsOrigin)
+}
+
+func (s *Server) loadAISettings() (state.AISettings, error) {
+	settings, err := state.LoadSettings(s.lan.settingsPath)
+	if err != nil {
+		return state.AISettings{}, err
+	}
+	return state.NormalizeAISettings(settings.EffectiveAI())
 }
 
 func searchOptions(request *http.Request) (historysearch.Options, error) {

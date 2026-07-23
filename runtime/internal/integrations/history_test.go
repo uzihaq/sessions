@@ -3,12 +3,15 @@ package integrations
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
+	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
 
 func TestHistoryNormalizesCodexRolloutThroughWatchContract(t *testing.T) {
@@ -97,5 +100,49 @@ func TestHistoryNormalizesCodexRolloutThroughWatchContract(t *testing.T) {
 	}
 	if len(limited.Messages) != 1 || limited.Messages[0].Text != "Codex fixture question" {
 		t.Fatalf("bounded messages = %#v", limited.Messages)
+	}
+}
+
+func TestTranscriptPreviewReturnsBoundedTail(t *testing.T) {
+	root := t.TempDir()
+	runnerDir := filepath.Join(root, "runners")
+	claudeDir := filepath.Join(root, "claude-projects")
+	cwd := filepath.Join(root, "worktree")
+	for _, dir := range []string{runnerDir, claudeDir, cwd} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+	if err := state.WriteMetadata(filepath.Join(runnerDir, id+".json"), state.Metadata{
+		ID: id, Name: "preview", Cmd: "claude", Args: []string{"--session-id", id}, Cwd: cwd,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(claudeDir, watch.EncodeClaudeCWD(cwd), id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for index := range 8 {
+		lines = append(lines, fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"message-%d"}}`, index))
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewHistoryStore(HistoryOptions{RunnerStateDir: runnerDir, ClaudeProjectsDir: claudeDir})
+	preview, err := store.TranscriptPreview(nil, id, 1<<20, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.Truncated || len(preview.Messages) != 3 || preview.Messages[0].Text != "message-5" || preview.Messages[2].Text != "message-7" {
+		t.Fatalf("message-bounded preview=%#v", preview)
+	}
+	preview, err = store.TranscriptPreview(nil, id, int64(len(lines[len(lines)-1])+2), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.Truncated || len(preview.Messages) != 1 || preview.Messages[0].Text != "message-7" {
+		t.Fatalf("byte-bounded preview=%#v", preview)
 	}
 }

@@ -340,6 +340,12 @@ export function getActiveServer(): ServerConfig {
   return server;
 }
 
+export function getServer(serverId: string): ServerConfig {
+	const server = useServers.getState().servers.find((candidate) => candidate.id === serverId);
+	if (!server) throw new Error(`Sessions server ${serverId} is no longer configured.`);
+	return server;
+}
+
 // Local means the configured daemon is on browser loopback. It does not
 // imply same-origin: a hosted HTTPS shell must still call the configured
 // http://localhost endpoint directly rather than rewriting it to the site.

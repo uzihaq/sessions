@@ -93,6 +93,15 @@ func TestHistoryRoutesExposeStableListTranscriptTextAndRawShapes(t *testing.T) {
 		transcript.Messages[1].Role != "assistant" || transcript.Messages[1].Text != "Fixture remembered." {
 		t.Fatalf("messages = %#v", transcript.Messages)
 	}
+	previewResponse := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"/preview?format=json", nil, "127.0.0.1:4321", nil)
+	decodeBody(t, previewResponse, &transcript)
+	if previewResponse.Code != http.StatusOK || transcript.Truncated || len(transcript.Messages) != 2 {
+		t.Fatalf("preview status=%d transcript=%#v", previewResponse.Code, transcript)
+	}
+	invalidView := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"/everything", nil, "127.0.0.1:4321", nil)
+	if invalidView.Code != http.StatusNotFound {
+		t.Fatalf("invalid view status=%d body=%s", invalidView.Code, invalidView.Body.String())
+	}
 
 	textResponse := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"?format=text", nil, "127.0.0.1:4321", nil)
 	if textResponse.Code != http.StatusOK || textResponse.Header().Get("X-Sessions-Schema-Version") != "1" ||

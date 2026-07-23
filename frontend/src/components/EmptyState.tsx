@@ -5,23 +5,17 @@ interface Props {
 export function EmptyState({ onNew }: Props): JSX.Element {
   return (
     <div className="empty-state">
-      {/* Watermark — the Claude product art faded into the background so
-          the page reads as "loaded, just empty" rather than "blank /
-          broken." Sits behind the call-to-action card. */}
-      <img
-        src={`${import.meta.env.BASE_URL}claude.png`}
-        alt=""
-        aria-hidden
-        className="empty-watermark"
-        draggable={false}
-      />
-      <div className="empty-card">
-        <h2 className="empty-title">No active session</h2>
-        <p className="empty-sub">
-          Start a PTY-backed session. The terminal stream is the source of
-          truth — Sessions cards land in Phase 3.
-        </p>
-        <button className="btn btn-primary" onClick={onNew}>+ New session</button>
+      <div className="empty-workspace-mark" aria-hidden>
+        <span /><span /><span />
+      </div>
+      <div className="empty-copy">
+        <span className="empty-kicker">Agent operations inbox</span>
+        <h1>Start your first session</h1>
+        <p>Open Claude, Codex, or a shell in any workspace. Sessions keeps it running and brings it back when it needs you.</p>
+        <button className="btn btn-primary empty-new-session" onClick={onNew}>＋ New Session</button>
+        <div className="empty-capabilities" aria-label="Sessions capabilities">
+          <span>Local by default</span><span>Survives app restarts</span><span>Claude · Codex · Shell</span>
+        </div>
       </div>
     </div>
   );

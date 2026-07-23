@@ -11,6 +11,11 @@ import (
 	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
 )
 
+const (
+	transcriptPreviewMaxBytes    = 2 * 1024 * 1024
+	transcriptPreviewMaxMessages = 400
+)
+
 func (s *Server) handleIntegrationsRoute(response http.ResponseWriter, request *http.Request, corsOrigin string) bool {
 	path := request.URL.Path
 	matched := path == "/api/history" || strings.HasPrefix(path, "/api/history/") || path == "/api/errors"
@@ -56,12 +61,12 @@ func (s *Server) handleIntegrationsRoute(response http.ResponseWriter, request *
 		return true
 	}
 
-	id, raw, ok := historyPath(path)
+	id, variant, ok := historyPath(path)
 	if !ok {
 		s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "not found", "path": path}, corsOrigin)
 		return true
 	}
-	if raw {
+	if variant == "raw" {
 		encoded, err := s.integrationEndpoints.Raw(s.registry.List(true), id)
 		if errors.Is(err, integrations.ErrHistoryNotFound) {
 			s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "history session not found", "id": id}, corsOrigin)
@@ -83,7 +88,16 @@ func (s *Server) handleIntegrationsRoute(response http.ResponseWriter, request *
 		s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": "format must be json or text"}, corsOrigin)
 		return true
 	}
-	transcript, err := s.integrationEndpoints.Transcript(s.registry.List(true), id)
+	var transcript integrations.TranscriptResponse
+	var err error
+	switch variant {
+	case "preview":
+		transcript, err = s.integrationEndpoints.TranscriptPreview(
+			s.registry.List(true), id, transcriptPreviewMaxBytes, transcriptPreviewMaxMessages,
+		)
+	default:
+		transcript, err = s.integrationEndpoints.Transcript(s.registry.List(true), id)
+	}
 	if errors.Is(err, integrations.ErrHistoryNotFound) {
 		s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "history session not found", "id": id}, corsOrigin)
 		return true
@@ -101,20 +115,23 @@ func (s *Server) handleIntegrationsRoute(response http.ResponseWriter, request *
 	return true
 }
 
-func historyPath(path string) (id string, raw bool, ok bool) {
+func historyPath(path string) (id, variant string, ok bool) {
 	const prefix = "/api/history/"
 	if !strings.HasPrefix(path, prefix) {
-		return "", false, false
+		return "", "", false
 	}
 	rest := strings.TrimPrefix(path, prefix)
-	if strings.HasSuffix(rest, "/raw") {
-		rest = strings.TrimSuffix(rest, "/raw")
-		raw = true
+	for _, candidate := range []string{"raw", "preview"} {
+		if strings.HasSuffix(rest, "/"+candidate) {
+			rest = strings.TrimSuffix(rest, "/"+candidate)
+			variant = candidate
+			break
+		}
 	}
 	if rest == "" || strings.Contains(rest, "/") {
-		return "", false, false
+		return "", "", false
 	}
-	return rest, raw, true
+	return rest, variant, true
 }
 
 func errorsSince(request *http.Request) (uint64, error) {

@@ -75,3 +75,58 @@ func TestNormalizeRecapSettings(t *testing.T) {
 		t.Fatalf("default recap = %#v", got)
 	}
 }
+
+func TestNormalizeAISettings(t *testing.T) {
+	settings, err := NormalizeAISettings(AISettings{Provider: " CLAUDE "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Provider != AIProviderClaude {
+		t.Fatalf("settings = %#v", settings)
+	}
+	if _, err := NormalizeAISettings(AISettings{Provider: "hosted"}); err == nil {
+		t.Fatal("unknown provider was accepted")
+	}
+	if got := (Settings{}).EffectiveAI(); got.Provider != AIProviderCodex {
+		t.Fatalf("default AI = %#v", got)
+	}
+}
+
+func TestNormalizeAndResolveClaudeSettings(t *testing.T) {
+	defaults := DefaultClaudeSettings()
+	if defaults.RemoteControl != ClaudeChoiceInherit || defaults.PermissionMode != ClaudePermissionBypass || defaults.SomewhereMCP != ClaudeChoiceInherit {
+		t.Fatalf("default Claude settings = %#v", defaults)
+	}
+	normalized, err := NormalizeClaudeSettings(ClaudeSettings{
+		RemoteControl: ClaudeChoiceOn, PermissionMode: ClaudePermissionManual,
+		Model: " opus ", Effort: "high", Chrome: ClaudeChoiceOff,
+		SomewhereMCP: ClaudeSomewhereEnsure, RemoteControlNamePrefix: " sessions ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Model != "opus" || normalized.RemoteControlNamePrefix != "sessions" {
+		t.Fatalf("normalized Claude settings = %#v", normalized)
+	}
+	resolved, err := ResolveClaudeSettings(normalized, &ClaudeSessionOptions{
+		RemoteControl: ClaudeChoiceInherit, PermissionMode: ClaudePermissionPlan, Model: "sonnet",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.RemoteControl != ClaudeChoiceInherit || resolved.PermissionMode != ClaudePermissionPlan || resolved.Model != "sonnet" || resolved.SomewhereMCP != ClaudeSomewhereEnsure {
+		t.Fatalf("resolved Claude settings = %#v", resolved)
+	}
+	for _, invalid := range []ClaudeSettings{
+		{RemoteControl: "always"},
+		{PermissionMode: "danger"},
+		{Effort: "infinite"},
+		{Chrome: "sometimes"},
+		{SomewhereMCP: "proxy"},
+		{Model: "bad\nmodel"},
+	} {
+		if _, err := NormalizeClaudeSettings(invalid); err == nil {
+			t.Fatalf("invalid Claude settings accepted: %#v", invalid)
+		}
+	}
+}

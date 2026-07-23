@@ -23,6 +23,7 @@ interface Props {
   recoverDraft?: { id: string; text: string; version: number } | null;
   provider?: SessionTool;
   structuredKind?: string;
+  onDelegate?: () => void;
 }
 
 // Quote a path for safe shell-style insertion. Single quotes wrap the
@@ -69,7 +70,8 @@ export function InputBar({
   onSubmitted,
   recoverDraft,
   provider = 'claude-code',
-  structuredKind
+  structuredKind,
+  onDelegate
 }: Props): JSX.Element {
   const [text, setText] = useState('');
   const quickKeys = structuredKind === 'codex-app-server' ? CODEX_APP_SERVER_QUICK_KEYS : QUICK_KEYS;
@@ -84,6 +86,7 @@ export function InputBar({
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const handledRecoveryKeysRef = useRef<Set<string>>(new Set());
   const restoredDraftRef = useRef<{ key: string; text: string } | null>(null);
 
@@ -284,6 +287,20 @@ export function InputBar({
             <span className="qk-label">{k.label}</span>
           </button>
         ))}
+        <span className="input-quick-spacer" />
+        <input
+          ref={fileInputRef}
+          className="input-file-picker"
+          type="file"
+          multiple
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            if (files.length > 0) void uploadAndInsert(files);
+            event.currentTarget.value = '';
+          }}
+        />
+        <button type="button" className="qk-btn" disabled={!connected || uploading} onClick={() => fileInputRef.current?.click()} title="Attach files as local context">＋ <span className="qk-label">Context</span></button>
+        {onDelegate ? <button type="button" className="qk-btn is-delegate" onClick={onDelegate} title="Start a child session with this session as its trusted parent">↳ <span className="qk-label">Delegate</span></button> : null}
       </div>
       <div className="input-row">
         <textarea

@@ -8,6 +8,11 @@ import { ParserIcon } from './ParserIcon';
 import { wsMuxUrl } from '../api/sessionsd';
 import { detectMultiChoice } from '../lib/detectMultiChoice';
 import { requestSnapshot } from '../lib/wsMux';
+import { SessionDetails } from './SessionDetails';
+import { ProviderBadge, normalizeProvider } from './ProviderBadge';
+import { getActiveServer } from '../lib/servers';
+import { sessionLabel, useTabLabel } from '../lib/tabLabels';
+import { SessionHistoryView } from './SessionHistoryView';
 
 import type { ActiveStatus } from '../App';
 
@@ -18,6 +23,7 @@ interface Props {
   // expensive per-session work (snapshot polling for picker detection)
   // so we don't burn N×CPU for sessions the user isn't looking at.
   isActive?: boolean;
+  onDelegate?: (sessionId: string) => void;
 }
 
 // View modes:
@@ -30,14 +36,14 @@ interface Props {
 // The old `sessions`, `split`, and `reflowed` modes were retired: Remote
 // supersedes them for chat reading, and a viewport-sized Terminal view
 // covers everything else without the parser pipeline.
-type ViewMode = 'terminal' | 'remote';
+type ViewMode = 'terminal' | 'remote' | 'details';
 
 const VIEW_KEY = 'sessions:viewMode';
 
 function readStoredView(): ViewMode {
   try {
     const v = window.localStorage.getItem(VIEW_KEY);
-    if (v === 'terminal' || v === 'remote') return v;
+    if (v === 'terminal' || v === 'remote' || v === 'details') return v;
     // Migrate retired modes — they all map to remote, which is the
     // default chat view that replaced them.
     if (v === 'reflowed' || v === 'sessions' || v === 'split') return 'remote';
@@ -66,16 +72,27 @@ function writeStoredView(mode: ViewMode): void {
 // unchanged session's view skips the poll entirely. Props are all stable
 // per session (sessionId; onStatusChange is setActiveStatus for the active
 // tab and undefined otherwise; isActive flips only on switch).
-function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props): JSX.Element {
+function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDelegate }: Props): JSX.Element {
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredView);
   const session = useSessions((s) => s.sessions.find((x) => x.id === sessionId)) ?? null;
+  const allSessions = useSessions((s) => s.sessions);
+  const endSession = useSessions((s) => s.kill);
+  const customLabel = useTabLabel(sessionId, session?.cwd);
 
   // Claude and Codex both expose structured conversation history. Codex TUI
   // rollouts use the normalized event adapter; codex-app-server sessions add
   // live deltas, plans, commands, file diffs, reasoning summaries, and usage.
   // Raw shell sessions remain terminal-only.
   const supportsConversation = !session || session.tool === 'claude-code' || session.tool === 'codex';
-  const effectiveView: ViewMode = supportsConversation ? viewMode : 'terminal';
+  const effectiveView: ViewMode = supportsConversation
+    ? viewMode
+    : (viewMode === 'details' ? 'details' : 'terminal');
+  const parent = session?.parentSessionId ? allSessions.find((item) => item.id === session.parentSessionId) : null;
+  const children = allSessions.filter((item) => item.parentSessionId === sessionId);
+  const runningChildren = children.filter((item) => item.working && !item.exited).length;
+  const needsChildren = children.filter((item) => !item.exited && !item.working && item.lastUserMessageAt !== null).length;
+  const finishedChildren = children.filter((item) => item.exited).length;
+  const provider = normalizeProvider(session?.tool);
 
   // Sticky "have we ever needed xterm for this session?" Once true,
   // stays true so toggling Sessions↔Terminal doesn't tear down xterm.
@@ -195,7 +212,29 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
 
   return (
     <div className={`session-view view-${effectiveView}`}>
+      <header className="session-active-header">
+        <div className="session-active-copy">
+          {parent ? <span className="session-parent-breadcrumb">{sessionLabel(parent)} <span>/</span> child session</span> : <span className="session-parent-breadcrumb">Manager session</span>}
+          <div className="session-active-title-row"><h1>{customLabel ?? (session ? sessionLabel(session) : 'Session')}</h1><span className={`session-live-pill${sidebar.isWorking ? ' is-running' : ''}`}>{sidebar.isWorking ? 'Running' : session?.exited ? 'Finished' : 'Idle'}</span></div>
+          <div className="session-active-meta">
+            {provider ? <ProviderBadge provider={provider} compact /> : <span className="provider-badge is-shell is-compact">⌘ Shell</span>}
+            <span>{session?.profile || 'Default profile'}</span><span>{getActiveServer().name}</span><span title={session?.cwd}>{session?.cwd || 'Workspace unavailable'}</span>
+          </div>
+        </div>
+        <div className="session-active-actions">
+          {children.length > 0 ? <span className="child-health">{runningChildren} running · {needsChildren} needs you · {finishedChildren} finished</span> : null}
+          {supportsConversation ? <button type="button" className="btn btn-ghost session-delegate" onClick={() => onDelegate?.(sessionId)}>↳ Delegate</button> : null}
+        </div>
+      </header>
+
       <div className="session-toolbar">
+        <div className="view-toggle" role="tablist" aria-label="view mode">
+          {supportsConversation ? (
+            <button type="button" className={`view-toggle-btn${effectiveView === 'remote' ? ' is-active' : ''}`} onClick={() => setViewMode('remote')} title="Structured conversation, activity, plans, and usage">Conversation</button>
+          ) : null}
+          <button type="button" className={`view-toggle-btn${effectiveView === 'terminal' ? ' is-active' : ''}`} onClick={() => setViewMode('terminal')}>Terminal</button>
+          {session ? <button type="button" className={`view-toggle-btn${effectiveView === 'details' ? ' is-active' : ''}`} onClick={() => setViewMode('details')}>Details</button> : null}
+        </div>
         <span className={`status-dot status-${term.status}`} />
         <span className="status-text">{term.status}</span>
         {term.resumedFromSeq !== null && term.resumedFromSeq > 0 ? (
@@ -227,25 +266,6 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
             Switched to Terminal for picker — your draft is preserved in Sessions view
           </span>
         ) : null}
-        <div className="view-toggle" role="tablist" aria-label="view mode">
-          <button
-            type="button"
-            className={`view-toggle-btn${effectiveView === 'terminal' ? ' is-active' : ''}`}
-            onClick={() => setViewMode('terminal')}
-          >
-            Terminal
-          </button>
-          {supportsConversation ? (
-            <button
-              type="button"
-              className={`view-toggle-btn${effectiveView === 'remote' ? ' is-active' : ''}`}
-              onClick={() => setViewMode('remote')}
-              title="Structured conversation, activity, plans, and usage"
-            >
-              Conversation
-            </button>
-          ) : null}
-        </div>
       </div>
 
       {/* xterm host stays in the DOM in both modes so the buffer + WS
@@ -273,11 +293,30 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false }: Props
             onOpenTerminal={() => setViewMode('terminal')}
             provider={session?.tool ?? 'claude-code'}
             structuredKind={session?.kind}
+            onDelegate={onDelegate ? () => onDelegate(sessionId) : undefined}
           />
+        </div>
+        <div className="session-details-pane">
+          {session ? <SessionDetails session={session} allSessions={allSessions} onEnd={endSession} /> : null}
         </div>
       </div>
     </div>
   );
 }
 
-export const SessionView = memo(SessionViewInner);
+function SessionViewRouter(props: Props): JSX.Element {
+  const session = useSessions((state) => state.sessions.find((item) => item.id === props.sessionId)) ?? null;
+  useEffect(() => {
+    if (!session?.exited || !props.onStatusChange) return;
+    props.onStatusChange({
+      isWorking: false,
+      parserIcon: session.tool === 'claude-code' ? '🟠' : session.tool === 'codex' ? '🟢' : '⬛',
+      parserName: session.tool === 'claude-code' ? 'Claude' : session.tool === 'codex' ? 'Codex' : 'Terminal',
+      terminalStatus: 'closed'
+    });
+  }, [props.onStatusChange, session?.exited, session?.tool]);
+  if (session?.exited) return <SessionHistoryView session={session} onDelegate={props.onDelegate} />;
+  return <SessionViewInner {...props} />;
+}
+
+export const SessionView = memo(SessionViewRouter);

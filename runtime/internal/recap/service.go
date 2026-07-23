@@ -4,7 +4,6 @@
 package recap
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,13 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/somewhere-tech/sessions/runtime/internal/agentcall"
 	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	"github.com/somewhere-tech/sessions/runtime/internal/usage"
@@ -110,6 +109,18 @@ func (s *Service) Load(date string) (*Document, error) {
 		return nil, fmt.Errorf("decode daily recap: %w", err)
 	}
 	return &document, nil
+}
+
+// Current reports whether a cached narrative was generated from the exact
+// local facts now being shown and with the currently selected provider. A
+// stale document stays on disk for auditability but must not masquerade as the
+// recap for newly indexed activity.
+func (s *Service) Current(document *Document, input DayInput, provider string) bool {
+	if document == nil || document.Provider != provider {
+		return false
+	}
+	digest, _, err := digestInput(input)
+	return err == nil && document.InputDigest == digest
 }
 
 func (s *Service) Generate(ctx context.Context, settings state.RecapSettings, input DayInput, force bool) (Document, error) {
@@ -340,86 +351,13 @@ func validateDate(date string) error {
 }
 
 func runProvider(ctx context.Context, settings state.RecapSettings, prompt string) (string, error) {
-	executable, err := providerExecutable(settings.Provider)
-	if err != nil {
-		return "", err
-	}
-	workingDirectory, err := os.MkdirTemp("", "sessions-recap-*")
-	if err != nil {
-		return "", fmt.Errorf("create isolated recap workspace: %w", err)
-	}
-	defer os.RemoveAll(workingDirectory)
-
-	args := providerArguments(settings)
-	command := exec.CommandContext(ctx, executable, args...)
-	command.Dir = workingDirectory
-	command.Stdin = strings.NewReader(prompt)
-	command.Env = providerEnvironment()
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Run(); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", errors.New("daily recap timed out after five minutes")
-		}
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = err.Error()
-		}
-		return "", fmt.Errorf("%s recap call failed: %s", settings.Provider, detail)
-	}
-	return stdout.String(), nil
+	return agentcall.Run(ctx, settings.Provider, "daily recap", prompt)
 }
 
 func providerArguments(settings state.RecapSettings) []string {
-	if settings.Provider == state.RecapProviderClaude {
-		return []string{"-p", "--effort", "low", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "text"}
-	}
-	args := []string{"--ask-for-approval", "never", "-c", `model_reasoning_effort="low"`}
-	return append(args, "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never", "-")
-}
-
-func providerExecutable(provider string) (string, error) {
-	name := provider
-	if provider == state.RecapProviderClaude {
-		name = "claude"
-	}
-	if resolved, err := exec.LookPath(name); err == nil {
-		return resolved, nil
-	}
-	home, _ := os.UserHomeDir()
-	for _, candidate := range []string{
-		filepath.Join(home, ".local", "bin", name),
-		filepath.Join("/opt/homebrew/bin", name),
-		filepath.Join("/usr/local/bin", name),
-	} {
-		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("%s CLI is not installed or not on PATH; install it and sign in before generating a recap", name)
+	return agentcall.Arguments(settings.Provider)
 }
 
 func providerEnvironment() []string {
-	environment := make([]string, 0, len(os.Environ())+1)
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "ANTHROPIC_API_KEY=") || strings.HasPrefix(entry, "OPENAI_API_KEY=") {
-			continue
-		}
-		environment = append(environment, entry)
-	}
-	home, _ := os.UserHomeDir()
-	extra := strings.Join([]string{filepath.Join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"}, ":")
-	found := false
-	for index, entry := range environment {
-		if strings.HasPrefix(entry, "PATH=") {
-			environment[index] = "PATH=" + extra + ":" + strings.TrimPrefix(entry, "PATH=")
-			found = true
-			break
-		}
-	}
-	if !found {
-		environment = append(environment, "PATH="+extra)
-	}
-	return environment
+	return agentcall.Environment()
 }

@@ -246,6 +246,78 @@ func TestStructuredUsageIsVisibleBeforeBackfillAndDeduplicatesProviderLogs(t *te
 	}
 }
 
+func TestCodexForkReplayDoesNotRedateParentUsage(t *testing.T) {
+	root := t.TempDir()
+	codexRoot := filepath.Join(root, ".codex", "sessions")
+	originalDir := filepath.Join(codexRoot, "2026", "07", "21")
+	forkDir := filepath.Join(codexRoot, "2026", "07", "22")
+	for _, dir := range []string{originalDir, forkDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parentID := "11111111-1111-4111-8111-111111111111"
+	childID := "22222222-2222-4222-8222-222222222222"
+	original := `{"timestamp":"2026-07-21T18:00:00Z","type":"session_meta","payload":{"id":"` + parentID + `"}}
+{"timestamp":"2026-07-21T18:00:01Z","type":"turn_context","payload":{"turn_id":"parent-turn","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-07-21T18:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":250,"output_tokens":125,"reasoning_output_tokens":25}}}}
+`
+	if err := os.WriteFile(filepath.Join(originalDir, "rollout-parent.jsonl"), []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fork := `{"timestamp":"2026-07-22T18:00:00Z","type":"session_meta","payload":{"id":"` + childID + `","source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + parentID + `"}}}}}
+{"timestamp":"2026-07-22T18:00:00Z","type":"session_meta","payload":{"id":"` + parentID + `"}}
+{"timestamp":"2026-07-22T18:00:00Z","type":"turn_context","payload":{"turn_id":"parent-turn","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-07-22T18:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":250,"output_tokens":125,"reasoning_output_tokens":25}}}}
+{"timestamp":"2026-07-22T18:00:30Z","type":"event_msg","payload":{"type":"task_started","turn_id":"child-turn"}}
+{"timestamp":"2026-07-22T18:01:00Z","type":"turn_context","payload":{"turn_id":"child-turn","model":"gpt-5.2-codex"}}
+{"timestamp":"2026-07-22T18:01:01Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":400,"cached_input_tokens":100,"output_tokens":50,"reasoning_output_tokens":10}}}}
+`
+	if err := os.WriteFile(filepath.Join(forkDir, "rollout-child.jsonl"), []byte(fork), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewService(Options{
+		Path: filepath.Join(root, "usage.sqlite3"), CodexRoots: []string{codexRoot}, Machine: "test-mac",
+	})
+	defer service.Close()
+
+	dayOne, err := service.Report(context.Background(), ReportOptions{
+		Group: "daily", Mode: ModeCalculate,
+		Since: time.Date(2026, time.July, 21, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, time.July, 22, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dayOne.Totals.Entries != 1 || dayOne.Totals.Tokens.Input != 750 || dayOne.Totals.Tokens.CacheRead != 250 {
+		t.Fatalf("parent day was lost to fork replay: %#v", dayOne.Totals)
+	}
+	dayTwo, err := service.Report(context.Background(), ReportOptions{
+		Group: "session", Mode: ModeCalculate,
+		Since: time.Date(2026, time.July, 22, 0, 0, 0, 0, time.UTC),
+		Until: time.Date(2026, time.July, 23, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dayTwo.Totals.Entries != 1 || dayTwo.Totals.Tokens.Input != 300 || dayTwo.Totals.Tokens.CacheRead != 100 {
+		t.Fatalf("fork day includes replayed parent usage: %#v", dayTwo.Totals)
+	}
+	if len(dayTwo.Rows) != 1 || dayTwo.Rows[0].ProviderSessionID != childID {
+		t.Fatalf("fork usage was not attributed to child conversation: %#v", dayTwo.Rows)
+	}
+	observed, err := service.ObservedSessions(context.Background(),
+		time.Date(2026, time.July, 22, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, time.July, 23, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 1 || observed[0].ProviderSessionID != childID || len(observed[0].SourcePaths) != 1 ||
+		!strings.HasSuffix(observed[0].SourcePaths[0], "rollout-child.jsonl") {
+		t.Fatalf("observed fork = %#v", observed)
+	}
+}
+
 func TestReportRejectsUnknownModeAndMissingTagDimension(t *testing.T) {
 	service := NewService(Options{Path: filepath.Join(t.TempDir(), "usage.sqlite3")})
 	defer service.Close()

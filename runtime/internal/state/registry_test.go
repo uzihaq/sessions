@@ -106,6 +106,63 @@ func TestCreateRefusesMissingRunnerBeforeWritingState(t *testing.T) {
 	}
 }
 
+func TestCreateRefusesMissingSessionCommandBeforeWritingState(t *testing.T) {
+	root := t.TempDir()
+	runner := filepath.Join(root, "sessions-runner")
+	if err := os.WriteFile(runner, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		DefaultShell: "/bin/bash", DefaultCwd: root, DefaultCols: 300, DefaultRows: 50,
+		RunnerPath: runner, RunnerStateDir: filepath.Join(root, "runners"), LaunchAgentsDir: filepath.Join(root, "agents"),
+	}
+	registry := NewRegistry(config, NewLaunchdLauncher(config))
+	launchStarted := false
+	_, err := registry.CreateWithLifecycle(context.Background(), CreateSessionRequest{
+		Cmd: "missing-agent", Cwd: root, Env: map[string]string{"PATH": filepath.Join(root, "bin")},
+	}, CreateLifecycle{LaunchStarted: func(context.Context, PreparedSession) { launchStarted = true }})
+	if err == nil || !strings.Contains(err.Error(), "is not executable in the Sessions runner PATH") {
+		t.Fatalf("Create() error = %v, want clear missing command refusal", err)
+	}
+	if launchStarted {
+		t.Fatal("missing command crossed the durable launch-started boundary")
+	}
+	for _, path := range []string{config.RunnerStateDir, config.LaunchAgentsDir} {
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("failed command preflight mutated %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestLaunchdPathIncludesCommonUserAgentLocations(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	existing := "/usr/bin:/bin:/opt/homebrew/bin"
+	parts := strings.Split(launchdPath(existing), ":")
+	want := []string{
+		filepath.Join(home, ".local", "bin"),
+		filepath.Join(home, ".npm-global", "bin"),
+		filepath.Join(home, ".bun", "bin"),
+		filepath.Join(home, ".cargo", "bin"),
+		"/opt/homebrew/sbin",
+		"/usr/local/bin",
+	}
+	for _, expected := range want {
+		count := 0
+		for _, part := range parts {
+			if part == expected {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("launchdPath() contains %q %d times, want exactly once: %q", expected, count, parts)
+		}
+	}
+	if count := strings.Count(launchdPath(existing), "/opt/homebrew/bin"); count != 1 {
+		t.Fatalf("existing Homebrew path duplicated %d times", count)
+	}
+}
+
 func TestDiscoveryStressConcurrentFakeRunnersSkipsTruncatedMetadata(t *testing.T) {
 	const runnerCount = 96
 	root := t.TempDir()

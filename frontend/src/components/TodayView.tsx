@@ -8,6 +8,8 @@ import {
   type RecapSettings
 } from '../api/sessionsd';
 import { renderContent } from '../lib/contentRender';
+import { isTauri } from '../lib/tauriBridge';
+import { ProviderBadge, normalizeProvider } from './ProviderBadge';
 
 function localDate(date = new Date()): string {
   const year = date.getFullYear();
@@ -35,6 +37,7 @@ function totalTokens(day: RecapDay): number {
 }
 
 export function TodayView(): JSX.Element {
+  const nativeClient = isTauri();
   const [date, setDate] = useState(localDate);
   const [day, setDay] = useState<RecapDay | null>(null);
   const [loading, setLoading] = useState(true);
@@ -91,6 +94,12 @@ export function TodayView(): JSX.Element {
     }));
   }, [day]);
 
+  const managedCount = day?.activities.filter((activity) => activity.source !== 'provider').length ?? 0;
+  const observedCount = (day?.activities.length ?? 0) - managedCount;
+  const projectCount = day
+    ? new Set(day.activities.map((activity) => activity.sourceRepo || activity.cwd).filter(Boolean)).size
+    : 0;
+
   return (
     <div className="today-view">
       <div className="today-shell">
@@ -108,26 +117,30 @@ export function TodayView(): JSX.Element {
         </header>
 
         {error ? <div className="today-error" role="alert">{error}</div> : null}
-        {loading || !day ? <div className="today-loading">Assembling the local day…</div> : (
+        {loading ? <div className="today-loading">Assembling the local day…</div> : day ? (
           <>
             <section className="today-kpis" aria-label="Daily totals">
-              <TodayKPI label="Sessions" value={String(day.activities.length)} detail={`${day.activities.filter((activity) => activity.outcome === 'done').length} completed`} />
+              <TodayKPI
+                label="Activity"
+                value={String(day.activities.length)}
+                detail={`${managedCount} in Sessions · ${observedCount} outside`}
+              />
               <TodayKPI label="Tokens" value={compactNumber(totalTokens(day))} detail={`${compactNumber(day.usage.tokens.reasoningTokens)} reasoning`} />
               <TodayKPI
                 label="Estimated cost"
                 value={dollars(day.usage.costUSD)}
                 detail={day.usage.missingPricingEntries > 0 ? `${day.usage.missingPricingEntries} unpriced events` : `${day.usage.entries} usage events`}
               />
-              <TodayKPI label="Projects" value={String(new Set(day.activities.map((activity) => activity.sourceRepo || activity.cwd)).size)} detail={day.timezone} />
+              <TodayKPI label="Projects" value={String(projectCount)} detail={day.timezone} />
             </section>
 
             <section className="today-recap-card">
               <header>
                 <div>
-                  <span className="today-section-kicker">One compact model call</span>
+                  <span className="today-section-kicker">{nativeClient ? 'One compact model call' : 'Native app feature'}</span>
                   <h2>Daily recap</h2>
                 </div>
-                <div className="today-recap-controls">
+                {nativeClient ? <div className="today-recap-controls">
                   <select
                     value={day.settings.provider}
                     disabled={savingSettings || generating}
@@ -141,13 +154,13 @@ export function TodayView(): JSX.Element {
                   <button type="button" className="btn today-generate" disabled={day.settings.provider === 'off' || generating || savingSettings} onClick={() => void generate()}>
                     {generating ? 'Writing…' : day.document ? 'Refresh recap' : 'Generate recap'}
                   </button>
-                </div>
+                </div> : <span className="today-section-note">Open Sessions.app to write or refresh a recap.</span>}
               </header>
               {day.settings.provider === 'off' ? (
                 <div className="today-opt-in">
                   <strong>No model calls are enabled.</strong>
-                  <p>The timeline and usage below are complete local facts. Turn on Codex when you want a written recap.</p>
-                  <button type="button" className="btn" onClick={() => void saveSettings({ provider: 'codex' })}>Use Codex for recaps</button>
+                  <p>The timeline and usage below come directly from local provider logs and Sessions metadata. {nativeClient ? 'Turn on Codex when you want a written recap.' : 'Written recaps are available only in the signed native app.'}</p>
+                  {nativeClient ? <button type="button" className="btn" onClick={() => void saveSettings({ provider: 'codex' })}>Use Codex for recaps</button> : null}
                 </div>
               ) : day.document ? (
                 <>
@@ -156,15 +169,15 @@ export function TodayView(): JSX.Element {
                 </>
               ) : (
                 <div className="today-opt-in">
-                  <strong>Ready to write with {day.settings.provider === 'codex' ? 'Codex' : 'Claude'}.</strong>
-                  <p>Sessions sends at most 32 KiB of compact metadata, final summaries, tags, and authoritative totals—not full transcripts. Your CLI chooses its default model.</p>
+                  <strong>{nativeClient ? `Ready to write with ${day.settings.provider === 'codex' ? 'Codex' : 'Claude'}.` : 'Open Sessions.app to write this recap.'}</strong>
+                  <p>{nativeClient ? 'Sessions sends at most 32 KiB of compact metadata, final summaries, tags, and authoritative totals—not full transcripts. Your CLI chooses its default model.' : 'The browser view does not launch provider CLIs or make model calls.'}</p>
                 </div>
               )}
             </section>
 
             <section className="today-activity-card">
-              <header><div><span className="today-section-kicker">Local evidence</span><h2>What was worked on</h2></div><span>{day.activities.length} sessions and lanes</span></header>
-              {activityRoots.length === 0 ? <div className="today-empty">No Sessions activity was recorded for this day.</div> : (
+              <header><div><span className="today-section-kicker">Local evidence</span><h2>What was worked on</h2></div><span>{managedCount} Sessions · {observedCount} outside</span></header>
+              {activityRoots.length === 0 ? <div className="today-empty">No Sessions or locally observed provider activity was recorded for this day.</div> : (
                 <div className="today-timeline">
                   {activityRoots.map((activity) => (
                     <article className="today-activity" key={activity.id} style={{ '--activity-depth': Math.min(activity.depth, 3) } as CSSProperties}>
@@ -173,7 +186,11 @@ export function TodayView(): JSX.Element {
                         <header><strong>{activity.name}</strong><time>{new Date(activity.lastActivityAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time></header>
                         {activity.summary || activity.description ? <p>{activity.summary || activity.description}</p> : null}
                         <div className="today-activity-meta">
-                          <span>{activity.tool}</span>
+                          {normalizeProvider(activity.tool)
+                            ? <ProviderBadge provider={normalizeProvider(activity.tool)!} compact />
+                            : <span>{activity.tool}</span>}
+                          {activity.source === 'provider' ? <span className="today-observed-source" title="This conversation has not been brought into Sessions">Outside Sessions</span> : null}
+                          {activity.origin && activity.origin !== 'Codex' && activity.origin !== 'Claude Code' ? <span>{activity.origin}</span> : null}
                           <span>{activity.branch || activity.sourceRepo || activity.cwd.replace(/^\/Users\/[^/]+/, '~')}</span>
                           {activity.parentSessionId ? <span>child lane</span> : null}
                           {Object.entries(activity.tags ?? {}).map(([key, value]) => <span className="today-tag" key={key}>{key}={value}</span>)}
@@ -185,7 +202,7 @@ export function TodayView(): JSX.Element {
               )}
             </section>
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );

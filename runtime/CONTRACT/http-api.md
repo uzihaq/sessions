@@ -120,13 +120,16 @@ No auth. Returns 200:
   "name": "sessionsd",
   "version": "0.1.0",
   "listen": { "host": "127.0.0.1", "port": 8787 },
+  "system": { "os": "darwin", "arch": "arm64" },
   "discovering": false,
   "sessionsLoaded": 0
 }
 ```
 
-`host`, `port`, `discovering`, and the count vary. The count includes exited
-sessions still in their 30-second grace period.
+`host`, `port`, `system`, `discovering`, and the count vary. `system.os` uses
+Go's stable platform names (`darwin`, `windows`, `linux`, and so on) so native
+clients can choose a machine icon without guessing from a hostname. The count
+includes exited sessions still in their 30-second grace period.
 
 ### `GET /api/health/deep`
 
@@ -392,6 +395,35 @@ and sorts newest first. Returns 200:
 The cwd decoder replaces every `-` in the project directory name with `/`, a
 deliberately lossy mapping. An absent projects directory yields an empty list.
 
+### `GET /api/resumable-conversations`
+
+Auth required. This is the provider-neutral successor to
+`GET /api/claude-sessions`. It scans the local Claude and Codex stores,
+deduplicates resumed Codex rollout files by provider conversation identity,
+and returns newest first:
+
+```json
+{
+  "sessions": [
+    {
+      "sessionId": "<provider conversation UUID>",
+      "tool": "claude",
+      "origin": "Claude Code",
+      "cwd": "/absolute/workspace",
+      "modifiedAt": 1750000000000,
+      "firstUserMessage": "bounded local preview",
+      "sizeBytes": 1234
+    }
+  ]
+}
+```
+
+`tool` is `claude` or `codex`. The endpoint is read-only and does not copy a
+transcript. A native client may pass the chosen `sessionId` to the existing
+`POST /api/recovery/adopt` boundary; the recovery layer still applies its live,
+moved, collision, and explicit-provider guards before creating a Sessions
+lane. The legacy Claude-only route retains its original response shape.
+
 ### `GET /api/directories`
 
 Auth required. Returns `200 {"directories":[...]}`. Each entry is:
@@ -438,6 +470,88 @@ Errors:
   500, with `{"error":"<message>","code":"<errno code>"}`. Because nonexistent
   input first falls back to `path.resolve`, the eventual `statSync` normally
   supplies the `ENOENT` 404.
+
+## Go runtime extensions: smart search
+
+The following authenticated routes are additive Go-runtime surfaces implemented
+by `internal/api/search_handlers.go`; older `prettyd` builds return the standard
+404 body for them.
+
+### `GET /api/ai/settings`
+
+Returns the smart-feature provider as `200 {"provider":"codex"}` or
+`200 {"provider":"claude"}`. A missing setting defaults to `codex`; the default
+does not itself launch a model.
+
+### `PUT /api/ai/settings`
+
+Accepts `{"provider":"codex"}` or `{"provider":"claude"}`, persists the
+normalized choice in daemon settings, and returns it. Unknown providers or
+invalid JSON return 400; persistence errors return 500. Other methods return
+405.
+
+## Go runtime extension: Claude launch defaults
+
+### `GET /api/claude/settings`
+
+Returns the effective typed defaults Sessions applies only to newly launched
+Claude sessions:
+
+```json
+{"remoteControl":"inherit","permissionMode":"bypassPermissions","model":"","effort":"inherit","chrome":"inherit","somewhereMcp":"inherit","remoteControlNamePrefix":""}
+```
+
+Remote Control and Chrome accept `inherit`, `on`, or `off`; permission mode
+accepts Claude's supported modes plus `inherit`; effort accepts `inherit`,
+`low`, `medium`, `high`, `xhigh`, or `max`; Somewhere MCP accepts `inherit` or
+`ensure`. Empty model and name-prefix fields preserve provider defaults.
+
+### `PUT /api/claude/settings`
+
+Validates and atomically persists the complete object above. The daemon never
+edits Claude settings files or stores provider credentials. Unknown choices,
+control characters, overlong strings, invalid JSON, and unsupported methods
+return 400 or 405 as appropriate.
+
+`POST /api/sessions` may include a `claude` object with the same fields.
+Non-empty values override the persisted Sessions defaults for that launch;
+explicit `inherit` defers that setting to Claude. The object is rejected for a
+non-Claude command. `somewhereMcp: "ensure"` adopts an equivalent existing
+registration or injects the local `somewhere mcp` stdio adapter; a conflicting
+server named `somewhere` fails closed rather than being overwritten.
+
+### `POST /api/search/plan`
+
+Accepts `{"query":"the session where I discussed Apple signing"}`. The query
+is trimmed and limited to 4 KiB, then sent as untrusted data in one tool-disabled,
+customization-isolated request to the configured, already-authenticated Codex or Claude CLI. Sessions
+sends no transcripts, snippets, session IDs, results, or index content. The CLI
+chooses its own default model. Success returns the bounded FTS5 plan:
+
+```json
+{"provider":"codex","query":"apple AND signing"}
+```
+
+The browser applies that query through the existing local `GET /api/search`
+route and keeps `role` and `tool` filters deterministic. Empty/oversized input
+returns 400. Only one planner request may be active; another distinct request
+returns 429 with `Retry-After: 2`. Successful plans for an identical provider
+and normalized natural query are cached for ten minutes. Planner or provider
+failures return 502, and other methods return 405. The handler deadline is two
+minutes. Cache keys are SHA-256 digests, the cache holds at most 128 plans, and
+entries are evicted on their expiry timer even without another lookup.
+
+## Go runtime extension: bounded history preview
+
+The existing authenticated `GET /api/history/<id>` route remains complete by
+default. Native interactive viewing requests the distinct
+`GET /api/history/<id>/preview?format=json` path, which reads at most the latest 2 MiB of the JSONL
+artifact and returns at most its latest 400 normalized messages. The additive
+response field `"truncated":true` appears when either bound removed older
+content; it is omitted for a complete preview. This bound does not change the
+deliberate full-history JSON/text response or `/api/history/<id>/raw` download.
+The distinct path is intentional: an older runtime returns 404 instead of
+silently ignoring a query parameter and sending an unbounded transcript.
 
 ## Static GETs
 

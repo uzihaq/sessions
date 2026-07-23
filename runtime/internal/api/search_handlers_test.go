@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	historysearch "github.com/somewhere-tech/sessions/runtime/internal/search"
+	"github.com/somewhere-tech/sessions/runtime/internal/smartsearch"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
@@ -103,6 +105,54 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 	method := serve(t, daemon.handler, http.MethodPost, "/api/search?q=x", nil, "127.0.0.1:4321", nil)
 	if method.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST status=%d body=%s", method.Code, method.Body.String())
+	}
+}
+
+func TestSmartSearchSettingsAndPlan(t *testing.T) {
+	daemon := newTestDaemon(t)
+	var provider, prompt string
+	daemon.handler.smartSearch = smartsearch.NewServiceWithRunner(func(_ context.Context, gotProvider, gotPrompt string) (string, error) {
+		provider, prompt = gotProvider, gotPrompt
+		return `{"query":"apple AND signing"}`, nil
+	})
+
+	defaults := serve(t, daemon.handler, http.MethodGet, "/api/ai/settings", nil, "127.0.0.1:4321", nil)
+	var settings state.AISettings
+	decodeBody(t, defaults, &settings)
+	if defaults.Code != http.StatusOK || settings.Provider != state.AIProviderCodex {
+		t.Fatalf("defaults status=%d settings=%#v", defaults.Code, settings)
+	}
+
+	updated := serve(t, daemon.handler, http.MethodPut, "/api/ai/settings", strings.NewReader(`{"provider":"claude"}`), "127.0.0.1:4321", nil)
+	decodeBody(t, updated, &settings)
+	if updated.Code != http.StatusOK || settings.Provider != state.AIProviderClaude {
+		t.Fatalf("updated status=%d settings=%#v", updated.Code, settings)
+	}
+
+	planned := serve(t, daemon.handler, http.MethodPost, "/api/search/plan", strings.NewReader(`{"query":"the session where I discussed Apple signing"}`), "127.0.0.1:4321", nil)
+	var plan struct {
+		Provider string `json:"provider"`
+		Query    string `json:"query"`
+	}
+	decodeBody(t, planned, &plan)
+	if planned.Code != http.StatusOK || provider != state.AIProviderClaude || plan.Provider != state.AIProviderClaude || plan.Query != "apple AND signing" || !strings.Contains(prompt, "Apple signing") {
+		t.Fatalf("status=%d provider=%q plan=%#v prompt=%q", planned.Code, provider, plan, prompt)
+	}
+
+	bad := serve(t, daemon.handler, http.MethodPost, "/api/search/plan", strings.NewReader(`{"query":""}`), "127.0.0.1:4321", nil)
+	if bad.Code != http.StatusBadRequest {
+		t.Fatalf("empty status=%d body=%s", bad.Code, bad.Body.String())
+	}
+	blank := serve(t, daemon.handler, http.MethodPost, "/api/search/plan", strings.NewReader(`{"query":"   "}`), "127.0.0.1:4321", nil)
+	if blank.Code != http.StatusBadRequest {
+		t.Fatalf("blank status=%d body=%s", blank.Code, blank.Body.String())
+	}
+	daemon.handler.smartSearch = smartsearch.NewServiceWithRunner(func(context.Context, string, string) (string, error) {
+		return "", smartsearch.ErrBusy
+	})
+	busy := serve(t, daemon.handler, http.MethodPost, "/api/search/plan", strings.NewReader(`{"query":"another search"}`), "127.0.0.1:4321", nil)
+	if busy.Code != http.StatusTooManyRequests || busy.Header().Get("Retry-After") != "2" {
+		t.Fatalf("busy status=%d retry=%q body=%s", busy.Code, busy.Header().Get("Retry-After"), busy.Body.String())
 	}
 }
 

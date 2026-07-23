@@ -9,7 +9,7 @@ relevant source path; if prose and code disagree, the code wins.
 - Sessions is a native product for durable Claude Code, Codex, shell, and headless command sessions; its local runtime commands retain the `sessions` name.
 - The native product bundles three Go runtime binaries: `sessions`, `sessionsd`, and `sessions-runner` (`runtime/cmd/`).
 - A runner owns either a PTY, a headless pipe, or a structured provider conversation so daemon reloads do not kill the work (`runtime/cmd/sessions-runner/`).
-- The daemon exposes the local web UI and HTTP/WebSocket API; the CLI is an API client (`runtime/internal/api/`, `runtime/cmd/sessions/`).
+- The daemon exposes the HTTP/WebSocket API and still embeds a transitional SPA; interactive browser control is deprecated, while the CLI and signed native clients remain API clients (`runtime/internal/api/`, `runtime/cmd/sessions/`).
 - Sessions.app is the primary package: a Tauri window, tray, installer, and updater around the independent Go service (`src-tauri/`, `docs/NATIVE_APP.md`).
 - Access is loopback by default, opt-in on the LAN, and opt-in over Tailscale Serve (`runtime/cmd/sessions/lan.go`, `runtime/cmd/sessions/remote.go`).
 
@@ -17,7 +17,7 @@ relevant source path; if prose and code disagree, the code wins.
 
 - `runtime/` — the product: Go daemon, CLI, runner, contracts, and internal packages.
 - `runtime/testdata/node-runtime/` — the superseded TypeScript daemon; retain it only as mini-cutover and protocol-compatibility evidence.
-- `frontend/` — the shared React UI embedded in app builds by `scripts/build-app-runtime.sh` and in standalone daemon builds by `runtime/scripts/build-binaries.sh`.
+- `frontend/` — the React UI used by Sessions.app and still embedded in standalone daemon builds for transitional compatibility; do not expand the deprecated interactive browser surface.
 - `docs/` — rationale, operations, release notes, and source-derived references.
 - `skills/sessions/` — the distributable Sessions agent skill.
 - `site/` — the hosted onboarding site; it is not the daemon-served application.
@@ -29,6 +29,7 @@ relevant source path; if prose and code disagree, the code wins.
 - Current status and deployment reality: [`STATE.md`](STATE.md).
 - Product rationale and durable decisions: [`docs/WHY.md`](docs/WHY.md).
 - Native package and process-lifetime contract: [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md).
+- Hosted worker security and product boundary: [`docs/CLOUD_VM.md`](docs/CLOUD_VM.md).
 - Wire and compatibility promises: [`runtime/CONTRACT/`](runtime/CONTRACT/).
 - Implementation orientation: [`docs/CODEBASE.md`](docs/CODEBASE.md).
 - Generated command reference: [`docs/CLI.md`](docs/CLI.md); regenerate it instead of editing it.

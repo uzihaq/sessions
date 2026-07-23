@@ -257,6 +257,11 @@ func (r *Registry) CreateWithLifecycle(
 	if len(programArguments) == 0 || !isExecutableFile(programArguments[0]) {
 		return SessionInfo{}, errors.New("runner executable unavailable: set SESSIONS_RUNNER to an absolute path to an existing executable")
 	}
+	if preflight, ok := r.launcher.(proto.RunnerLaunchPreflight); ok {
+		if err := preflight.Preflight(launchRequest); err != nil {
+			return SessionInfo{}, err
+		}
+	}
 	if err := os.MkdirAll(r.config.RunnerStateDir, 0o700); err != nil {
 		return SessionInfo{}, fmt.Errorf("create runner state directory: %w", err)
 	}
@@ -674,8 +679,19 @@ func launchdPath(value string) string {
 		}
 		return false
 	}
-	prefix := make([]string, 0, 2)
-	for _, path := range []string{"/opt/homebrew/bin", "/usr/local/bin"} {
+	home := os.Getenv("HOME")
+	candidates := make([]string, 0, 7)
+	if home != "" {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin"),
+			filepath.Join(home, ".npm-global", "bin"),
+			filepath.Join(home, ".bun", "bin"),
+			filepath.Join(home, ".cargo", "bin"),
+		)
+	}
+	candidates = append(candidates, "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin")
+	prefix := make([]string, 0, len(candidates))
+	for _, path := range candidates {
 		if !contains(path) {
 			prefix = append(prefix, path)
 		}
@@ -780,13 +796,13 @@ func classifyTool(cmd string) SessionTool {
 }
 
 var toolDefaultArgs = map[string][]string{
-	"claude": {"--dangerously-skip-permissions"},
-	"codex":  {"-c", "check_for_update_on_startup=false", "--dangerously-bypass-approvals-and-sandbox"},
+	"codex": {"-c", "check_for_update_on_startup=false", "--dangerously-bypass-approvals-and-sandbox"},
 }
 
 var explicitModeFlags = map[string]struct{}{
 	"--dangerously-bypass-approvals-and-sandbox": {},
 	"--dangerously-skip-permissions":             {},
+	"--permission-mode":                          {},
 	"--sandbox":                                  {}, "-s": {}, "--ask-for-approval": {}, "-a": {}, "--full-auto": {},
 }
 

@@ -28,8 +28,9 @@ Stop whenever the observed machine differs from the assumptions below.
 - The app has completed a first install and an updater-driven upgrade on
   isolated MacBook state without losing the pre-update session set.
 - `go build ./...`, `go vet ./...`, and `go test ./...` pass in `runtime/`.
-- `TestNodeRunnerUnderGoDaemonCutover` passes against the frozen Node fixture in
-  `runtime/testdata/node-runtime/`.
+- `TestNodeRunnerUnderGoDaemonCutover` and
+  `TestNodeRunnerUnderGoDaemonSymlinkCutover` pass against the frozen Node
+  fixture in `runtime/testdata/node-runtime/`.
 - The three staged Apple Silicon binaries are `sessions`, `sessionsd`, and
   `sessions-runner`, and their hashes match the app's runtime manifest.
 - A maintenance window, operator, rollback decision-maker, and observation
@@ -60,8 +61,8 @@ marker appears in its snapshot; terminal echo alone is not proof.
 
 ## 2. Stage without activating
 
-Copy the notarized Sessions.app package or its exact embedded runtime to a new,
-immutable revision directory. Do not overwrite the old Node files. Verify:
+Copy the notarized Sessions.app package to `/Applications` without opening it.
+Do not overwrite the old Node files. Verify:
 
 - SHA-256 against the release manifest;
 - `file` reports arm64 Mach-O executables;
@@ -69,11 +70,19 @@ immutable revision directory. Do not overwrite the old Node files. Verify:
 - the staged daemon can complete a scratch-state health check on a non-production
   port without reading production state.
 
-Render a candidate LaunchAgent separately. Derive its user, host, port, state,
-logs, and label from the observed service. Change only the daemon executable to
-the staged `sessionsd`, set the adjacent `sessions-runner` path explicitly, and
-use `SESSIONS_*` environment names. Validate the candidate with `plutil -lint`
-and review its diff against the saved production plist line by line.
+The app-managed daemon uses `~/.local/state/sessions/runners`, while the live
+Node runners own sockets under the observed legacy runner directory. After the
+backup and only while the target Sessions path is absent, create
+`~/.local/state/sessions/runners` as a symbolic link to that exact observed
+directory. This compatibility link changes no runner artifact and is covered
+by `TestNodeRunnerUnderGoDaemonSymlinkCutover`. It lets the app-managed daemon
+use the normal Sessions state root and launchd label while discovering the
+existing sockets in place. Keep the legacy runtime and runner LaunchAgents for
+as long as any adopted Node runner remains alive.
+
+Do not open Sessions.app during staging. Its first launch installs
+`tech.somewhere.sessions.daemon` on loopback and therefore belongs to the
+activation window.
 
 ## 3. Manual activation
 
@@ -84,8 +93,11 @@ With the old plist and rollback commands already prepared:
 
 1. Boot out only the observed daemon LaunchAgent. Do not touch session
    LaunchAgents or runner processes.
-2. Atomically place the reviewed candidate plist at the same service location.
-3. Bootstrap and kickstart that one daemon service.
+2. Open the already verified Sessions.app. Its release installer stages the
+   exact embedded runtime and bootstraps `tech.somewhere.sessions.daemon`; the
+   compatibility link makes its first discovery include the live Node runners.
+3. Poll the app-managed loopback daemon rather than the retired tailnet-bound
+   Node listener.
 4. Poll health until `ok:true` and `discovering:false`, with a short agreed
    deadline.
 5. Fetch the full session listing and compare exact IDs with the baseline.
@@ -116,7 +128,8 @@ health output, preserved-runner marker, PIDs, operator, and timestamps.
 Rollback is the first response to any failed acceptance check or unexplained
 regression:
 
-1. Boot out only the new daemon LaunchAgent.
+1. Boot out only `tech.somewhere.sessions.daemon` and quit Sessions.app so it
+   cannot reinstall the service during rollback.
 2. Restore the exact saved Node plist bytes atomically.
 3. Validate the restored plist, bootstrap it, and kickstart the old daemon.
 4. Wait for health and discovery, then compare exact IDs with the baseline.

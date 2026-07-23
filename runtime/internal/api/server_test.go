@@ -70,7 +70,7 @@ func TestHealthShapeAndStaticUI(t *testing.T) {
 	}
 	var body map[string]any
 	decodeBody(t, health, &body)
-	for _, key := range []string{"ok", "name", "version", "listen", "lan", "discovering", "sessionsLoaded"} {
+	for _, key := range []string{"ok", "name", "version", "listen", "lan", "system", "discovering", "sessionsLoaded"} {
 		if _, exists := body[key]; !exists {
 			t.Errorf("health missing key %q: %#v", key, body)
 		}
@@ -82,6 +82,10 @@ func TestHealthShapeAndStaticUI(t *testing.T) {
 	lan := body["lan"].(map[string]any)
 	if lan["enabled"] != false || lan["url"] != nil {
 		t.Fatalf("unexpected LAN health shape: %#v", lan)
+	}
+	system := body["system"].(map[string]any)
+	if system["os"] == "" || system["arch"] == "" {
+		t.Fatalf("unexpected system health shape: %#v", system)
 	}
 
 	deep := serve(t, daemon.handler, http.MethodGet, "/api/health/deep", nil, "198.51.100.10:4321", nil)

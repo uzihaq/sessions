@@ -18,6 +18,22 @@ const (
 	RecapProviderOff    = "off"
 	RecapProviderCodex  = "codex"
 	RecapProviderClaude = "claude"
+
+	AIProviderCodex  = "codex"
+	AIProviderClaude = "claude"
+
+	ClaudeChoiceInherit = "inherit"
+	ClaudeChoiceOn      = "on"
+	ClaudeChoiceOff     = "off"
+
+	ClaudePermissionManual      = "manual"
+	ClaudePermissionAcceptEdits = "acceptEdits"
+	ClaudePermissionAuto        = "auto"
+	ClaudePermissionPlan        = "plan"
+	ClaudePermissionDontAsk     = "dontAsk"
+	ClaudePermissionBypass      = "bypassPermissions"
+
+	ClaudeSomewhereEnsure = "ensure"
 )
 
 var settingsMu sync.Mutex
@@ -33,6 +49,158 @@ type NotifySettings struct {
 // default model; Sessions only requests the provider's lowest reasoning effort.
 type RecapSettings struct {
 	Provider string `json:"provider"`
+}
+
+// AISettings selects the pre-authenticated CLI used for explicit smart
+// features such as natural-language search planning. It defaults to Codex,
+// but no call happens until the user submits an AI action.
+type AISettings struct {
+	Provider string `json:"provider"`
+}
+
+// ClaudeSettings contains launch defaults owned by Sessions. "inherit" means
+// no corresponding CLI override is supplied, leaving Claude's own effective
+// configuration authoritative. Credentials and provider settings files are
+// never rewritten.
+type ClaudeSettings struct {
+	RemoteControl           string `json:"remoteControl"`
+	PermissionMode          string `json:"permissionMode"`
+	Model                   string `json:"model"`
+	Effort                  string `json:"effort"`
+	Chrome                  string `json:"chrome"`
+	SomewhereMCP            string `json:"somewhereMcp"`
+	RemoteControlNamePrefix string `json:"remoteControlNamePrefix"`
+}
+
+func DefaultClaudeSettings() ClaudeSettings {
+	return ClaudeSettings{
+		RemoteControl:  ClaudeChoiceInherit,
+		PermissionMode: ClaudePermissionBypass,
+		Effort:         ClaudeChoiceInherit,
+		Chrome:         ClaudeChoiceInherit,
+		SomewhereMCP:   ClaudeChoiceInherit,
+	}
+}
+
+func NormalizeClaudeSettings(settings ClaudeSettings) (ClaudeSettings, error) {
+	defaults := DefaultClaudeSettings()
+	settings.RemoteControl = defaultString(settings.RemoteControl, defaults.RemoteControl)
+	settings.PermissionMode = defaultString(settings.PermissionMode, defaults.PermissionMode)
+	settings.Effort = defaultString(settings.Effort, defaults.Effort)
+	settings.Chrome = defaultString(settings.Chrome, defaults.Chrome)
+	settings.SomewhereMCP = defaultString(settings.SomewhereMCP, defaults.SomewhereMCP)
+	settings.Model = strings.TrimSpace(settings.Model)
+	settings.RemoteControlNamePrefix = strings.TrimSpace(settings.RemoteControlNamePrefix)
+
+	if !oneOf(settings.RemoteControl, ClaudeChoiceInherit, ClaudeChoiceOn, ClaudeChoiceOff) {
+		return ClaudeSettings{}, fmt.Errorf("unknown Claude Remote Control default %q", settings.RemoteControl)
+	}
+	if !oneOf(settings.PermissionMode,
+		ClaudeChoiceInherit,
+		ClaudePermissionManual,
+		ClaudePermissionAcceptEdits,
+		ClaudePermissionAuto,
+		ClaudePermissionPlan,
+		ClaudePermissionDontAsk,
+		ClaudePermissionBypass,
+	) {
+		return ClaudeSettings{}, fmt.Errorf("unknown Claude permission mode %q", settings.PermissionMode)
+	}
+	if !oneOf(settings.Effort, ClaudeChoiceInherit, "low", "medium", "high", "xhigh", "max") {
+		return ClaudeSettings{}, fmt.Errorf("unknown Claude effort %q", settings.Effort)
+	}
+	if !oneOf(settings.Chrome, ClaudeChoiceInherit, ClaudeChoiceOn, ClaudeChoiceOff) {
+		return ClaudeSettings{}, fmt.Errorf("unknown Claude Chrome default %q", settings.Chrome)
+	}
+	if !oneOf(settings.SomewhereMCP, ClaudeChoiceInherit, ClaudeSomewhereEnsure) {
+		return ClaudeSettings{}, fmt.Errorf("unknown Somewhere MCP default %q", settings.SomewhereMCP)
+	}
+	if err := validateClaudeText("model", settings.Model, 128); err != nil {
+		return ClaudeSettings{}, err
+	}
+	if err := validateClaudeText("Remote Control name prefix", settings.RemoteControlNamePrefix, 64); err != nil {
+		return ClaudeSettings{}, err
+	}
+	return settings, nil
+}
+
+// ResolveClaudeSettings overlays the non-empty per-session choices on the
+// persisted defaults. An explicit per-session "inherit" therefore suppresses
+// a Sessions default for that one launch.
+func ResolveClaudeSettings(defaults ClaudeSettings, overrides *ClaudeSessionOptions) (ClaudeSettings, error) {
+	resolved, err := NormalizeClaudeSettings(defaults)
+	if err != nil {
+		return ClaudeSettings{}, err
+	}
+	if overrides == nil {
+		return resolved, nil
+	}
+	if value := strings.TrimSpace(overrides.RemoteControl); value != "" {
+		resolved.RemoteControl = value
+	}
+	if value := strings.TrimSpace(overrides.PermissionMode); value != "" {
+		resolved.PermissionMode = value
+	}
+	if value := strings.TrimSpace(overrides.Model); value != "" {
+		resolved.Model = value
+	}
+	if value := strings.TrimSpace(overrides.Effort); value != "" {
+		resolved.Effort = value
+	}
+	if value := strings.TrimSpace(overrides.Chrome); value != "" {
+		resolved.Chrome = value
+	}
+	if value := strings.TrimSpace(overrides.SomewhereMCP); value != "" {
+		resolved.SomewhereMCP = value
+	}
+	if value := strings.TrimSpace(overrides.RemoteControlNamePrefix); value != "" {
+		resolved.RemoteControlNamePrefix = value
+	}
+	return NormalizeClaudeSettings(resolved)
+}
+
+func defaultString(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func validateClaudeText(label, value string, maximum int) error {
+	if len(value) > maximum {
+		return fmt.Errorf("Claude %s is too long (maximum %d characters)", label, maximum)
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("Claude %s contains control characters", label)
+		}
+	}
+	return nil
+}
+
+func DefaultAISettings() AISettings {
+	return AISettings{Provider: AIProviderCodex}
+}
+
+func NormalizeAISettings(settings AISettings) (AISettings, error) {
+	settings.Provider = strings.ToLower(strings.TrimSpace(settings.Provider))
+	if settings.Provider == "" {
+		settings.Provider = AIProviderCodex
+	}
+	if settings.Provider != AIProviderCodex && settings.Provider != AIProviderClaude {
+		return AISettings{}, fmt.Errorf("unknown AI provider %q; choose codex or claude", settings.Provider)
+	}
+	return settings, nil
 }
 
 func DefaultRecapSettings() RecapSettings {
@@ -92,6 +260,8 @@ type Settings struct {
 	LAN    bool            `json:"lan"`
 	Notify *NotifySettings `json:"notify,omitempty"`
 	Recap  *RecapSettings  `json:"recap,omitempty"`
+	AI     *AISettings     `json:"ai,omitempty"`
+	Claude *ClaudeSettings `json:"claude,omitempty"`
 }
 
 func (s Settings) EffectiveNotify() NotifySettings {
@@ -106,6 +276,20 @@ func (s Settings) EffectiveRecap() RecapSettings {
 		return DefaultRecapSettings()
 	}
 	return *s.Recap
+}
+
+func (s Settings) EffectiveAI() AISettings {
+	if s.AI == nil {
+		return DefaultAISettings()
+	}
+	return *s.AI
+}
+
+func (s Settings) EffectiveClaude() ClaudeSettings {
+	if s.Claude == nil {
+		return DefaultClaudeSettings()
+	}
+	return *s.Claude
 }
 
 func LoadSettings(path string) (Settings, error) {

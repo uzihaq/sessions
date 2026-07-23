@@ -1,4 +1,4 @@
-import type { CreateSessionRequest, SessionInfo, DirectoryCandidate } from '../types';
+import type { ClaudeSettings, CreateSessionRequest, SessionInfo, DirectoryCandidate } from '../types';
 import { getActiveServer, isLocalServer, useServers, type ServerConfig } from '../lib/servers';
 import { isTauri } from '../lib/tauriBridge';
 
@@ -104,10 +104,50 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function featureJSON<T>(res: Response, feature: string): Promise<T> {
+  if (res.status === 404) {
+    throw new Error(`${feature} is not available on this runtime. Update Sessions or connect to a current sessionsd.`);
+  }
+  return json<T>(res);
+}
+
 export async function listSessions(): Promise<SessionInfo[]> {
-  const r = await apiFetch(`${httpBase()}/api/sessions`);
+  // The operations inbox is a lifecycle/history surface, not only a live
+  // process switcher. Exited sessions are required for Finished/Failed
+  // filters and for preserving parent-child provenance after a parent ends.
+  const r = await apiFetch(`${httpBase()}/api/sessions?include_exited=1`);
   const body = await json<{ sessions: SessionInfo[] }>(r);
-  return body.sessions;
+  return body.sessions.map(normalizeSessionInfo);
+}
+
+type WireSessionInfo = SessionInfo & {
+  config_dir?: string;
+  worktree_path?: string;
+  source_repo?: string;
+  creator_kind?: string;
+  creator_id?: string;
+  parent_session_id?: string;
+  creator_ancestry?: string[];
+  root_creator_kind?: string;
+  root_creator_id?: string;
+  provenance_status?: string;
+};
+
+function normalizeSessionInfo(session: SessionInfo): SessionInfo {
+  const wire = session as WireSessionInfo;
+  return {
+    ...session,
+    configDir: session.configDir ?? wire.config_dir,
+    worktreePath: session.worktreePath ?? wire.worktree_path,
+    sourceRepo: session.sourceRepo ?? wire.source_repo,
+    creatorKind: session.creatorKind ?? wire.creator_kind,
+    creatorId: session.creatorId ?? wire.creator_id,
+    parentSessionId: session.parentSessionId ?? wire.parent_session_id,
+    creatorAncestry: session.creatorAncestry ?? wire.creator_ancestry,
+    rootCreatorKind: session.rootCreatorKind ?? wire.root_creator_kind,
+    rootCreatorId: session.rootCreatorId ?? wire.root_creator_id,
+    provenanceStatus: session.provenanceStatus ?? wire.provenance_status
+  };
 }
 
 export interface ServerHealth {
@@ -116,6 +156,7 @@ export interface ServerHealth {
   version: string;
   listen: { host: string; port: number };
   lan: { enabled: boolean; url: string | null };
+  system?: { os: string; arch: string };
   discovering: boolean;
   sessionsLoaded: number;
 }
@@ -175,7 +216,38 @@ export async function listServerSessions(
     { signal }
   );
   const body = await json<{ sessions: SessionInfo[] }>(r);
-  return body.sessions;
+  return body.sessions.map(normalizeSessionInfo);
+}
+
+export interface AccountProfileSession {
+  id: string;
+  name?: string;
+}
+
+export interface AccountProfile {
+  tool: 'claude' | 'codex';
+  name: string;
+  path: string;
+  sessions: AccountProfileSession[];
+  last_used: number;
+}
+
+async function profilesForServer(server: ServerConfig, signal?: AbortSignal): Promise<AccountProfile[]> {
+  const r = await serverFetch(server, `${httpBaseForServer(server)}/api/profiles`, { signal });
+  if (r.status === 404 || r.status === 501) return [];
+  const body = await json<{ profiles: AccountProfile[] }>(r);
+  return body.profiles;
+}
+
+export async function fetchProfiles(signal?: AbortSignal): Promise<AccountProfile[]> {
+  return profilesForServer(getActiveServer(), signal);
+}
+
+export async function listServerProfiles(
+  server: ServerConfig,
+  signal?: AbortSignal
+): Promise<AccountProfile[]> {
+  return profilesForServer(server, signal);
 }
 
 export interface SearchMatch {
@@ -189,6 +261,10 @@ export interface SearchMatch {
 }
 
 export interface SearchResponse { matches: SearchMatch[]; total: number }
+
+export type AIProvider = 'codex' | 'claude';
+export interface AISettings { provider: AIProvider }
+export interface SmartSearchPlan { provider: AIProvider; query: string }
 
 export async function searchServer(
   server: ServerConfig,
@@ -204,13 +280,105 @@ export async function searchServer(
   return json<SearchResponse>(r);
 }
 
-export async function createSession(req: CreateSessionRequest): Promise<SessionInfo> {
-  const r = await apiFetch(`${httpBase()}/api/sessions`, {
+export async function fetchAISettings(signal?: AbortSignal): Promise<AISettings> {
+  const r = await apiFetch(`${httpBase()}/api/ai/settings`, { signal });
+  return featureJSON<AISettings>(r, 'Smart features');
+}
+
+export async function updateAISettings(settings: AISettings): Promise<AISettings> {
+  const r = await apiFetch(`${httpBase()}/api/ai/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(settings)
+  });
+  return featureJSON<AISettings>(r, 'Smart features');
+}
+
+export async function fetchClaudeSettings(signal?: AbortSignal): Promise<ClaudeSettings> {
+  const r = await apiFetch(`${httpBase()}/api/claude/settings`, { signal });
+  return featureJSON<ClaudeSettings>(r, 'Claude defaults');
+}
+
+export async function updateClaudeSettings(settings: ClaudeSettings): Promise<ClaudeSettings> {
+  const r = await apiFetch(`${httpBase()}/api/claude/settings`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(settings)
+  });
+  return featureJSON<ClaudeSettings>(r, 'Claude defaults');
+}
+
+export async function planSmartSearch(query: string, signal?: AbortSignal): Promise<SmartSearchPlan> {
+  const r = await apiFetch(`${httpBase()}/api/search/plan`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req)
+    body: JSON.stringify({ query }),
+    signal
   });
-  return json<SessionInfo>(r);
+  return featureJSON<SmartSearchPlan>(r, 'AI search');
+}
+
+export interface HistorySession {
+  id: string;
+  name: string;
+  tool: 'claude' | 'codex' | 'shell';
+  cwd: string;
+  machine: string;
+  created_at: number;
+  last_activity_at: number;
+  message_count: number;
+  conversation_available: boolean;
+}
+
+export interface HistoryMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string | null;
+}
+
+export interface HistoryTranscript {
+  schemaVersion: number;
+  session: HistorySession;
+  messages: HistoryMessage[];
+  truncated?: boolean;
+}
+
+export async function fetchServerHistoryTranscript(
+  server: ServerConfig,
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<HistoryTranscript> {
+  const r = await serverFetch(
+    server,
+    `${httpBaseForServer(server)}/api/history/${encodeURIComponent(sessionId)}/preview?format=json`,
+    { signal }
+  );
+  if (r.status === 404) {
+    const body = await r.text().catch(() => '');
+    try {
+      const parsed = JSON.parse(body) as { error?: string };
+      if (parsed.error === 'history session not found') {
+        throw new Error(`This conversation is no longer available on ${server.name}.`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('This conversation')) throw error;
+    }
+    throw new Error('Conversation viewing is not available on this runtime. Update Sessions or connect to a current sessionsd.');
+  }
+  return json<HistoryTranscript>(r);
+}
+
+export async function createSession(req: CreateSessionRequest): Promise<SessionInfo> {
+  const { creatorSessionId, ...body } = req;
+  const r = await apiFetch(`${httpBase()}/api/sessions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(creatorSessionId ? { 'X-Sessions-Creator-Session': creatorSessionId } : {})
+    },
+    body: JSON.stringify(body)
+  });
+  return normalizeSessionInfo(await json<SessionInfo>(r));
 }
 
 export async function updateSessionTags(
@@ -273,13 +441,21 @@ export interface UsageOptions {
 }
 
 export async function fetchUsage(options: UsageOptions, signal?: AbortSignal): Promise<UsageReport> {
-  const query = new URLSearchParams({ group: options.group, mode: options.mode });
+	return fetchUsageForServer(getActiveServer(), options, signal);
+}
+
+export async function fetchUsageForServer(
+	server: ServerConfig,
+	options: UsageOptions,
+	signal?: AbortSignal
+): Promise<UsageReport> {
+	const query = new URLSearchParams({ group: options.group, mode: options.mode });
   if (options.provider) query.set('provider', options.provider);
   if (options.since) query.set('since', options.since);
   if (options.until) query.set('until', options.until);
   if (options.dimension) query.set('dimension', options.dimension);
-  const r = await apiFetch(`${httpBase()}/api/usage?${query.toString()}`, { signal });
-  return json<UsageReport>(r);
+	const r = await serverFetch(server, `${httpBaseForServer(server)}/api/usage?${query.toString()}`, { signal });
+	return featureJSON<UsageReport>(r, 'Usage');
 }
 
 export type RecapProvider = 'off' | 'codex' | 'claude';
@@ -293,7 +469,7 @@ export interface RecapActivity {
   name: string;
   description?: string;
   summary?: string;
-  outcome: 'working' | 'idle' | 'done' | 'error';
+  outcome: 'working' | 'idle' | 'done' | 'error' | 'observed';
   tool: string;
   cwd: string;
   branch?: string;
@@ -305,6 +481,9 @@ export interface RecapActivity {
   parentSessionId?: string;
   creatorAncestry?: string[];
   provenanceStatus?: string;
+  source?: 'sessions' | 'provider';
+  origin?: string;
+  providerSessionId?: string;
 }
 
 export interface RecapDocument {
@@ -326,7 +505,7 @@ export interface RecapDay {
 
 export async function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
   const r = await apiFetch(`${httpBase()}/api/recap/settings`, { signal });
-  return json<RecapSettings>(r);
+  return featureJSON<RecapSettings>(r, 'Today');
 }
 
 export async function updateRecapSettings(settings: RecapSettings): Promise<RecapSettings> {
@@ -335,13 +514,13 @@ export async function updateRecapSettings(settings: RecapSettings): Promise<Reca
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(settings)
   });
-  return json<RecapSettings>(r);
+  return featureJSON<RecapSettings>(r, 'Today');
 }
 
 export async function fetchRecap(date: string, signal?: AbortSignal): Promise<RecapDay> {
   const query = new URLSearchParams({ date });
   const r = await apiFetch(`${httpBase()}/api/recap?${query.toString()}`, { signal });
-  return json<RecapDay>(r);
+  return featureJSON<RecapDay>(r, 'Today');
 }
 
 export async function generateRecap(date: string, force = false): Promise<RecapDay> {
@@ -350,7 +529,7 @@ export async function generateRecap(date: string, force = false): Promise<RecapD
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ date, force })
   });
-  return json<RecapDay>(r);
+  return featureJSON<RecapDay>(r, 'Today');
 }
 
 export interface Snapshot {
@@ -421,19 +600,51 @@ export async function fetchClaudeEvents(
   return json<EventsResponse>(r);
 }
 
-// Resumable Claude session metadata. Scanned from ~/.claude/projects/*
-// server-side. Powers the resume picker in New Session.
+// Resumable provider conversation metadata. Scanned locally from Claude and
+// Codex stores. The picker binds the chosen provider UUID through the audited
+// recovery/adopt route; no transcript is copied.
 export interface ResumableSession {
   sessionId: string;
+  tool: 'claude' | 'codex';
+  origin?: string;
   cwd: string;
   modifiedAt: number;
   firstUserMessage: string;
   sizeBytes: number;
 }
 export async function fetchResumableSessions(): Promise<ResumableSession[]> {
-  const r = await apiFetch(`${httpBase()}/api/claude-sessions`);
+  let r = await apiFetch(`${httpBase()}/api/resumable-conversations`);
+  if (r.status === 404) {
+    // Compatibility with the public 0.1 runtime while the native app and
+    // daemon are updated as one package.
+    r = await apiFetch(`${httpBase()}/api/claude-sessions`);
+    const legacy = await json<{ sessions: Omit<ResumableSession, 'tool' | 'origin'>[] }>(r);
+    return legacy.sessions.map((session) => ({ ...session, tool: 'claude', origin: 'Claude Code' }));
+  }
   const body = await json<{ sessions: ResumableSession[] }>(r);
   return body.sessions;
+}
+
+export interface AdoptConversationResult {
+  ok: boolean;
+  laneId: string;
+  adoption: {
+    path: string;
+    tool: string;
+    cwd: string;
+    providerUuid: string;
+    cmd: string;
+    args: string[];
+  };
+}
+
+export async function adoptConversation(providerUuid: string): Promise<AdoptConversationResult> {
+  const r = await apiFetch(`${httpBase()}/api/recovery/adopt`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ target: providerUuid })
+  });
+  return json<AdoptConversationResult>(r);
 }
 
 export async function listDirectories(): Promise<DirectoryCandidate[]> {

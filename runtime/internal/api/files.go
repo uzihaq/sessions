@@ -18,6 +18,18 @@ const maxUploadBody = 25 * 1024 * 1024
 
 var unsafeUploadName = regexp.MustCompile(`[^A-Za-z0-9_.\- ]`)
 
+var homeProjectScanSkip = map[string]struct{}{
+	"Applications": {},
+	"Desktop":      {},
+	"Documents":    {},
+	"Downloads":    {},
+	"Library":      {},
+	"Movies":       {},
+	"Music":        {},
+	"Pictures":     {},
+	"Public":       {},
+}
+
 type directoryCandidate struct {
 	Path  string `json:"path"`
 	Label string `json:"label"`
@@ -59,15 +71,16 @@ func listDirectoryCandidates() []directoryCandidate {
 	for _, name := range common {
 		push(filepath.Join(home, name), "common")
 	}
-	for _, path := range listProjectChildren(home, 20) {
+	for _, path := range listProjectChildrenExcept(home, 20, homeProjectScanSkip) {
 		push(path, "project")
 	}
-	initial := append([]directoryCandidate(nil), out...)
-	for _, candidate := range initial {
-		if candidate.Kind != "common" {
-			continue
-		}
-		for _, path := range listProjectChildren(candidate.Path, 15) {
+	// Desktop, Documents, and Downloads may be iCloud-backed on macOS. A
+	// synchronous ReadDir there can wait on remote hydration and used to hold
+	// the New Session launcher open indefinitely. Only expand conventional
+	// local development roots; the common folders themselves remain available
+	// as choices and the filesystem picker can browse them on demand.
+	for _, name := range []string{"Code", "code", "projects", "Projects", "dev", "src", "work"} {
+		for _, path := range listProjectChildren(filepath.Join(home, name), 15) {
 			push(path, "project")
 		}
 		if len(out) >= 50 {
@@ -78,6 +91,10 @@ func listDirectoryCandidates() []directoryCandidate {
 }
 
 func listProjectChildren(parent string, maximum int) []string {
+	return listProjectChildrenExcept(parent, maximum, nil)
+}
+
+func listProjectChildrenExcept(parent string, maximum int, skip map[string]struct{}) []string {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
 		return []string{}
@@ -85,6 +102,9 @@ func listProjectChildren(parent string, maximum int) []string {
 	projects := make([]string, 0, maximum)
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if _, skipped := skip[entry.Name()]; skipped {
 			continue
 		}
 		path := filepath.Join(parent, entry.Name())

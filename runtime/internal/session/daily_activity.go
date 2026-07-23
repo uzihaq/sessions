@@ -12,22 +12,25 @@ import (
 // It intentionally carries summaries and metadata rather than full transcripts
 // so the provider call stays cheap and does not disclose unrelated history.
 type DailyActivity struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Description      string            `json:"description,omitempty"`
-	Summary          string            `json:"summary,omitempty"`
-	Outcome          string            `json:"outcome"`
-	Tool             string            `json:"tool"`
-	CWD              string            `json:"cwd"`
-	Branch           string            `json:"branch,omitempty"`
-	SourceRepo       string            `json:"sourceRepo,omitempty"`
-	Tags             map[string]string `json:"tags,omitempty"`
-	CreatedAt        int64             `json:"createdAt"`
-	LastActivityAt   int64             `json:"lastActivityAt"`
-	ExitedAt         *int64            `json:"exitedAt,omitempty"`
-	ParentSessionID  string            `json:"parentSessionId,omitempty"`
-	CreatorAncestry  []string          `json:"creatorAncestry,omitempty"`
-	ProvenanceStatus string            `json:"provenanceStatus,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Description       string            `json:"description,omitempty"`
+	Summary           string            `json:"summary,omitempty"`
+	Outcome           string            `json:"outcome"`
+	Tool              string            `json:"tool"`
+	CWD               string            `json:"cwd"`
+	Branch            string            `json:"branch,omitempty"`
+	SourceRepo        string            `json:"sourceRepo,omitempty"`
+	Tags              map[string]string `json:"tags,omitempty"`
+	CreatedAt         int64             `json:"createdAt"`
+	LastActivityAt    int64             `json:"lastActivityAt"`
+	ExitedAt          *int64            `json:"exitedAt,omitempty"`
+	ParentSessionID   string            `json:"parentSessionId,omitempty"`
+	CreatorAncestry   []string          `json:"creatorAncestry,omitempty"`
+	ProvenanceStatus  string            `json:"provenanceStatus,omitempty"`
+	Source            string            `json:"source,omitempty"`
+	Origin            string            `json:"origin,omitempty"`
+	ProviderSessionID string            `json:"providerSessionId,omitempty"`
 }
 
 // DailyActivity returns sessions which show activity inside the selected local
@@ -74,7 +77,7 @@ func BuildDailyActivity(infos []state.SessionInfo, get func(string) (*state.Sess
 			Branch: info.Branch, SourceRepo: info.SourceRepo, Tags: state.CloneTags(info.Tags),
 			CreatedAt: info.CreatedAt, LastActivityAt: last, ExitedAt: info.ExitedAt,
 			ParentSessionID: info.ParentSessionID, CreatorAncestry: append([]string(nil), info.CreatorAncestry...),
-			ProvenanceStatus: info.ProvenanceStatus,
+			ProvenanceStatus: info.ProvenanceStatus, Source: "sessions",
 		})
 	}
 	sort.Slice(activities, func(i, j int) bool {

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchUsage, type UsageReport, type UsageRow, type UsageTokens } from '../api/sessionsd';
+import { type UsageOptions, type UsageReport, type UsageRow, type UsageTokens } from '../api/sessionsd';
 import { useServers } from '../lib/servers';
+import { DEFAULT_USAGE_OPTIONS, getCachedUsage, requestUsageReport } from '../lib/usageCache';
 import { useSessions } from '../store/sessions';
 import { TagEditor } from './TagEditor';
+import { ProviderBadge, normalizeProvider } from './ProviderBadge';
 
 type Group = UsageReport['group'];
 type Mode = UsageReport['mode'];
@@ -75,31 +77,38 @@ export function UsageDashboard(): JSX.Element {
   const [savedViews, setSavedViews] = useState<SavedUsageView[]>(readSavedViews);
   const [activeSavedId, setActiveSavedId] = useState('');
   const [viewName, setViewName] = useState('');
-  const [report, setReport] = useState<UsageReport | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [report, setReport] = useState<UsageReport | null>(() => activeServerId ? getCachedUsage(activeServerId, DEFAULT_USAGE_OPTIONS) : null);
+  const [loading, setLoading] = useState(() => report === null);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    const timer = window.setTimeout(() => {
-      void fetchUsage({
-        group,
-        mode,
-        provider: provider === 'all' ? undefined : provider,
-        dimension: group === 'tag' ? dimension.trim().toLowerCase() || 'product' : undefined,
-        since: since || undefined,
-        until: until || undefined
-      }, controller.signal)
-        .then((value) => setReport(value))
+	useEffect(() => {
+		if (!activeServerId) {
+			setReport(null);
+			setLoading(false);
+			return;
+		}
+		let alive = true;
+		const options: UsageOptions = {
+			group,
+			mode,
+			provider: provider === 'all' ? undefined : provider,
+			dimension: group === 'tag' ? dimension.trim().toLowerCase() || 'product' : undefined,
+			since: since || undefined,
+			until: until || undefined
+		};
+		setReport(getCachedUsage(activeServerId, options));
+		setLoading(true);
+		setError(null);
+		const timer = window.setTimeout(() => {
+			void requestUsageReport(activeServerId, options, refreshToken > 0)
+        .then((value) => { if (alive) setReport(value); })
         .catch((reason: unknown) => {
-          if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Usage report failed');
+          if (alive) setError(reason instanceof Error ? reason.message : 'Usage report failed');
         })
-        .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+        .finally(() => { if (alive) setLoading(false); });
     }, group === 'tag' ? 250 : 0);
-    return () => { window.clearTimeout(timer); controller.abort(); };
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [activeServerId, group, mode, provider, dimension, since, until, refreshToken]);
 
   // While the dashboard is open, an inexpensive incremental sync keeps newly
@@ -235,7 +244,7 @@ function UsageReportRow({ row, maxTokens, editable, onTagsSaved }: { row: UsageR
       <div className="usage-row-main">
         <div className="usage-row-title">
           <strong>{row.key}</strong>
-          {row.provider ? <span className={`usage-provider is-${row.provider}`}>{row.provider}</span> : null}
+          {normalizeProvider(row.provider) ? <ProviderBadge provider={normalizeProvider(row.provider)!} compact /> : null}
           {row.missingPricingEntries > 0 ? <span className="usage-unpriced" title="No matching model price in the pinned snapshot">unpriced</span> : null}
           {Object.entries(row.tags ?? {}).slice(0, 3).map(([key, value]) => <span className="usage-mini-tag" key={key}>{key}={value}</span>)}
         </div>

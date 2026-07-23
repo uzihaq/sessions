@@ -108,6 +108,40 @@ export async function runNativeConnectionAction<T = Record<string, unknown>>(
   return invoke<NativeConnectionCommand<T>>('native_connection_action', { kind, action, name });
 }
 
+export interface BackupStatus {
+  enabled: boolean;
+  encrypt: boolean;
+  key_path?: string;
+  project?: string;
+  interval?: string;
+  last_push_at?: string;
+  last_push_count: number;
+  last_push_skipped: number;
+  last_session_count: number;
+}
+
+export interface BackupEnableResult extends BackupStatus {
+  recovery_phrase?: string;
+  key_reused?: boolean;
+}
+
+export interface BackupPushResult {
+  pushed_at: string;
+  uploaded: number;
+  skipped: number;
+  session_count: number;
+  unresolved: number;
+  manifest_path: string;
+}
+
+export async function runNativeBackupAction<T = BackupStatus>(
+  action: 'status' | 'enable' | 'now',
+  project?: string
+): Promise<NativeConnectionCommand<T>> {
+  if (!isTauri()) throw new Error('Encrypted Somewhere backup is available in Sessions.app');
+  return invoke<NativeConnectionCommand<T>>('native_backup_action', { action, project });
+}
+
 export async function getNativeRuntimeStatus(): Promise<NativeRuntimeStatus | null> {
   if (!isTauri()) return null;
   return invoke<NativeRuntimeStatus>('runtime_status');

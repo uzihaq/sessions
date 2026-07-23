@@ -25,10 +25,47 @@ exposed through the native-only settings flow in
 delivers once-per-version native notifications. `frontend/src/components/TodayView.tsx`
 renders the local work journal and opt-in recap, while
 `frontend/src/components/ConnectionsView.tsx` presents loopback, LAN, Tailscale,
-pairing, and safe port migration. `scripts/release-app.sh` validates the
+pairing, and safe port migration. `frontend/src/components/SearchView.tsx`
+fans exact, regex, ranked, or explicitly submitted AI-planned searches across
+the configured fleet, persists the query and provider/speaker filters locally,
+and opens a byte- and message-bounded history tail in a read-only viewer rather
+than resuming it. Provider badges
+reuse the Claude and Codex product icons through
+`frontend/src/components/ProviderBadge.tsx`. `scripts/release-app.sh` validates the
 version, signing key, notarization credentials, nested signatures, stapling,
 Gatekeeper assessment, and renders the static Tauri manifest. Its release
 contract lives in [`NATIVE_APP.md`](NATIVE_APP.md).
+
+The desktop workspace begins in `frontend/src/App.tsx`. `ProductSidebar.tsx`
+owns the permanent Home/Sessions/Today/Search/Fleet/Usage/Settings rail;
+`HomeView.tsx` summarizes the operational inbox; and `SessionNavigator.tsx`
+builds the manager/child tree from normalized `SessionInfo` provenance fields.
+`FleetView.tsx` independently polls every configured daemon, uses the optional
+`system.os`/`system.arch` health metadata to choose a platform mark, and keeps
+older daemons compatible with a conservative client-side fallback. The
+Somewhere VM remains a clearly disabled coming-soon machine card rather than a
+fake live endpoint.
+The navigator never derives parentage from cwd or timestamps. Manager pins and
+open-tab IDs are bounded local UI preferences; the main list explicitly requests
+exited sessions so completed children and ended parents remain visible. Creator kind, parent ID,
+ancestry, and provenance status remain daemon/ledger truth. `SessionView.tsx`
+owns the Conversation/Terminal/Details switch. `SessionDetails.tsx` renders
+runtime, workspace, recovery, relationship, usage, and destructive controls;
+closing `SessionTabs.tsx` only closes a view. `SessionHistoryView.tsx` is the
+explicit exited-session path: it fetches the bounded history preview and never
+mounts xterm or a live WebSocket. Grid and mobile navigation receive only active
+sessions, while the full navigator retains lineage history. `NewSessionDialog.tsx` handles two
+different flows: a global recent-workspace launcher and a delegated child
+launcher. The latter sends its parent via the trusted HTTP creator header, then
+uses wait-ready plus the composer's bracketed-paste/separate-Enter input contract
+for an optional initial task. Profiles inherit only while the child keeps the
+same provider; switching providers visibly resets to that provider's default login.
+A newly created profile never receives task input during its provider login flow.
+`SettingsView.tsx` provides native light/dark appearance, working agent/recap
+preferences with rollback and stale-request protection, profile visibility,
+signed update checks/install, Connections, and the existing encrypted
+Somewhere backup surface, with unimplemented platform services labeled Coming
+soon.
 
 The native process is a management plane, not the owner of session work. Its
 installer writes and kickstarts the per-user daemon service, but launchd owns
@@ -87,7 +124,7 @@ command table rather than a copied list.
 
 ## Internal packages
 
-There are 20 production packages under `runtime/internal/`. The neighboring
+There are 22 production packages under `runtime/internal/`. The neighboring
 `runtime/internal/interop/` directory is a compatibility test fixture, not a
 production package (`runtime/internal/interop/cutover_test.go`).
 
@@ -105,11 +142,41 @@ unauthenticated, rate-limited `POST /api/pair/claim`, which mints per-device
 tokens stored as SHA-256 hashes with list/revoke management
 (`runtime/internal/api/pair.go`); device tokens authorize anywhere the master
 token does.
-Daily recap routes combine local usage totals with compact factual activity and
-delegate only optional narrative generation to `internal/recap`
+Daily recap routes combine local usage totals with compact factual activity
+from both managed lanes and locally observed, still-outside Claude/Codex
+conversations. The latter are streamed only from provider logs that contributed
+usage in the selected day; child-agent context snapshots are excluded. Only
+optional narrative generation is delegated to `internal/recap`
 (`runtime/internal/api/recap_handlers.go`).
+Smart-feature settings and natural-language search planning live at
+`GET/PUT /api/ai/settings` and `POST /api/search/plan`; the planner receives
+only the user's bounded query, while the existing `/api/search` route applies
+the generated FTS5 query locally (`runtime/internal/api/search_handlers.go`).
 Browser-origin checks are a separate CORS and WebSocket boundary, not a second
 authentication factor.
+
+Claude launch defaults live at `GET/PUT /api/claude/settings` and are resolved
+inside the session manager before the runner boundary
+(`runtime/internal/api/claude_settings_handlers.go`,
+`runtime/internal/session/claude_defaults.go`). Remote Control, permission
+mode, model, effort, Chrome, Remote Control naming, and the Somewhere MCP are
+typed rather than free-form startup commands. Explicit per-session choices win;
+`inherit` leaves Claude authoritative. Sessions never rewrites Claude's files.
+The Somewhere resolver recognizes the canonical HTTP registration or local
+`somewhere mcp` adapter, avoids an equivalent duplicate, and fails on a
+same-name/different-target conflict without copying a token into runner state.
+
+### `agentcall`
+
+`agentcall` is the shared one-shot boundary for explicitly requested AI
+features (`runtime/internal/agentcall/agentcall.go`). It invokes the user's
+already-authenticated Codex or Claude CLI in a temporary directory, strips
+provider API-key environment variables, disables tools and persistence, and
+does not hardcode a model. Codex runs ephemeral/read-only with user config and
+rules ignored; its supported isolation features are preflighted so an older CLI
+fails with an update/provider instruction rather than weakening the boundary.
+Claude runs in safe mode with Chrome, slash commands, settings sources, tools,
+MCP, and persistence disabled.
 
 ### `backup`
 
@@ -145,6 +212,9 @@ are checked against the provider catalog rather than guessed
 
 `integrations` is a stable local contract for reading live or persisted provider
 history; it does not call a model service (`runtime/internal/integrations/history.go`).
+Its normal transcript and raw contracts remain complete for deliberate
+integrations, while the native viewer uses `TranscriptPreview` to cap both the
+tail byte window and rendered message count.
 It also keeps append-only integration failures and records lost or nonzero
 runner exits (`runtime/internal/integrations/errors.go`).
 
@@ -173,6 +243,11 @@ process or arbitrary worktree contents (`runtime/internal/migrate/types.go`,
 `runtime/internal/migrate/source.go`). Receivers validate the recipe and refuse
 to overwrite an existing destination (`runtime/internal/migrate/receive.go`);
 workspace transfer policy is isolated in `runtime/internal/migrate/workspace.go`.
+The current transfer preserves the source and copies a point-in-time provider
+file; it does not yet carry the full Sessions ledger, tags, lineage, profile
+credentials, usage database, or PTY history. The checksum-verified,
+client-mediated cloud envelope and artifact boundary are specified in
+`docs/CLOUD_VM.md`.
 
 ### `mirror`
 
@@ -199,10 +274,9 @@ and compact `session.DailyActivity` facts, aliases durable session IDs, bounds
 activity count and text size, avoids full transcripts, and runs either the
 pre-authenticated Codex CLI in an ephemeral read-only sandbox with user
 configuration and rules ignored, or Claude with tools and session persistence
-disabled. Provider API-key environment variables are stripped so this feature
-uses the CLI's existing account authentication rather than silently changing
-billing paths. Sessions does not supply a model override; each CLI chooses its
-default while the service requests its lowest supported reasoning effort. The
+disabled through the shared `internal/agentcall` boundary. Sessions does not
+supply a model override; each CLI chooses its default while the service requests
+its lowest supported reasoning effort. The
 provider-safe JSON is passed over stdin, hard-capped at 32 KiB, and never placed
 in a visible composer. Documents are keyed by date and cached by the factual
 input digest plus provider; this package never calculates usage totals or owns
@@ -225,6 +299,18 @@ than replacing literal search (`runtime/internal/search/index.go`). Transcript
 reads are bounded so a malformed or giant artifact cannot consume unbounded
 memory.
 
+### `smartsearch`
+
+`smartsearch` translates one explicit, bounded natural-language request into a
+compact SQLite FTS5 query (`runtime/internal/smartsearch/service.go`). It sends
+no transcripts, session IDs, result snippets, or index contents to the selected
+CLI; provider and speaker filters remain deterministic API parameters. The
+generated query is bounded again and then executed by `internal/search` against
+the private local index. Only one planner call may run at once, and identical
+provider/query plans are cached for ten minutes. Cache keys are SHA-256 digests
+rather than natural-language queries, the map is capped at 128 entries, and
+expiry timers remove plans even when no later lookup occurs.
+
 ### `session`
 
 `session` coordinates high-level lifecycle, activity, models, hooks, and idle
@@ -244,7 +330,8 @@ attached session's replay/event state (`runtime/internal/state/config.go`,
 `runtime/internal/state/registry.go`, `runtime/internal/state/session.go`).
 Runner artifacts have defined suffixes in `runtime/internal/state/paths.go`,
 and the in-memory replay plus persisted event log are bounded. Additive daemon
-settings persist notification, LAN, and opt-in recap provider choices
+settings persist notification, LAN, recap, smart-feature provider choices, and
+typed Claude launch defaults
 without coupling them to runner state (`runtime/internal/state/settings.go`). This is
 low-level runtime state; product lifecycle policy stays in `internal/session`.
 
@@ -256,7 +343,10 @@ Stable provider/turn and provider/message keys make backfill enrich rather than 
 (`runtime/internal/usage/live.go`, `runtime/internal/usage/scanner.go`,
 `runtime/internal/usage/store.go`). It retains parser offsets, rebuilds an
 index when parsing or pricing semantics change, and reports reasoning as a
-subset of output tokens. Aggregation exposes schema-versioned daily, weekly,
+subset of output tokens. Forked Codex child rollouts are treated as a context
+snapshot followed by new child work: copied parent turns are neither rebilled
+nor re-dated, and physical-log provenance cannot be replaced by an equal replay.
+Aggregation exposes schema-versioned daily, weekly,
 monthly, session, tag, provider, and model views; session tags are joined from
 current runner metadata at query time (`runtime/internal/usage/report.go`).
 Pricing is an explicit pinned `ccusage`-compatible table: recorded costs remain
@@ -373,6 +463,9 @@ checkout frontend directory and otherwise falls back to the embedded filesystem
 (`runtime/internal/state/config.go`, `runtime/internal/api/server.go`,
 `runtime/internal/webassets/assets_embedui.go`). API and WebSocket routes are
 matched before the guarded SPA fallback.
+The served SPA is still an implemented compatibility surface, but product
+direction now deprecates interactive browser terminal/control. Do not infer a
+new browser feature commitment from the current embedded asset path.
 
 ## Authentication and network surfaces
 

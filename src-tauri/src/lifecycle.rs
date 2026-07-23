@@ -296,7 +296,7 @@ fn validate_port(port: u16) -> LifecycleResult<()> {
 
 fn ensure_port_available(port: u16) -> LifecycleResult<()> {
     TcpListener::bind((LOOPBACK_HOST, port))
-        .map(|listener| drop(listener))
+        .map(drop)
         .map_err(|error| format!("port {port} is already in use on {LOOPBACK_HOST}: {error}"))
 }
 
@@ -738,10 +738,14 @@ fn update_loaded_service(
     baseline: &BTreeSet<String>,
 ) -> LifecycleResult<()> {
     prepare_service_directories(config)?;
-    bootout(config)?;
-    wait_for_port_release(config)?;
-    write_atomic(&config.plist_path, new_plist, 0o644)?;
-    let update_result = bootstrap(config).and_then(|_| wait_until_ready(config, baseline));
+    let update_result = (|| -> LifecycleResult<()> {
+        bootout(config)?;
+        wait_for_service_unload(config)?;
+        wait_for_port_release(config)?;
+        write_atomic(&config.plist_path, new_plist, 0o644)?;
+        bootstrap(config)?;
+        wait_until_ready(config, baseline)
+    })();
     if update_result.is_ok() {
         return Ok(());
     }
@@ -772,10 +776,14 @@ fn migrate_loaded_service(
     baseline: &BTreeSet<String>,
 ) -> LifecycleResult<()> {
     prepare_service_directories(new)?;
-    bootout(old)?;
-    wait_for_port_release(old)?;
-    write_atomic(&new.plist_path, new_plist, 0o644)?;
-    let update_result = bootstrap(new).and_then(|_| wait_until_ready(new, baseline));
+    let update_result = (|| -> LifecycleResult<()> {
+        bootout(old)?;
+        wait_for_service_unload(old)?;
+        wait_for_port_release(old)?;
+        write_atomic(&new.plist_path, new_plist, 0o644)?;
+        bootstrap(new)?;
+        wait_until_ready(new, baseline)
+    })();
     if update_result.is_ok() {
         return Ok(());
     }
@@ -935,10 +943,21 @@ fn bootout(config: &RuntimeConfig) -> LifecycleResult<()> {
 }
 
 fn bootout_if_loaded(config: &RuntimeConfig) -> LifecycleResult<()> {
-    if service_is_loaded(config)? {
-        bootout(config)?;
+    let bootout_error = if service_is_loaded(config)? {
+        bootout(config).err()
+    } else {
+        None
+    };
+    match wait_for_service_unload(config) {
+        Ok(()) => Ok(()),
+        Err(unload_error) => match bootout_error {
+            Some(bootout_error) => Err(format!(
+                "launchd bootout failed and {} did not unload: {bootout_error}; {unload_error}",
+                config.label
+            )),
+            None => Err(unload_error),
+        },
     }
-    Ok(())
 }
 
 fn run_launchctl(config: &RuntimeConfig, arguments: &[&str]) -> LifecycleResult<()> {
@@ -955,6 +974,29 @@ fn run_launchctl(config: &RuntimeConfig, arguments: &[&str]) -> LifecycleResult<
             output_detail(&output)
         ))
     }
+}
+
+fn wait_for_service_unload(config: &RuntimeConfig) -> LifecycleResult<()> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut last_error = None;
+    while Instant::now() < deadline {
+        match service_is_loaded(config) {
+            Ok(false) => return Ok(()),
+            Ok(true) => {}
+            Err(error) => last_error = Some(error),
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err(match last_error {
+        Some(error) => format!(
+            "{} did not finish unloading from launchd within 3s: {error}",
+            config.label
+        ),
+        None => format!(
+            "{} remained loaded in launchd for more than 3s after bootout",
+            config.label
+        ),
+    })
 }
 
 fn wait_for_port_release(config: &RuntimeConfig) -> LifecycleResult<()> {

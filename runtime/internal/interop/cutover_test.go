@@ -106,6 +106,14 @@ func TestMain(m *testing.M) {
 }
 
 func TestNodeRunnerUnderGoDaemonCutover(t *testing.T) {
+	testNodeRunnerUnderGoDaemonCutover(t, false)
+}
+
+func TestNodeRunnerUnderGoDaemonSymlinkCutover(t *testing.T) {
+	testNodeRunnerUnderGoDaemonCutover(t, true)
+}
+
+func testNodeRunnerUnderGoDaemonCutover(t *testing.T, useCompatibilityLink bool) {
 	requireDarwin(t)
 	scratch := newScratch(t, "node-to-go")
 	id := newUUID(t)
@@ -122,11 +130,23 @@ func TestNodeRunnerUnderGoDaemonCutover(t *testing.T) {
 	t.Cleanup(func() { runner.stop(t, false) })
 	waitForRunnerState(t, runner, scratch.runnerDir, id)
 
+	daemonRunnerDir := scratch.runnerDir
+	if useCompatibilityLink {
+		sessionsState := filepath.Join(scratch.root, "sessions-state")
+		if err := os.MkdirAll(sessionsState, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		daemonRunnerDir = filepath.Join(sessionsState, "runners")
+		if err := os.Symlink(scratch.runnerDir, daemonRunnerDir); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	port := unusedPort(t)
 	daemonEnv := scratch.env(map[string]string{
 		"SESSIONS_HOST":        "127.0.0.1",
 		"SESSIONS_PORT":        fmt.Sprint(port),
-		"SESSIONS_STATE_DIR":   scratch.runnerDir,
+		"SESSIONS_STATE_DIR":   daemonRunnerDir,
 		"SESSIONS_RUNNER":      tools.goRunner,
 		"SESSIONS_LEDGER_PATH": filepath.Join(scratch.root, "ledger", "lanes.sqlite3"),
 	})
@@ -144,7 +164,13 @@ func TestNodeRunnerUnderGoDaemonCutover(t *testing.T) {
 	waitForSession(t, baseURL, id)
 	secondMarker := roundTrip(t, baseURL, id, "NODE_TO_GO_REATTACHED")
 
-	t.Logf("node runner discovered by Go daemon: id=%s first=%s after_restart=%s", id, firstMarker, secondMarker)
+	t.Logf(
+		"node runner discovered by Go daemon: id=%s compatibility_link=%t first=%s after_restart=%s",
+		id,
+		useCompatibilityLink,
+		firstMarker,
+		secondMarker,
+	)
 }
 
 func TestGoRunnerUnderNodeDaemonRegression(t *testing.T) {

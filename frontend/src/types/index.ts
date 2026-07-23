@@ -16,6 +16,14 @@ export interface SessionInfo {
   cmd: string;
   args: string[];
   cwd: string;
+  // Named provider-login boundary. Empty means the provider's normal
+  // default account; a value selects Sessions' private Claude/Codex home.
+  profile?: string;
+  configDir?: string;
+  worktreePath?: string;
+  branch?: string;
+  base?: string;
+  sourceRepo?: string;
   cols: number;
   rows: number;
   createdAt: number;
@@ -45,6 +53,18 @@ export interface SessionInfo {
   fast?: boolean;
   conversationId?: string;
   remoteEndpoint?: string;
+  onIdle?: string;
+  claudeSessionId?: string;
+  // Trusted daemon provenance. These values come from the append-only
+  // creator ledger; the UI uses them for the manager/child tree but never
+  // guesses missing parentage from cwd, timestamps, or titles.
+  creatorKind?: string;
+  creatorId?: string;
+  parentSessionId?: string;
+  creatorAncestry?: string[];
+  rootCreatorKind?: string;
+  rootCreatorId?: string;
+  provenanceStatus?: string;
 }
 
 export interface CreateSessionRequest {
@@ -54,7 +74,43 @@ export interface CreateSessionRequest {
   cols?: number;
   rows?: number;
   env?: Record<string, string>;
+  name?: string;
+  description?: string;
   tags?: Record<string, string>;
+  profile?: string;
+  worktree?: boolean;
+  base?: string;
+  kind?: string;
+  onIdle?: string;
+  waitReady?: boolean;
+  claude?: ClaudeSessionOptions;
+  // Frontend-only transport hint. api/sessionsd.ts removes this from the
+  // JSON body and sends it through the daemon's trusted creator header.
+  creatorSessionId?: string;
+}
+
+export type ClaudeToggle = 'inherit' | 'on' | 'off';
+export type ClaudePermissionMode = 'inherit' | 'manual' | 'acceptEdits' | 'auto' | 'plan' | 'dontAsk' | 'bypassPermissions';
+export type ClaudeSomewhereMCP = 'inherit' | 'ensure';
+
+export interface ClaudeSettings {
+  remoteControl: ClaudeToggle;
+  permissionMode: ClaudePermissionMode;
+  model: string;
+  effort: 'inherit' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  chrome: ClaudeToggle;
+  somewhereMcp: ClaudeSomewhereMCP;
+  remoteControlNamePrefix: string;
+}
+
+export interface ClaudeSessionOptions {
+  remoteControl?: ClaudeToggle;
+  permissionMode?: ClaudePermissionMode;
+  model?: string;
+  effort?: ClaudeSettings['effort'];
+  chrome?: ClaudeToggle;
+  somewhereMcp?: ClaudeSomewhereMCP;
+  remoteControlNamePrefix?: string;
 }
 
 export interface DirectoryCandidate {

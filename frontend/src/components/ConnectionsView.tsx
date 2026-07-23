@@ -156,7 +156,7 @@ export function ConnectionsView(): JSX.Element {
           </ConnectionCard>
 
           <ConnectionCard step="02" title="Same Wi-Fi" state={lan?.enabled ? 'On' : 'Off'} active={lan?.enabled === true}>
-            <p>Open the same Sessions GUI from Chrome or a phone on this local network. A device token is still required.</p>
+            <p>Connect another native Sessions client on your local network. Browser terminal access is intentionally not a product surface.</p>
             {lan?.url ? <div className="connection-endpoint">{lan.url}</div> : null}
             <button type="button" className={`btn${lan?.enabled ? ' btn-ghost' : ''}`} disabled={busy !== null} onClick={() => void changeLAN(!lan?.enabled)}>{busy === 'lan' ? 'Checking…' : lan?.enabled ? 'Turn off LAN' : 'Enable LAN access'}</button>
           </ConnectionCard>
@@ -174,7 +174,7 @@ export function ConnectionsView(): JSX.Element {
         </section>
 
         <section className="pair-device-card">
-          <div><span className="connections-section-kicker">Five minutes · single use</span><h2>Pair a phone or browser</h2><p>The device receives its own revocable credential. Your master daemon token never appears in the link.</p></div>
+          <div><span className="connections-section-kicker">Five minutes · single use</span><h2>Pair another device</h2><p>The future mobile or native client receives its own revocable credential. Your master daemon token never appears in the link.</p></div>
           <div className="pair-device-controls">
             <input value={pairName} maxLength={80} onChange={(event) => setPairName(event.currentTarget.value)} placeholder="Device name" />
             <button type="button" className="btn" disabled={!isTauri() || busy !== null || (!lan?.enabled && !remote?.enabled)} onClick={() => void createPair()}>{busy === 'pair' ? 'Creating…' : 'Create pairing link'}</button>
