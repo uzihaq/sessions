@@ -202,7 +202,7 @@ jobs:
           shasum -a 256 "$app_zip" | sed "s#  .*/#  #" > "$app_zip.sha256"
           xcrun stapler validate "$app_bundle"
           spctl --assess --type execute --verbose=4 "$app_bundle"
-          shasum -a 256 -c "$app_zip.sha256"
+          (cd "$output_dir" && shasum -a 256 -c "Sessions_${RELEASE_VERSION}_darwin_arm64.zip.sha256")
           for checksum in "$output_dir"/cli/*.sha256; do
             (cd "$output_dir/cli" && shasum -a 256 -c "${checksum##*/}")
           done
@@ -242,7 +242,7 @@ jobs:
           {
             echo "## Sessions $RELEASE_VERSION published"
             echo
-            echo "GitHub Release: https://github.com/uzihaq/sessions/releases/tag/$RELEASE_TAG"
+            echo "GitHub Release: https://github.com/Somewhere-Tech/sessions/releases/tag/$RELEASE_TAG"
             echo
             echo "Updater promotion remains explicit: patch only \`releases/latest.json\` on the Sessions Somewhere project with \`release/out/v${RELEASE_VERSION}/latest.json\`."
           } >> "$GITHUB_STEP_SUMMARY"
