@@ -115,6 +115,15 @@ and only later-created sessions use the staged runner. Remote update remains a
 future request-plus-local-approval flow, not authority granted to every paired
 device.
 
+**SOURCE-ONLY AFTER 0.2.3:** the conversation surface now uses Codex-style
+authorship: timestamped right-aligned user cards, full-width provider answers,
+and a single Attach composer action. Terminal Esc/history/Ctrl-C controls are
+mobile-Terminal-only. Resume is named in the Sessions navigator, and ended
+provider sessions open the audited resume picker with their identity
+preselected. Navigator drag-and-drop persists a display-parent override through
+`PUT /api/sessions/:id/display-parent`; the creator ledger remains untouched,
+and the daemon rejects self/descendant cycles.
+
 **Cloud direction locked 2026-07-22:** a Somewhere login will eventually expose backup inventory/download,
 opt-in hosted transcript search, and account-wide fleet status. The always-on tier is one private Fly Machine per
 user running a specialized worker, not public `sessionsd`: no public worker ingress, no Tailscale dependency, no

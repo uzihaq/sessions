@@ -13,6 +13,8 @@ import { ProviderBadge } from './ProviderBadge';
 
 interface Props {
   onClose: () => void;
+  onResumed: (laneId: string) => void;
+  preferredProviderId?: string;
   // Click handler if the user wants to abandon resume and start fresh.
   // App.tsx swaps to the New Session dialog so the user doesn't lose
   // their place if the picker turns out to be empty.
@@ -70,9 +72,8 @@ function extractClaudeSessionId(args: string[]): string | null {
   return null;
 }
 
-export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
+export function ResumeDialog({ onClose, onResumed, onStartNew, preferredProviderId }: Props): JSX.Element {
   const refresh = useSessions((s) => s.refresh);
-  const setActive = useSessions((s) => s.setActive);
   const openSessions = useSessions((s) => s.sessions);
 
   const [resumable, setResumable] = useState<ResumableSession[] | null>([]);
@@ -87,10 +88,17 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
     let alive = true;
     setLoading(true);
     void fetchResumableSessions()
-      .then((s) => { if (alive) { setResumable(s); setLoading(false); } })
+      .then((s) => {
+        if (!alive) return;
+        setResumable(s);
+        if (preferredProviderId) {
+          setSelected(s.find((session) => session.sessionId === preferredProviderId) ?? null);
+        }
+        setLoading(false);
+      })
       .catch(() => { if (alive) { setResumable(null); setLoading(false); } });
     return () => { alive = false; };
-  }, []);
+  }, [preferredProviderId]);
 
   // Filter out sessions that are already open as sessionsd tabs — picking
   // one would spawn a second `claude --resume <id>` against the live
@@ -98,6 +106,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
   const openProviderIds = useMemo(() => {
     const ids = new Set<string>();
     for (const s of openSessions) {
+      if (s.exited) continue;
       if (s.tool === 'claude-code') {
         const id = extractClaudeSessionId(s.args);
         if (id) ids.add(`claude:${id}`);
@@ -153,7 +162,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
     try {
       const result = await adoptConversation(selected.sessionId);
       await refresh();
-      setActive(result.laneId);
+      onResumed(result.laneId);
       onClose();
     } catch (err) {
       setError((err as Error).message);
@@ -179,7 +188,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
           <div className="resume-dialog-title-row">
             <div>
               <span className="dialog-kicker">Same history · one active surface</span>
-              <h2 className="resume-dialog-title">Bring in a conversation</h2>
+              <h2 className="resume-dialog-title">Resume a conversation</h2>
             </div>
             <div className="resume-dialog-view-toggle" role="tablist" aria-label="Sort order">
               <button
@@ -282,7 +291,7 @@ export function ResumeDialog({ onClose, onStartNew }: Props): JSX.Element {
             Close
           </button>
           <button type="button" className="btn btn-primary" onClick={() => void resume()} disabled={busy || !selected}>
-            {busy ? 'Bringing in…' : selected ? `Bring ${selected.tool === 'codex' ? 'Codex' : 'Claude'} conversation into Sessions` : 'Choose a conversation'}
+            {busy ? 'Resuming…' : selected ? `Resume with ${selected.tool === 'codex' ? 'Codex' : 'Claude'}` : 'Choose a conversation'}
           </button>
         </footer>
       </div>

@@ -10,9 +10,10 @@ import { SessionDetails } from './SessionDetails';
 interface Props {
   session: SessionInfo;
   onDelegate?: (sessionId: string) => void;
+  onResume?: (session: SessionInfo) => void;
 }
 
-export function SessionHistoryView({ session, onDelegate }: Props): JSX.Element {
+export function SessionHistoryView({ session, onDelegate, onResume }: Props): JSX.Element {
   const activeServerId = useServers((state) => state.activeId);
   const allSessions = useSessions((state) => state.sessions);
   const label = useTabLabel(session.id, session.cwd) ?? sessionLabel(session);
@@ -21,9 +22,15 @@ export function SessionHistoryView({ session, onDelegate }: Props): JSX.Element 
   const [transcript, setTranscript] = useState<HistoryTranscript | null>(null);
   const [loading, setLoading] = useState(supportsConversation);
   const [error, setError] = useState<string | null>(null);
-  const parent = session.parentSessionId ? allSessions.find((item) => item.id === session.parentSessionId) : null;
-  const children = allSessions.filter((item) => item.parentSessionId === session.id);
+  const displayParentID = session.displayParentSessionId !== undefined
+    ? session.displayParentSessionId
+    : session.parentSessionId;
+  const parent = displayParentID ? allSessions.find((item) => item.id === displayParentID) : null;
+  const children = allSessions.filter((item) => (
+    item.displayParentSessionId !== undefined ? item.displayParentSessionId : item.parentSessionId
+  ) === session.id);
   const provider = normalizeProvider(session.tool);
+  const providerID = session.conversationId || session.claudeSessionId;
 
   useEffect(() => {
     if (!supportsConversation) return;
@@ -48,7 +55,7 @@ export function SessionHistoryView({ session, onDelegate }: Props): JSX.Element 
     <div className="session-view view-history">
       <header className="session-active-header">
         <div className="session-active-copy">
-          <span className="session-parent-breadcrumb">{parent ? `${sessionLabel(parent)} / child session` : 'Manager session'} · read-only history</span>
+          <span className="session-parent-breadcrumb">{parent ? `${sessionLabel(parent)} / ${session.displayParentSessionId !== undefined ? 'grouped session' : 'child session'}` : 'Manager session'} · read-only history</span>
           <div className="session-active-title-row"><h1>{label}</h1><span className="session-live-pill">Finished</span></div>
           <div className="session-active-meta">
             {provider ? <ProviderBadge provider={provider} compact /> : <span className="provider-badge is-shell is-compact">⌘ Shell</span>}
@@ -57,6 +64,7 @@ export function SessionHistoryView({ session, onDelegate }: Props): JSX.Element 
         </div>
         <div className="session-active-actions">
           {children.length > 0 ? <span className="child-health">{children.filter((child) => !child.exited).length} active · {children.filter((child) => child.exited).length} finished</span> : null}
+          {providerID ? <button type="button" className="btn btn-primary session-resume" onClick={() => onResume?.(session)}>↻ Resume</button> : null}
           <button type="button" className="btn btn-ghost session-delegate" onClick={() => onDelegate?.(session.id)}>↳ Delegate</button>
         </div>
       </header>
@@ -77,12 +85,15 @@ export function SessionHistoryView({ session, onDelegate }: Props): JSX.Element 
             {error ? <div className="search-errors">{error}</div> : null}
             {transcript?.truncated ? <div className="search-preview-notice">Showing {transcript.messages.length} recent messages from a bounded preview (up to 400).</div> : null}
             {transcript?.messages.map((message, index) => (
-              <article className={`search-transcript-message is-${message.role}`} key={`${message.timestamp ?? 'none'}:${index}`}>
-                <header>
-                  {message.role === 'user' ? <span className="search-role is-user">User</span> : provider ? <ProviderBadge provider={provider} compact /> : <span className="search-role">Agent</span>}
-                  <time>{message.timestamp ? formatDate(message.timestamp) : ''}</time>
-                </header>
+              <article className={`session-history-message is-${message.role}`} key={`${message.timestamp ?? 'none'}:${index}`}>
+                {message.role === 'assistant' ? (
+                  <header>
+                    {provider ? <ProviderBadge provider={provider} compact /> : <span>Agent</span>}
+                    <time>{message.timestamp ? formatDate(message.timestamp) : ''}</time>
+                  </header>
+                ) : null}
                 <p>{message.text}</p>
+                {message.role === 'user' ? <footer><span>You</span><time>{message.timestamp ? formatDate(message.timestamp) : ''}</time></footer> : null}
               </article>
             ))}
             {!loading && !error && transcript?.messages.length === 0 ? <div className="usage-empty">This session has no normalized conversation messages.</div> : null}

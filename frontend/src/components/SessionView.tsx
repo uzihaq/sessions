@@ -24,6 +24,7 @@ interface Props {
   // so we don't burn N×CPU for sessions the user isn't looking at.
   isActive?: boolean;
   onDelegate?: (sessionId: string) => void;
+  onResume?: (session: import('../types').SessionInfo) => void;
 }
 
 // View modes:
@@ -87,8 +88,13 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
   const effectiveView: ViewMode = supportsConversation
     ? viewMode
     : (viewMode === 'details' ? 'details' : 'terminal');
-  const parent = session?.parentSessionId ? allSessions.find((item) => item.id === session.parentSessionId) : null;
-  const children = allSessions.filter((item) => item.parentSessionId === sessionId);
+  const displayParentID = session?.displayParentSessionId !== undefined
+    ? session.displayParentSessionId
+    : session?.parentSessionId;
+  const parent = displayParentID ? allSessions.find((item) => item.id === displayParentID) : null;
+  const children = allSessions.filter((item) => (
+    item.displayParentSessionId !== undefined ? item.displayParentSessionId : item.parentSessionId
+  ) === sessionId);
   const failedSession = (session?.exited && (((session.exitCode ?? 0) !== 0) || Boolean(session.exitSignal)))
     || session?.idleReason === 'failed'
     || session?.provenanceStatus === 'lost'
@@ -250,7 +256,7 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
     <div className={`session-view view-${effectiveView}`}>
       <header className="session-active-header">
         <div className="session-active-copy">
-          {parent ? <span className="session-parent-breadcrumb">{sessionLabel(parent)} <span>/</span> child session</span> : <span className="session-parent-breadcrumb">Manager session</span>}
+          {parent ? <span className="session-parent-breadcrumb">{sessionLabel(parent)} <span>/</span> {session?.displayParentSessionId !== undefined ? 'grouped session' : 'child session'}</span> : <span className="session-parent-breadcrumb">Manager session</span>}
           <div className="session-active-title-row"><h1>{customLabel ?? (session ? sessionLabel(session) : 'Session')}</h1><span className={`session-live-pill${statusTone}`}>{statusLabel}</span></div>
           <div className="session-active-meta">
             {provider ? <ProviderBadge provider={provider} compact /> : <span className="provider-badge is-shell is-compact">⌘ Shell</span>}
@@ -310,6 +316,12 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
       <div className="session-body">
         <div className="session-terminal-pane" onPointerDown={focusTerminal}>
           <div className="terminal-host" ref={term.containerRef} />
+          <div className="mobile-terminal-keys" role="toolbar" aria-label="Terminal keys">
+            <button type="button" onClick={() => sendInput('\x1b')}>Esc</button>
+            <button type="button" onClick={() => sendInput('\x1b[A')}>↑ Prev</button>
+            <button type="button" onClick={() => sendInput('\x1b[B')}>↓ Next</button>
+            <button type="button" onClick={() => sendInput('\x03')}>Ctrl-C</button>
+          </div>
           <ScrollToBottomButton
             visible={!term.terminalAtBottom}
             onClick={scrollTerminalToBottom}
@@ -328,8 +340,6 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
             cwd={session?.cwd}
             onOpenTerminal={() => setViewMode('terminal')}
             provider={session?.tool ?? 'claude-code'}
-            structuredKind={session?.kind}
-            onDelegate={onDelegate ? () => onDelegate(sessionId) : undefined}
           />
         </div>
         <div className="session-details-pane">
@@ -351,7 +361,7 @@ function SessionViewRouter(props: Props): JSX.Element {
       terminalStatus: 'closed'
     });
   }, [props.onStatusChange, session?.exited, session?.tool]);
-  if (session?.exited) return <SessionHistoryView session={session} onDelegate={props.onDelegate} />;
+  if (session?.exited) return <SessionHistoryView session={session} onDelegate={props.onDelegate} onResume={props.onResume} />;
   return <SessionViewInner {...props} />;
 }
 

@@ -60,6 +60,57 @@ func TestCreateHeadersBecomeValidatedLedgerProvenance(t *testing.T) {
 		t.Fatalf("child ledger provenance = %#v", states)
 	}
 
+	secondParentResponse := serve(t, server, http.MethodPost, "/api/sessions", bytes.NewReader(body), "127.0.0.1:1", nil)
+	if secondParentResponse.Code != http.StatusCreated {
+		t.Fatalf("second parent status=%d body=%s", secondParentResponse.Code, secondParentResponse.Body.String())
+	}
+	var secondParent state.SessionInfo
+	decodeBody(t, secondParentResponse, &secondParent)
+	grouped := serve(
+		t,
+		server,
+		http.MethodPut,
+		"/api/sessions/"+child.ID+"/display-parent",
+		strings.NewReader(`{"parentSessionId":"`+secondParent.ID+`"}`),
+		"127.0.0.1:1",
+		nil,
+	)
+	if grouped.Code != http.StatusOK {
+		t.Fatalf("group child status=%d body=%s", grouped.Code, grouped.Body.String())
+	}
+	var groupedChild state.SessionInfo
+	for _, candidate := range manager.List(true) {
+		if candidate.ID == child.ID {
+			groupedChild = candidate
+			break
+		}
+	}
+	if groupedChild.ParentSessionID != parent.ID {
+		t.Fatalf("display grouping rewrote creator parent: got %q want %q", groupedChild.ParentSessionID, parent.ID)
+	}
+	if groupedChild.DisplayParentSessionID == nil || *groupedChild.DisplayParentSessionID != secondParent.ID {
+		t.Fatalf("display parent = %#v, want %q", groupedChild.DisplayParentSessionID, secondParent.ID)
+	}
+	metadata, err := state.ReadRunnerMetadata(filepath.Join(config.RunnerStateDir, child.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.DisplayParentSessionID == nil || *metadata.DisplayParentSessionID != secondParent.ID {
+		t.Fatalf("persisted display parent = %#v, want %q", metadata.DisplayParentSessionID, secondParent.ID)
+	}
+	cycle := serve(
+		t,
+		server,
+		http.MethodPut,
+		"/api/sessions/"+secondParent.ID+"/display-parent",
+		strings.NewReader(`{"parentSessionId":"`+child.ID+`"}`),
+		"127.0.0.1:1",
+		nil,
+	)
+	if cycle.Code != http.StatusBadRequest || !strings.Contains(cycle.Body.String(), "descendants") {
+		t.Fatalf("cycle status=%d body=%s", cycle.Code, cycle.Body.String())
+	}
+
 	staleResponse := serve(t, server, http.MethodPost, "/api/lanes", bytes.NewReader(body), "127.0.0.1:1", http.Header{
 		creatorSessionHeader: {"00000000-0000-4000-8000-000000000099"},
 	})

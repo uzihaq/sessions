@@ -73,13 +73,20 @@ rather than a fake live endpoint. Nearby-Wi-Fi Bonjour discovery is labeled
 Coming soon rather than silently adding a macOS Local Network permission.
 The navigator never derives parentage from cwd or timestamps. Manager pins and
 open-tab IDs are bounded local UI preferences; the main list explicitly requests
-exited sessions so completed children and ended parents remain visible. Creator kind, parent ID,
-ancestry, and provenance status remain daemon/ledger truth. `SessionView.tsx`
+exited sessions so completed children and ended parents remain visible. Dragging
+a row calls `PUT /api/sessions/:id/display-parent`; `state.Metadata` persists
+that display-only override and `session.Manager` rejects cycles before
+`state.Registry` writes it. Creator kind, parent ID, ancestry, and provenance
+status remain separate daemon/ledger truth. `SessionView.tsx`
 owns the Conversation/Terminal/Details switch. `SessionDetails.tsx` renders
 runtime, workspace, recovery, relationship, usage, and destructive controls;
 closing `SessionTabs.tsx` only closes a view. `SessionHistoryView.tsx` is the
 explicit exited-session path: it fetches the bounded history preview and never
-mounts xterm or a live WebSocket. Grid and mobile navigation receive only active
+mounts xterm or a live WebSocket; its Resume button opens the audited provider
+adoption picker with that identity preselected. `RemoteView.tsx` renders
+timestamped Codex-style user cards and full-width provider answers, while
+`InputBar.tsx` owns the single Attach composer action. Terminal quick keys are
+scoped to the mobile Terminal pane. Grid and mobile navigation receive only active
 sessions, while the full navigator retains lineage history. `NewSessionDialog.tsx` handles two
 different flows: a global recent-workspace launcher and a delegated child
 launcher. The latter sends its parent via the trusted HTTP creator header, then

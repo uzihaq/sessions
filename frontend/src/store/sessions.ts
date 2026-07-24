@@ -44,6 +44,7 @@ function reconcileSessions(prev: SessionInfo[], fresh: SessionInfo[]): SessionIn
       old.base === f.base &&
       old.sourceRepo === f.sourceRepo &&
       old.parentSessionId === f.parentSessionId &&
+      old.displayParentSessionId === f.displayParentSessionId &&
       old.creatorKind === f.creatorKind &&
       old.creatorId === f.creatorId &&
       old.rootCreatorKind === f.rootCreatorKind &&
@@ -102,6 +103,7 @@ interface SessionsState {
   create: (req: CreateSessionRequest) => Promise<SessionInfo>;
   kill: (id: string) => Promise<void>;
   updateTags: (id: string, tags: Record<string, string>) => Promise<void>;
+  updateDisplayParent: (id: string, parentId: string | null) => Promise<void>;
   setActive: (id: string | null) => void;
 }
 
@@ -138,6 +140,7 @@ interface CachedSession {
   base?: string;
   sourceRepo?: string;
   parentSessionId?: string;
+  displayParentSessionId?: string;
   creatorKind?: string;
   creatorId?: string;
   creatorAncestry?: string[];
@@ -214,6 +217,7 @@ function writeCache(sessions: SessionInfo[], activeId: string | null): void {
       base: s.base,
       sourceRepo: s.sourceRepo,
       parentSessionId: s.parentSessionId,
+      displayParentSessionId: s.displayParentSessionId,
       creatorKind: s.creatorKind,
       creatorId: s.creatorId,
       creatorAncestry: s.creatorAncestry,
@@ -292,6 +296,17 @@ export const useSessions = create<SessionsState>((set, get) => ({
     set((state) => {
       const sessions = state.sessions.map((session) => (
         session.id === id ? { ...session, tags } : session
+      ));
+      writeCache(sessions, state.activeId);
+      return { sessions };
+    });
+  },
+
+  updateDisplayParent: async (id, parentId) => {
+    const displayParentSessionId = await api.updateDisplayParent(id, parentId);
+    set((state) => {
+      const sessions = state.sessions.map((session) => (
+        session.id === id ? { ...session, displayParentSessionId } : session
       ));
       writeCache(sessions, state.activeId);
       return { sessions };

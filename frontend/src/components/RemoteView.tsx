@@ -36,8 +36,6 @@ interface Props {
   // snapshot classifier sees a prompt/menu instead of a composer.
   onOpenTerminal: () => void;
   provider: SessionTool;
-  structuredKind?: string;
-  onDelegate?: () => void;
 }
 
 // Provider-neutral conversation view over the durable session transport.
@@ -62,9 +60,7 @@ export function RemoteView({
   sidebar,
   cwd,
   onOpenTerminal,
-  provider,
-  structuredKind,
-  onDelegate
+  provider
 }: Props): JSX.Element {
   const providerName = provider === 'codex' ? 'Codex' : 'Claude';
   const providerIdentity: ProviderIdentity = provider === 'codex' ? 'codex' : 'claude';
@@ -407,8 +403,6 @@ export function RemoteView({
           onSubmitted={recordSent}
           recoverDraft={recoverDraft}
           provider={provider}
-          structuredKind={structuredKind}
-          onDelegate={onDelegate}
         />
       </div>
     </div>
@@ -447,6 +441,8 @@ function RemoteMessageInner({
 }: RemoteMessageProps): JSX.Element {
   const isUser = m.role === 'user';
   const cls = `remote-msg remote-msg-${m.role} is-${m.status}${isLatest ? ' is-latest' : ''}${m.interrupted ? ' is-interrupted' : ''}${m.queued ? ' is-queued' : ''}`;
+  const timestamp = formatMessageTimestamp(m.createdAt);
+  const timestampTitle = new Date(m.createdAt).toLocaleString();
 
   // CSS-level height ratchet for the latest bubble: the parser sometimes
   // reports a shorter snapshot mid-stream (1 line) before re-emitting
@@ -473,85 +469,73 @@ function RemoteMessageInner({
 
   return (
     <div className={cls}>
-      <header className="remote-message-author">
-        {isUser ? <span className="remote-user-mark" aria-hidden>You</span> : <ProviderMark provider={provider} size={29} />}
-        <div>
-          <strong>{isUser ? 'You' : agentName}</strong>
-          <span>{m.status === 'pending' ? 'Sending…' : m.status === 'failed' ? 'Needs attention' : 'Session history'}</span>
-        </div>
-      </header>
+      {!isUser ? (
+        <header className="remote-message-meta is-agent">
+          <span><ProviderMark provider={provider} size={18} /><strong>{agentName}</strong></span>
+          <time dateTime={new Date(m.createdAt).toISOString()} title={timestampTitle}>{timestamp}</time>
+        </header>
+      ) : null}
       {isUser ? (
-        <div
-          className="remote-bubble remote-bubble-user"
-          ref={bubbleRef}
-          style={lockStyle}
-          onClick={(e) => copyOnClickAtPointer(e, m.content)}
-        >
-          {m.queued ? (
-            <div className="remote-bubble-badge remote-bubble-badge-queued" aria-label="queued">
-              <span aria-hidden>⏳</span>
-              <span>queued — Claude is finishing the previous turn</span>
-            </div>
-          ) : null}
-          {m.interrupted ? (
-            <div className="remote-bubble-badge remote-bubble-badge-interrupted" aria-label="interrupted">
-              <span aria-hidden>⎋</span>
-              <span>you interrupted Claude</span>
-            </div>
-          ) : (
-            <div className="remote-bubble-content">{m.content}</div>
-          )}
-          {/* API error captured by the parser as a ⎿ response to this
-              user_input (rate limit, server overload, etc.). Shown
-              under the bubble so the user knows their message
-              technically landed but the server refused. */}
-          {m.errorResponse ? (
-            <div className="remote-bubble-error">
-              <span className="remote-bubble-error-icon" aria-hidden>⚠</span>
-              <span>{m.errorResponse}</span>
-            </div>
-          ) : null}
-          {m.status === 'pending' ? (
-            <div className="remote-bubble-status">
-              <span className="remote-bubble-spinner" aria-hidden />
-              <span>sending</span>
-            </div>
-          ) : null}
-          {m.status === 'failed' ? (
-            <div className="remote-bubble-status remote-bubble-failed">
-              <span>{m.failureReason ? `not delivered: ${m.failureReason}` : 'not delivered'}</span>
+        <>
+          <div
+            className="remote-bubble remote-bubble-user"
+            ref={bubbleRef}
+            style={lockStyle}
+            onClick={(e) => copyOnClickAtPointer(e, m.content)}
+          >
+            {m.queued ? (
+              <div className="remote-bubble-badge remote-bubble-badge-queued" aria-label="queued">
+                <span aria-hidden>⏳</span>
+                <span>queued — Claude is finishing the previous turn</span>
+              </div>
+            ) : null}
+            {m.interrupted ? (
+              <div className="remote-bubble-badge remote-bubble-badge-interrupted" aria-label="interrupted">
+                <span aria-hidden>⎋</span>
+                <span>you interrupted Claude</span>
+              </div>
+            ) : (
+              <div className="remote-bubble-content">{m.content}</div>
+            )}
+            {m.errorResponse ? (
+              <div className="remote-bubble-error">
+                <span className="remote-bubble-error-icon" aria-hidden>⚠</span>
+                <span>{m.errorResponse}</span>
+              </div>
+            ) : null}
+            {m.status === 'pending' ? (
+              <div className="remote-bubble-status">
+                <span className="remote-bubble-spinner" aria-hidden />
+                <span>sending</span>
+              </div>
+            ) : null}
+            {m.status === 'failed' ? (
+              <div className="remote-bubble-status remote-bubble-failed">
+                <span>{m.failureReason ? `not delivered: ${m.failureReason}` : 'not delivered'}</span>
+                <button type="button" className="remote-bubble-retry" onClick={onRetry}>retry</button>
+                <button
+                  type="button"
+                  className="remote-bubble-delete"
+                  onClick={onDelete}
+                  title="Remove this entry from your local log. If Claude actually received the message, it'll reappear as a delivered entry on the next refresh."
+                >delete</button>
+              </div>
+            ) : null}
+            {m.status !== 'failed' ? (
               <button
                 type="button"
-                className="remote-bubble-retry"
-                onClick={onRetry}
-              >
-                retry
-              </button>
-              <button
-                type="button"
-                className="remote-bubble-delete"
+                className="remote-bubble-quickdelete"
                 onClick={onDelete}
-                title="Remove this entry from your local log. If Claude actually received the message, it'll reappear as a delivered entry on the next refresh."
-              >
-                delete
-              </button>
-            </div>
-          ) : null}
-          {/* Always-available delete on user bubbles, surfaces on hover —
-              lets the user clean up duplicate entries left over from
-              past retry-bug deliveries or any other artifact. */}
-          {m.status !== 'failed' ? (
-            <button
-              type="button"
-              className="remote-bubble-quickdelete"
-              onClick={onDelete}
-              title="Remove this entry from your local log."
-              aria-label="Delete message"
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
+                title="Remove this entry from your local log."
+                aria-label="Delete message"
+              >×</button>
+            ) : null}
+          </div>
+          <footer className="remote-message-meta is-user">
+            <span>{m.status === 'pending' ? 'Sending…' : m.status === 'failed' ? 'Needs attention' : 'You'}</span>
+            <time dateTime={new Date(m.createdAt).toISOString()} title={timestampTitle}>{timestamp}</time>
+          </footer>
+        </>
       ) : (
         <div
           className="remote-bubble remote-bubble-assistant"
@@ -643,6 +627,7 @@ const RemoteMessage = memo(RemoteMessageInner, (a, b) => {
   if (ma === mb) return true;
   return (
     ma.id === mb.id &&
+    ma.createdAt === mb.createdAt &&
     ma.role === mb.role &&
     ma.content === mb.content &&
     ma.status === mb.status &&
@@ -660,6 +645,18 @@ const RemoteMessage = memo(RemoteMessageInner, (a, b) => {
     ma.toolCalls === mb.toolCalls
   );
 });
+
+function formatMessageTimestamp(value: number): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  return date.toLocaleString(undefined, sameDay
+    ? { hour: 'numeric', minute: '2-digit' }
+    : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 
 // Tool-calls panel: shows a collapsed "Used N tools" header by
 // default. Click to expand → list of every tool with input preview

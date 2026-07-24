@@ -2,6 +2,14 @@ package state
 
 import "encoding/json"
 
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
 type SessionTool string
 
 const (
@@ -63,10 +71,15 @@ type SessionInfo struct {
 	CreatorKind       string            `json:"creator_kind,omitempty"`
 	CreatorID         string            `json:"creator_id,omitempty"`
 	ParentSessionID   string            `json:"parent_session_id,omitempty"`
-	CreatorAncestry   []string          `json:"creator_ancestry,omitempty"`
-	RootCreatorKind   string            `json:"root_creator_kind,omitempty"`
-	RootCreatorID     string            `json:"root_creator_id,omitempty"`
-	ProvenanceStatus  string            `json:"provenance_status,omitempty"`
+	// DisplayParentSessionID is a user-controlled organizational override.
+	// nil preserves the creator-ledger hierarchy, a pointer to "" makes the
+	// session a visual root, and any other value groups it under that session.
+	// It never rewrites trusted creator provenance.
+	DisplayParentSessionID *string  `json:"display_parent_session_id,omitempty"`
+	CreatorAncestry        []string `json:"creator_ancestry,omitempty"`
+	RootCreatorKind        string   `json:"root_creator_kind,omitempty"`
+	RootCreatorID          string   `json:"root_creator_id,omitempty"`
+	ProvenanceStatus       string   `json:"provenance_status,omitempty"`
 }
 
 const (

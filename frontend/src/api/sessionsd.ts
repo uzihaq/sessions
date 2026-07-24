@@ -120,6 +120,19 @@ export async function listSessions(): Promise<SessionInfo[]> {
   return body.sessions.map(normalizeSessionInfo);
 }
 
+export async function updateDisplayParent(
+  sessionId: string,
+  parentSessionId: string | null
+): Promise<string> {
+  const r = await apiFetch(`${httpBase()}/api/sessions/${encodeURIComponent(sessionId)}/display-parent`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ parentSessionId: parentSessionId ?? '' })
+  });
+  const body = await featureJSON<{ displayParentSessionId: string }>(r, 'Session drag-and-drop grouping');
+  return body.displayParentSessionId;
+}
+
 export interface TailnetAccessRequest {
   request_id: string;
   client_id: string;
@@ -164,6 +177,7 @@ type WireSessionInfo = SessionInfo & {
   creator_kind?: string;
   creator_id?: string;
   parent_session_id?: string;
+  display_parent_session_id?: string;
   creator_ancestry?: string[];
   root_creator_kind?: string;
   root_creator_id?: string;
@@ -181,6 +195,7 @@ function normalizeSessionInfo(session: SessionInfo): SessionInfo {
     creatorKind: session.creatorKind ?? wire.creator_kind,
     creatorId: session.creatorId ?? wire.creator_id,
     parentSessionId: session.parentSessionId ?? wire.parent_session_id,
+    displayParentSessionId: session.displayParentSessionId ?? wire.display_parent_session_id,
     creatorAncestry: session.creatorAncestry ?? wire.creator_ancestry,
     rootCreatorKind: session.rootCreatorKind ?? wire.root_creator_kind,
     rootCreatorId: session.rootCreatorId ?? wire.root_creator_id,

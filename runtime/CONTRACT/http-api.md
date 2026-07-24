@@ -351,6 +351,24 @@ path. Responses:
 - known map entry: `200 {"ok":true}`
 - unknown entry: `404 {"ok":false}`
 
+### `PUT /api/sessions/:id/display-parent`
+
+Auth required. Body is `{"parentSessionId":"<session id>"}`. The empty string
+promotes the session to a visual root. A non-empty value must identify another
+retained session, and the resulting display hierarchy must remain acyclic.
+Success is:
+
+```json
+{"displayParentSessionId":"<session id or empty string>"}
+```
+
+This route changes only user organization. It persists
+`display_parent_session_id` in the runner metadata and updates the live
+`SessionInfo`; it never changes `parent_session_id`, creator kind/ID, ancestry,
+or the append-only creator ledger. Unknown source or parent sessions return
+404. Self-parenting, descendant cycles, malformed JSON, and an already cyclic
+display graph return 400.
+
 ### `GET /api/sessions/:id/snapshot`
 
 Auth required. Optional `cols=N` is converted with `Number`, truncated through a

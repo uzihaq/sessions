@@ -77,7 +77,8 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 			IdleReason: IdleReasonNeverStarted, IdleSince: &now,
 			Model: model, Effort: effort, Fast: fast,
 			ConversationID: info.ConversationID, RemoteEndpoint: info.RemoteEndpoint,
-			ClaudeSessionID: info.ClaudeSessionID,
+			ClaudeSessionID:        info.ClaudeSessionID,
+			DisplayParentSessionID: cloneStringPointer(metadata.DisplayParentSessionID),
 		},
 		nextSeq: 1,
 		subs:    make(map[uint64]chan proto.Event),
@@ -197,7 +198,15 @@ func (s *Session) Info() SessionInfo {
 	info := s.info
 	info.Args = append([]string{}, s.info.Args...)
 	info.Tags = CloneTags(s.info.Tags)
+	info.DisplayParentSessionID = cloneStringPointer(s.info.DisplayParentSessionID)
 	return info
+}
+
+func (s *Session) setDisplayParentSessionID(parentID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	parent := parentID
+	s.info.DisplayParentSessionID = &parent
 }
 
 func (s *Session) setTags(tags map[string]string) {

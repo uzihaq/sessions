@@ -22,8 +22,6 @@ interface Props {
   // changes per failed attempt.
   recoverDraft?: { id: string; text: string; version: number } | null;
   provider?: SessionTool;
-  structuredKind?: string;
-  onDelegate?: () => void;
 }
 
 // Quote a path for safe shell-style insertion. Single quotes wrap the
@@ -33,29 +31,6 @@ interface Props {
 function quotePath(p: string): string {
   return "'" + p.replace(/'/g, "'\"'\"'") + "'";
 }
-
-interface QuickKey {
-  glyph: string;
-  label: string;
-  bytes: string;
-  title: string;
-}
-
-const QUICK_KEYS: QuickKey[] = [
-  { glyph: 'esc', label: 'Interrupt', bytes: '\x1b', title: 'Escape — interrupt the current Claude turn or dismiss a prompt' },
-  { glyph: '↑',   label: 'Prev',      bytes: '\x1b[A', title: 'Up — previous message in history' },
-  { glyph: '↓',   label: 'Next',      bytes: '\x1b[B', title: 'Down — next message in history' },
-  { glyph: '⌃C',  label: 'Cancel',    bytes: '\x03', title: 'Ctrl-C — cancel / quit running process (SIGINT)' }
-];
-
-const CODEX_APP_SERVER_QUICK_KEYS: QuickKey[] = [
-  {
-    glyph: 'esc',
-    label: 'Stop turn',
-    bytes: '\x1b',
-    title: 'Interrupt the active Codex turn without ending the conversation'
-  }
-];
 
 // Bottom composer for the Sessions view. xterm itself accepts input fine
 // when focused, but in Sessions mode the user can't see the cursor — they
@@ -69,12 +44,9 @@ export function InputBar({
   sessionId,
   onSubmitted,
   recoverDraft,
-  provider = 'claude-code',
-  structuredKind,
-  onDelegate
+  provider = 'claude-code'
 }: Props): JSX.Element {
   const [text, setText] = useState('');
-  const quickKeys = structuredKind === 'codex-app-server' ? CODEX_APP_SERVER_QUICK_KEYS : QUICK_KEYS;
   // 'idle' | 'sent' — sent briefly turns the Send button green so the
   // user can see the bytes left this client. The button text stays
   // "Send" the entire time; the green flash IS the feedback. (No ✓
@@ -273,21 +245,7 @@ export function InputBar({
           >×</button>
         </div>
       ) : null}
-      <div className="input-quick-row" role="toolbar" aria-label="Quick keys">
-        {quickKeys.map((k) => (
-          <button
-            key={k.label}
-            type="button"
-            className="qk-btn"
-            title={k.title}
-            disabled={!connected}
-            onClick={() => send(k.bytes)}
-          >
-            <span className="qk-glyph">{k.glyph}</span>
-            <span className="qk-label">{k.label}</span>
-          </button>
-        ))}
-        <span className="input-quick-spacer" />
+      <div className="input-composer">
         <input
           ref={fileInputRef}
           className="input-file-picker"
@@ -299,10 +257,6 @@ export function InputBar({
             event.currentTarget.value = '';
           }}
         />
-        <button type="button" className="qk-btn" disabled={!connected || uploading} onClick={() => fileInputRef.current?.click()} title="Attach files as local context">＋ <span className="qk-label">Context</span></button>
-        {onDelegate ? <button type="button" className="qk-btn is-delegate" onClick={onDelegate} title="Start a child session with this session as its trusted parent">↳ <span className="qk-label">Delegate</span></button> : null}
-      </div>
-      <div className="input-row">
         <textarea
           ref={taRef}
           className="input-textarea"
@@ -325,16 +279,28 @@ export function InputBar({
           autoCorrect="on"
           spellCheck
         />
-        <button
-          type="button"
-          className={`btn btn-primary input-send${feedback === 'sent' ? ' is-sent' : ''}`}
-          onClick={submit}
-          disabled={!connected}
-          aria-label="Send"
-          title="Send (Enter)"
-        >
-          Send
-        </button>
+        <div className="input-composer-footer">
+          <button
+            type="button"
+            className="input-attach"
+            disabled={!connected || uploading}
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach files"
+          >
+            <span aria-hidden>＋</span><span>Attach</span>
+          </button>
+          <span className="input-composer-spacer" />
+          <button
+            type="button"
+            className={`btn btn-primary input-send${feedback === 'sent' ? ' is-sent' : ''}`}
+            onClick={submit}
+            disabled={!connected}
+            aria-label="Send"
+            title="Send (Enter)"
+          >
+            <span aria-hidden>↑</span>
+          </button>
+        </div>
       </div>
     </div>
   );

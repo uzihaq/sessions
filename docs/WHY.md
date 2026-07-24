@@ -285,3 +285,28 @@ edge: a single session, or the first completed lane under `--any`, returns its
 identity and useful result rather than merely saying “idle.” This avoids a
 second transcript scrape and makes approval stalls visible without polling raw
 terminal output.
+
+# 2026-07-24 — Make conversation authorship and resumption visually obvious
+
+The conversation should borrow the native Codex grammar users already
+understand. A user request is an elevated, right-aligned card; the provider
+answer is full-width reading content. Both show the event's local timestamp,
+but neither repeats generic “session history” chrome on every turn. This is
+clearer than giving user and agent messages two nearly identical avatar rows.
+
+The desktop composer is for requests and attachments, not terminal emulation.
+It therefore has one Attach action, the text field, and send. Escape, history
+arrows, and Ctrl-C belong in the mobile Terminal view, where the software
+keyboard lacks them; they do not occupy the normal conversation surface.
+
+Resume is a primary lifecycle action rather than a hidden creation variant.
+The navigator names it, and an ended provider session opens the same audited
+resume flow with its existing provider identity preselected. Viewing history
+remains read-only until the user explicitly confirms Resume.
+
+User organization must not falsify provenance. Dragging a session under another
+therefore persists a display-parent override in runner metadata while retaining
+the append-only creator parent and ancestry unchanged. The daemon rejects
+self-parenting and descendant cycles. An explicit empty display parent promotes
+a row to a visual manager without claiming it was originally created outside
+another session.

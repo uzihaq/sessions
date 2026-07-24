@@ -56,15 +56,16 @@ type PreparedSession struct {
 }
 
 type SessionMetadata struct {
-	Name              string
-	Description       string
-	DescriptionSource string
-	Tags              map[string]string
-	OnIdle            string
-	Kind              string
-	SpecPath          string
-	Profile           string
-	ConfigDir         string
+	Name                   string
+	Description            string
+	DescriptionSource      string
+	Tags                   map[string]string
+	DisplayParentSessionID *string
+	OnIdle                 string
+	Kind                   string
+	SpecPath               string
+	Profile                string
+	ConfigDir              string
 }
 
 // CreateLifecycle lets the session manager place durable boundaries around
@@ -394,7 +395,7 @@ func (r *Registry) Register(ctx context.Context, runner proto.Runner, name, onId
 func (r *Registry) RegisterMetadata(ctx context.Context, runner proto.Runner, metadata RunnerMetadata, onIdle string) (*Session, error) {
 	return r.register(ctx, runner, SessionMetadata{
 		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
-		Tags:   CloneTags(metadata.Tags),
+		Tags: CloneTags(metadata.Tags), DisplayParentSessionID: cloneStringPointer(metadata.DisplayParentSessionID),
 		OnIdle: onIdle, Kind: metadata.Kind, SpecPath: metadata.SpecPath,
 		Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 	})
@@ -429,6 +430,34 @@ func (r *Registry) UpdateTags(id string, requested map[string]string) (map[strin
 		session.setTags(tags)
 	}
 	return CloneTags(tags), nil
+}
+
+// UpdateDisplayParent persists only the user's visual organization. Trusted
+// creator provenance remains in the append-only ledger and is intentionally
+// not modified by drag-and-drop in the app.
+func (r *Registry) UpdateDisplayParent(id, parentID string) (string, error) {
+	if !validMetadataID(id) {
+		return "", fmt.Errorf("session %s not found", id)
+	}
+	session, live := r.Get(id)
+	path := filepath.Join(r.config.RunnerStateDir, id+".json")
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read session display parent: %w", err)
+	}
+	var metadata Metadata
+	if err := json.Unmarshal(encoded, &metadata); err != nil {
+		return "", fmt.Errorf("decode session display parent: %w", err)
+	}
+	parent := parentID
+	metadata.DisplayParentSessionID = &parent
+	if err := WriteMetadata(path, metadata); err != nil {
+		return "", fmt.Errorf("persist session display parent: %w", err)
+	}
+	if live {
+		session.setDisplayParentSessionID(parent)
+	}
+	return parent, nil
 }
 
 func (r *Registry) Tags(id string) (map[string]string, error) {
@@ -709,7 +738,7 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 	metadata := Metadata{
 		ID: info.ID, Name: sessionMetadata.Name, Description: sessionMetadata.Description,
 		DescriptionSource: sessionMetadata.DescriptionSource, Kind: sessionMetadata.Kind, SpecPath: sessionMetadata.SpecPath,
-		Tags:    CloneTags(sessionMetadata.Tags),
+		Tags: CloneTags(sessionMetadata.Tags), DisplayParentSessionID: cloneStringPointer(sessionMetadata.DisplayParentSessionID),
 		Profile: sessionMetadata.Profile, ConfigDir: sessionMetadata.ConfigDir,
 		Cmd: info.Cmd, Args: info.Args, Cwd: info.Cwd,
 		Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt, PID: info.PID,
@@ -725,15 +754,16 @@ func writeMetadata(dir string, info proto.RunnerInfo, sessionMetadata SessionMet
 }
 
 type RunnerMetadata struct {
-	Info              proto.RunnerInfo
-	Name              string
-	Description       string
-	DescriptionSource string
-	Tags              map[string]string
-	Kind              string
-	SpecPath          string
-	Profile           string
-	ConfigDir         string
+	Info                   proto.RunnerInfo
+	Name                   string
+	Description            string
+	DescriptionSource      string
+	Tags                   map[string]string
+	DisplayParentSessionID *string
+	Kind                   string
+	SpecPath               string
+	Profile                string
+	ConfigDir              string
 }
 
 func readRunnerMetadata(path string) (RunnerMetadata, error) {
@@ -761,7 +791,7 @@ func parseRunnerMetadata(encoded []byte) (RunnerMetadata, error) {
 			ClaudeSessionID: metadata.ClaudeSessionID,
 		},
 		Name: metadata.Name, Description: metadata.Description, DescriptionSource: metadata.DescriptionSource,
-		Tags: CloneTags(metadata.Tags),
+		Tags: CloneTags(metadata.Tags), DisplayParentSessionID: cloneStringPointer(metadata.DisplayParentSessionID),
 		Kind: metadata.Kind, SpecPath: metadata.SpecPath, Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 	}, nil
 }

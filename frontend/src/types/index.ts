@@ -67,6 +67,9 @@ export interface SessionInfo {
   creatorKind?: string;
   creatorId?: string;
   parentSessionId?: string;
+  // User-controlled visual grouping. Undefined preserves trusted creator
+  // lineage; an empty string deliberately promotes the session to a root.
+  displayParentSessionId?: string;
   creatorAncestry?: string[];
   rootCreatorKind?: string;
   rootCreatorId?: string;

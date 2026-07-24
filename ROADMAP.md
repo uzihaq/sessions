@@ -88,11 +88,17 @@ Search, Fleet, Usage, and Settings. Sessions adds a second, lineage-aware
 navigator with up to five locally pinned manager sessions, real parent/child
 nesting from the daemon ledger, exited-session history, collapsed completed children, status/provider/
 machine/activity rows, and deterministic status/provider/project/date filters.
+Rows can be dragged under another session or back to the manager level. That
+layout is persisted by the daemon as a separate display-parent override: it
+never rewrites the trusted creator ledger, so organizational cleanup cannot
+erase who actually delegated the work.
 Only explicitly opened sessions enter the tab strip; closing a tab does not end
 the runtime. Exited rows open a bounded read-only conversation/details view and
 never attach a terminal transport; Grid and mobile quick-switching remain live-
-session-only. A finished intermediary stays expanded while any descendant is
-live. Conversation, Terminal, and Details are separate modes, and the
+session-only. Resume is a named navigator action, and an ended provider session
+offers a preselected resume flow from its own history header. A finished
+intermediary stays expanded while any descendant is live. Conversation,
+Terminal, and Details are separate modes, and the
 dangerous end action lives only in Details. Global creation starts from a task
 and recent workspace, while Delegate creates a real child through the trusted
 creator header and inherits the parent workspace, machine, tags, and profile.
@@ -103,6 +109,15 @@ provider profile must finish login first and never receives an automatic task.
 Both dark and light themes follow the supplied native mockups. Richer inline
 child result cards and explicit per-feature model selection remain **Coming
 soon** rather than being presented as shipped.
+
+Conversation presentation follows the native Codex interaction pattern: user
+requests are right-aligned elevated cards, provider replies remain full-width
+reading content, and both carry local timestamps without redundant “session
+history” labels. The composer exposes one Attach action with drag/drop and
+clipboard-image support plus a round send control. Esc/previous/next/Ctrl-C no
+longer occupy the desktop conversation composer; they appear only as a compact
+mobile Terminal accessory strip, where a software keyboard actually lacks
+those keys.
 
 Fleet now owns the visible add-machine path. `Find machines` searches the
 signed-in tailnet, verifies that each candidate is actually a Sessions daemon,

@@ -136,6 +136,7 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
   const setActive = useSessions((s) => s.setActive);
   const refresh = useSessions((s) => s.refresh);
   const kill = useSessions((s) => s.kill);
+  const updateDisplayParent = useSessions((s) => s.updateDisplayParent);
   // Track whether the session list has ever successfully loaded. While
   // hydrated is false, any error means we can't reach the daemon.
   const sessionsError = useSessions((s) => s.error);
@@ -170,7 +171,9 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
   // 'resume' (opens with the resume picker pre-expanded). Two-state
   // open lets the toolbar's separate + and ↺ buttons route to the
   // right initial view of the same dialog.
-  const [dialogOpen, setDialogOpen] = useState<null | 'new' | 'resume' | { delegateFrom: string }>(null);
+  const [dialogOpen, setDialogOpen] = useState<
+    null | 'new' | 'resume' | { delegateFrom: string } | { resumeProviderId: string }
+  >(null);
   const [activeStatus, setActiveStatus] = useState<ActiveStatus>(INITIAL_STATUS);
   const [openTabIds, setOpenTabIds] = useState<string[]>(readOpenTabs);
   const [theme, setTheme] = useState<ThemeMode>(readTheme);
@@ -397,7 +400,17 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
     <div className={`app-shell operations-shell text-size-${textSize.toLowerCase()}`} data-theme={theme}>
       {!isMobile ? <ProductSidebar active={productView} theme={theme} onNavigate={navigateProduct} onNewSession={() => setDialogOpen('new')} onToggleTheme={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} /> : null}
       <div className="operations-frame">
-        {sessionWorkspace && !isMobile ? <SessionNavigator sessions={sessions} activeId={activeId} machine={machine} onOpen={openSession} onNew={() => setDialogOpen('new')} /> : null}
+        {sessionWorkspace && !isMobile ? (
+          <SessionNavigator
+            sessions={sessions}
+            activeId={activeId}
+            machine={machine}
+            onOpen={openSession}
+            onNew={() => setDialogOpen('new')}
+            onResume={() => setDialogOpen('resume')}
+            onReparent={updateDisplayParent}
+          />
+        ) : null}
         <section className="operations-content">
           <TailnetAccessInbox />
           {sessionWorkspace ? (
@@ -483,6 +496,10 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
                   isActive={s.id === activeId}
                   onStatusChange={s.id === activeId ? setActiveStatus : undefined}
                   onDelegate={(id) => setDialogOpen({ delegateFrom: id })}
+                  onResume={(session) => {
+                    const providerId = session.conversationId || session.claudeSessionId;
+                    setDialogOpen(providerId ? { resumeProviderId: providerId } : 'resume');
+                  }}
                 />
               </div>
             ))
@@ -509,13 +526,17 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
           onOpenResume={() => setDialogOpen('resume')}
         />
       ) : null}
-      {dialogOpen === 'resume' ? (
+      {dialogOpen === 'resume' || (dialogOpen && typeof dialogOpen === 'object' && 'resumeProviderId' in dialogOpen) ? (
         <ResumeDialog
           onClose={() => setDialogOpen(null)}
+          onResumed={(laneId) => openSession(laneId)}
           onStartNew={() => setDialogOpen('new')}
+          preferredProviderId={typeof dialogOpen === 'object' && 'resumeProviderId' in dialogOpen
+            ? dialogOpen.resumeProviderId
+            : undefined}
         />
       ) : null}
-      {dialogOpen && typeof dialogOpen === 'object' ? (
+      {dialogOpen && typeof dialogOpen === 'object' && 'delegateFrom' in dialogOpen ? (
         <NewSessionDialog
           parentSession={sessions.find((session) => session.id === dialogOpen.delegateFrom) ?? null}
           onClose={() => setDialogOpen(null)}

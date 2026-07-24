@@ -256,6 +256,48 @@ func (m *Manager) UpdateTags(id string, tags map[string]string) (map[string]stri
 }
 func (m *Manager) Tags(id string) (map[string]string, error) { return m.registry.Tags(id) }
 
+// UpdateDisplayParent changes only the user's visual grouping. The trusted
+// creator ledger remains authoritative for who actually created the session.
+func (m *Manager) UpdateDisplayParent(id, parentID string) (string, error) {
+	infos := m.List(true)
+	byID := make(map[string]state.SessionInfo, len(infos))
+	for _, info := range infos {
+		byID[info.ID] = info
+	}
+	if _, exists := byID[id]; !exists {
+		return "", fmt.Errorf("session %s not found", id)
+	}
+	if parentID != "" {
+		if _, exists := byID[parentID]; !exists {
+			return "", fmt.Errorf("parent session %s not found", parentID)
+		}
+	}
+
+	// Follow the effective display hierarchy from the proposed parent. A
+	// repeated node means the existing graph is already malformed; reaching
+	// id means this edit would introduce a cycle.
+	visited := make(map[string]struct{}, len(infos))
+	for current := parentID; current != ""; {
+		if current == id {
+			return "", errors.New("a session cannot be grouped under itself or one of its descendants")
+		}
+		if _, repeated := visited[current]; repeated {
+			return "", errors.New("session display hierarchy already contains a cycle")
+		}
+		visited[current] = struct{}{}
+		info, exists := byID[current]
+		if !exists {
+			break
+		}
+		if info.DisplayParentSessionID != nil {
+			current = *info.DisplayParentSessionID
+		} else {
+			current = info.ParentSessionID
+		}
+	}
+	return m.registry.UpdateDisplayParent(id, parentID)
+}
+
 func (m *Manager) recordCreated(ctx context.Context, prepared state.PreparedSession, creatorKind ledger.CreatorKind, creatorID string) error {
 	if m.boundaries == nil {
 		return nil
@@ -529,6 +571,10 @@ func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionIn
 		}
 		if metadata, metadataErr := state.ReadRunnerMetadata(filepath.Join(m.config.RunnerStateDir, lane.LaneID+".json")); metadataErr == nil {
 			info.Tags = state.CloneTags(metadata.Tags)
+			if metadata.DisplayParentSessionID != nil {
+				displayParent := *metadata.DisplayParentSessionID
+				info.DisplayParentSessionID = &displayParent
+			}
 		}
 		infos = append(infos, info)
 		seen[lane.LaneID] = struct{}{}

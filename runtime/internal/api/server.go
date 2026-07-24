@@ -405,6 +405,33 @@ func (s *Server) authorized(request *http.Request) (bool, error) {
 
 func (s *Server) handleSessionRoute(response http.ResponseWriter, request *http.Request, id, suffix, corsOrigin string) {
 	session, ok := s.registry.Get(id)
+	if suffix == "/display-parent" && request.Method == http.MethodPut {
+		var body struct {
+			ParentSessionID string `json:"parentSessionId"`
+		}
+		if err := readJSON(request, &body); err != nil {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		grouping, supported := s.registry.(interface {
+			UpdateDisplayParent(string, string) (string, error)
+		})
+		if !supported {
+			s.sendJSON(response, http.StatusNotImplemented, map[string]any{"error": "session grouping is not available on this runtime"}, corsOrigin)
+			return
+		}
+		parentID, err := grouping.UpdateDisplayParent(id, body.ParentSessionID)
+		if err != nil {
+			status := http.StatusBadRequest
+			if strings.Contains(err.Error(), "not found") {
+				status = http.StatusNotFound
+			}
+			s.sendJSON(response, status, map[string]any{"error": err.Error()}, corsOrigin)
+			return
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"displayParentSessionId": parentID}, corsOrigin)
+		return
+	}
 	if suffix == "/tags" && request.Method == http.MethodGet {
 		tags, err := s.registry.Tags(id)
 		if err != nil {

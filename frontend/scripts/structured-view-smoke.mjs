@@ -93,7 +93,11 @@ try {
     activityItems: document.querySelectorAll('.remote-bubble-tool-row').length,
     reasoning: document.querySelector('.remote-bubble-reasoning')?.textContent ?? '',
     updates: document.querySelector('.remote-bubble-updates')?.textContent ?? '',
-    stopControl: [...document.querySelectorAll('.qk-label')].map((node) => node.textContent).join(' '),
+    attachControl: document.querySelector('.input-attach')?.textContent ?? '',
+    quickKeyCount: document.querySelectorAll('.qk-btn').length,
+    timestampCount: document.querySelectorAll('.remote-message-meta time').length,
+    userCardRadius: getComputedStyle(document.querySelector('.remote-bubble-user')).borderRadius,
+    assistantBackground: getComputedStyle(document.querySelector('.remote-bubble-assistant')).backgroundColor,
     parserIconWidth: document.querySelector('.parser-icon-img')?.naturalWidth ?? 0,
     horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
   }));
@@ -101,7 +105,11 @@ try {
   assert.equal(report.activityItems, 2);
   assert.match(report.reasoning, /Reasoning summary/);
   assert.match(report.updates, /progress update/);
-  assert.match(report.stopControl, /Stop turn/);
+  assert.match(report.attachControl, /Attach/);
+  assert.equal(report.quickKeyCount, 0);
+  assert.equal(report.timestampCount, 2);
+  assert.notEqual(report.userCardRadius, '0px');
+  assert.match(report.assistantBackground, /rgba\(0, 0, 0, 0\)/);
   assert.ok(report.parserIconWidth > 0);
   assert.equal(report.horizontalOverflow, 0);
   assert.deepEqual(pageErrors, []);

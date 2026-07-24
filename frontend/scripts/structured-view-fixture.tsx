@@ -26,6 +26,7 @@ const events: StructuredSessionEvent[] = [
   {
     ...base,
     type: 'codex', subtype: 'item_completed', turnId: 'turn-1',
+    timestamp: '2026-07-20T10:02:14Z',
     item: {
       id: 'reasoning-1', type: 'reasoning',
       summary: ['The current backend already owns the hard lifecycle boundaries, so the GUI should project those events instead of adding another server.']
@@ -95,7 +96,6 @@ createRoot(document.getElementById('root')!).render(
         cwd="/Users/uzair/sessions"
         onOpenTerminal={() => {}}
         provider="codex"
-        structuredKind="codex-app-server"
       />
     </main>
   </React.StrictMode>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import type { SessionInfo } from '../types';
 import { getTabLabel, sessionLabel } from '../lib/tabLabels';
 import { ProviderBadge, normalizeProvider } from './ProviderBadge';
@@ -59,9 +59,19 @@ interface Props {
   machine: string;
   onOpen: (id: string) => void;
   onNew: () => void;
+  onResume: () => void;
+  onReparent: (id: string, parentId: string | null) => Promise<void>;
 }
 
-export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }: Props): JSX.Element {
+export function SessionNavigator({
+  sessions,
+  activeId,
+  machine,
+  onOpen,
+  onNew,
+  onResume,
+  onReparent
+}: Props): JSX.Element {
   const [primary, setPrimary] = useState<PrimaryFilter>('all');
   const [provider, setProvider] = useState<ProviderFilter>('all');
   const [project, setProject] = useState('all');
@@ -69,6 +79,10 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
   const [query, setQuery] = useState('');
   const [pins, setPins] = useState<string[]>(readPins);
   const [expandedCompleted, setExpandedCompleted] = useState<Set<string>>(new Set());
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   const sessionIds = useMemo(() => new Set(sessions.map((session) => session.id)), [sessions]);
   useEffect(() => {
@@ -82,17 +96,25 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
   const children = useMemo(() => {
     const byParent = new Map<string, SessionInfo[]>();
     for (const session of sessions) {
-      if (!session.parentSessionId || !sessionIds.has(session.parentSessionId)) continue;
-      const list = byParent.get(session.parentSessionId) ?? [];
+      const parentID = session.displayParentSessionId !== undefined
+        ? session.displayParentSessionId
+        : session.parentSessionId;
+      if (!parentID || !sessionIds.has(parentID)) continue;
+      const list = byParent.get(parentID) ?? [];
       list.push(session);
-      byParent.set(session.parentSessionId, list);
+      byParent.set(parentID, list);
     }
     for (const list of byParent.values()) list.sort((a, b) => lastActivity(b) - lastActivity(a));
     return byParent;
   }, [sessions, sessionIds]);
 
   const roots = useMemo(() => sessions
-    .filter((session) => !session.parentSessionId || !sessionIds.has(session.parentSessionId))
+    .filter((session) => {
+      const parentID = session.displayParentSessionId !== undefined
+        ? session.displayParentSessionId
+        : session.parentSessionId;
+      return !parentID || !sessionIds.has(parentID);
+    })
     .sort((a, b) => {
       const ap = pins.indexOf(a.id); const bp = pins.indexOf(b.id);
       if (ap >= 0 || bp >= 0) return ap < 0 ? 1 : bp < 0 ? -1 : ap - bp;
@@ -142,6 +164,56 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+  const wouldCreateCycle = (id: string, parentID: string): boolean => {
+    const seen = new Set<string>();
+    let current = parentID;
+    while (current) {
+      if (current === id) return true;
+      if (seen.has(current)) return true;
+      seen.add(current);
+      const session = sessions.find((candidate) => candidate.id === current);
+      if (!session) return false;
+      current = session.displayParentSessionId !== undefined
+        ? session.displayParentSessionId
+        : (session.parentSessionId ?? '');
+    }
+    return false;
+  };
+  const canMove = (id: string | null, parentID: string | null): id is string => (
+    !!id && id !== parentID && (parentID === null || !wouldCreateCycle(id, parentID))
+  );
+  const moveSession = async (id: string, parentID: string | null): Promise<void> => {
+    if (!canMove(id, parentID)) return;
+    setMovingId(id);
+    setMoveError(null);
+    try {
+      await onReparent(id, parentID);
+    } catch (error) {
+      setMoveError(error instanceof Error ? error.message : 'Could not move the session.');
+    } finally {
+      setMovingId(null);
+      setDraggingId(null);
+      setDropTargetId(null);
+    }
+  };
+  const startDragging = (event: DragEvent<HTMLButtonElement>, id: string): void => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/x-sessions-session-id', id);
+    setDraggingId(id);
+    setMoveError(null);
+  };
+  const dragOverTarget = (event: DragEvent<HTMLElement>, parentID: string | null): void => {
+    if (!canMove(draggingId, parentID)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTargetId(parentID ?? '__root__');
+  };
+  const dropOnTarget = (event: DragEvent<HTMLElement>, parentID: string | null): void => {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = draggingId || event.dataTransfer.getData('text/x-sessions-session-id');
+    if (canMove(id, parentID)) void moveSession(id, parentID);
+  };
 
   const renderNode = (session: SessionInfo, depth: number): JSX.Element | null => {
     if (!treeMatches(session)) return null;
@@ -158,11 +230,20 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
       <div className="session-tree-node" key={session.id}>
         <button
           type="button"
-          className={`session-nav-row is-${status}${session.id === activeId ? ' is-active' : ''}`}
+          className={`session-nav-row is-${status}${session.id === activeId ? ' is-active' : ''}${draggingId === session.id ? ' is-dragging' : ''}${dropTargetId === session.id ? ' is-drop-target' : ''}`}
           data-session-id={session.id}
           style={{ '--tree-depth': depth } as React.CSSProperties}
           onClick={() => onOpen(session.id)}
+          draggable={movingId !== session.id}
+          aria-grabbed={draggingId === session.id}
+          onDragStart={(event) => startDragging(event, session.id)}
+          onDragEnd={() => { setDraggingId(null); setDropTargetId(null); }}
+          onDragOver={(event) => dragOverTarget(event, session.id)}
+          onDragLeave={() => setDropTargetId((current) => current === session.id ? null : current)}
+          onDrop={(event) => dropOnTarget(event, session.id)}
+          title="Open session. Drag to place it under another session."
         >
+          <span className="session-drag-handle" aria-hidden>⠿</span>
           <span className="session-nav-branch" aria-hidden>{depth > 0 ? '└' : ''}</span>
           <span className={`session-nav-status is-${status}`} aria-hidden />
           <span className="session-nav-copy">
@@ -198,7 +279,10 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
     <aside className="session-navigator">
       <header className="session-navigator-head">
         <div><span>Operations inbox</span><strong>Sessions</strong></div>
-        <button type="button" onClick={onNew} aria-label="New session">＋</button>
+        <div className="session-navigator-actions">
+          <button type="button" className="session-resume-action" onClick={onResume} aria-label="Resume an existing conversation">↻ <span>Resume</span></button>
+          <button type="button" className="session-new-action" onClick={onNew} aria-label="New session">＋</button>
+        </div>
       </header>
       <div className="session-nav-search"><span aria-hidden>⌕</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Filter sessions" /></div>
       <div className="session-filter-row" role="toolbar" aria-label="Session status filters">
@@ -218,6 +302,17 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
         </details>
       </div>
       <div className="session-tree" role="tree">
+        {moveError ? <div className="session-move-error" role="alert">{moveError}</div> : null}
+        {draggingId ? (
+          <div
+            className={`session-root-drop${dropTargetId === '__root__' ? ' is-drop-target' : ''}`}
+            onDragOver={(event) => dragOverTarget(event, null)}
+            onDragLeave={() => setDropTargetId((current) => current === '__root__' ? null : current)}
+            onDrop={(event) => dropOnTarget(event, null)}
+          >
+            Drop here to make this a manager session
+          </div>
+        ) : null}
         {pins.some((id) => roots.some((root) => root.id === id)) ? <div className="session-tree-label">Pinned managers <span>{Math.min(pins.length, 5)}/5</span></div> : null}
         {roots.map((root) => renderNode(root, 0))}
         {roots.length === 0 ? <div className="session-tree-empty">No sessions on this machine.</div> : null}
