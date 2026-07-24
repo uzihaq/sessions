@@ -84,6 +84,33 @@ notification per available version. Download and installation remain explicit.
 The settings menu tells the user that only the UI restarts—the launchd daemon
 and its runners continue independently.
 
+The bundled CLI exposes the same explicit choice as `sessions update` and a
+non-mutating `sessions update --check`. This is a second implementation of the
+same pinned trust contract, not a second release channel:
+
+- no command-line or environment override can replace the manifest URL,
+  public key, app destination, or release artifact;
+- the only accepted artifact is the exact HTTPS
+  `github.com/somewhere-tech/sessions/releases/download/v<version>/Sessions.app.tar.gz`
+  path announced for `darwin-aarch64`;
+- the archive must verify with the pinned prehashed Minisign key, then the
+  extracted bundle must pass Developer ID, team, bundle-ID, version, and
+  Gatekeeper/notarization checks;
+- archive traversal, links, unexpected roots, oversized data, and downgrades
+  fail before mutation;
+- installation stages beside `/Applications/Sessions.app`, stops only the exact
+  current-user Sessions UI process, performs a durable macOS atomic exchange
+  with rollback, verifies the installed result, removes the temporary previous
+  app, and reopens the UI.
+
+Neither CLI path signals `sessionsd` or a runner. The reopened app performs the
+normal managed-runtime handoff. Existing runners are re-adopted serially with
+up to three two-second HELLO attempts and two retry delays each, so readiness
+starts at 30 seconds and adds eight seconds per baseline runner, capped at five
+minutes. The handoff still requires discovery completion and every pre-update
+session ID before accepting the new daemon; otherwise it restores and
+re-verifies the previous runtime.
+
 ## Mac management surfaces
 
 The shared React client now has native-oriented product surfaces:
@@ -128,11 +155,11 @@ sessionsd remains launchd-owned, and every active session remains runner-owned.
 1. Build and rehearse from source on the MacBook with isolated scratch state.
 2. Ship the signed, notarized macOS app through its real update channel.
 3. Build the Android paired client after the macOS app has shipped.
-4. Revisit the production mini only when the user separately schedules a joint
-   first install; that event is also the Node-to-Go cutover.
+4. Complete the already-authorized production Mini handoff through the public
+   signed 0.2.2 channel after its MacBook gate passes.
 
-The mini cutover is deliberately unscheduled. Shipping either client does not
-authorize it.
+The Mini authorization is narrow: the app/daemon may update and verify
+re-adoption, while the important runner processes remain untouched.
 The compatibility evidence remains in `docs/CUTOVER_AUDIT_2026-07-17.md` and
 the interop tests. `docs/CUTOVER.md` is the manual SSH checklist for that joint
 operation; there is intentionally no automated production cutover script.

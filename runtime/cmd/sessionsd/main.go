@@ -19,7 +19,7 @@ import (
 )
 
 var anyHosts = map[string]struct{}{"0.0.0.0": {}, "::": {}, "::0": {}, "*": {}}
-var version = "0.2.1"
+var version = "0.2.2"
 
 func main() {
 	config, err := state.ConfigFromEnv()

@@ -32,7 +32,7 @@ import (
 
 const idleShutdown = 30 * time.Second
 
-var version = "0.2.1"
+var version = "0.2.2"
 
 type config struct {
 	id                string

@@ -9,7 +9,7 @@ update story.
 The checked-in Tauri application builds as `Sessions.app`. It bundles signed Go
 binaries and implements idempotent first install, health/discovery checks,
 live-session baseline verification, rollback for daemon upgrades, and a signed
-Tauri updater. Sessions 0.2.0 is public at the immutable GitHub tag `v0.2.0`;
+Tauri updater. Sessions 0.2.1 is public at the immutable GitHub tag `v0.2.1`;
 its signed updater manifest is live at
 `https://sessions.somewhere.tech/releases/latest.json`. The archive is
 Developer ID signed, notarized, stapled, and Gatekeeper accepted. Future
@@ -40,6 +40,10 @@ Before publishing a version:
 8. Sign and publish the updater manifest and immutable app artifact.
 9. Install through the same channel a customer will use and repeat the health
    and session-adoption check.
+10. From the previous installed app, run the newly built CLI's
+    `sessions update --check`, then `sessions update`; confirm the pinned
+    signature, Developer ID, Gatekeeper, atomic swap, app relaunch, managed CLI
+    link, daemon version, and complete runner baseline.
 
 The required Apple credential is an app-specific password or App Store Connect
 API key. Credentials are release secrets and must never be committed.
@@ -129,6 +133,19 @@ static deploy can remove the onboarding pages. Read the file back from
 production and install through the app's Settings → Sessions updates flow before
 announcing the release.
 
+For 0.2.2 and later, also exercise the terminal path:
+
+```sh
+sessions update --check
+sessions update
+```
+
+The command deliberately has no alternate URL, key, artifact, destination, or
+downgrade flag. It installs the whole native package, not only the currently
+running CLI binary. The reopened app then stages the embedded runtime and
+updates the managed CLI link. A temporary previous app exists only inside the
+same-disk transaction and is removed after post-install verification.
+
 ## Standalone binary archives
 
 The secondary archive builder remains available for automation and unsupported
@@ -144,9 +161,10 @@ Each archive contains adjacent `sessions`, `sessionsd`, and `sessions-runner` bi
 power-user channel, but its formula is not the native app updater and must not
 be presented as the primary macOS experience.
 
-## Production mini
+## Production Mini
 
-Shipping the macOS app does not authorize a mini cutover. The mini remains on
-the Node daemon until the user schedules a joint first install after the app
-has shipped. Follow [`CUTOVER.md`](CUTOVER.md) only during that separate
-maintenance window.
+The user authorized completion of the existing Mini handoff after the public
+0.2.2 updater passes on the runner-free MacBook. Follow
+[`CUTOVER.md`](CUTOVER.md), preserve the live runner baseline, and do not stop
+or replace runner processes. The app may replace and verify only the launchd
+daemon/runtime layer.

@@ -222,6 +222,8 @@ struct RuntimeConfig {
     daemon_arguments: Vec<String>,
     environment: Vec<(String, String)>,
     health_timeout: Duration,
+    health_timeout_per_session: Duration,
+    health_timeout_cap: Duration,
     poll_interval: Duration,
 }
 
@@ -275,7 +277,13 @@ impl RuntimeConfig {
             verify_signatures: true,
             daemon_arguments: Vec::new(),
             environment: Vec::new(),
-            health_timeout: Duration::from_secs(20),
+            // Existing runners are re-adopted serially. Each may consume three
+            // two-second HELLO attempts plus two 800ms retry delays, so the
+            // update budget scales with the baseline instead of imposing the
+            // old fixed 20-second deadline on every fleet size.
+            health_timeout: Duration::from_secs(30),
+            health_timeout_per_session: Duration::from_secs(8),
+            health_timeout_cap: Duration::from_secs(5 * 60),
             poll_interval: Duration::from_millis(200),
         })
     }
@@ -954,7 +962,8 @@ fn capture_baseline(config: &RuntimeConfig) -> LifecycleResult<BTreeSet<String>>
 }
 
 fn wait_until_ready(config: &RuntimeConfig, baseline: &BTreeSet<String>) -> LifecycleResult<()> {
-    let deadline = Instant::now() + config.health_timeout;
+    let timeout = readiness_timeout(config, baseline.len());
+    let deadline = Instant::now() + timeout;
     let mut last_error = "no response".to_string();
     while Instant::now() < deadline {
         match health_once(config) {
@@ -987,10 +996,20 @@ fn wait_until_ready(config: &RuntimeConfig, baseline: &BTreeSet<String>) -> Life
     Err(format!(
         "background service did not become ready at {} within {}s: {} (logs: {})",
         config.health_url(),
-        config.health_timeout.as_secs(),
+        timeout.as_secs(),
         last_error,
         config.log_path.display()
     ))
+}
+
+fn readiness_timeout(config: &RuntimeConfig, baseline_count: usize) -> Duration {
+    let count = u32::try_from(baseline_count).unwrap_or(u32::MAX);
+    let scaled = config
+        .health_timeout_per_session
+        .checked_mul(count)
+        .and_then(|per_session| config.health_timeout.checked_add(per_session))
+        .unwrap_or(config.health_timeout_cap);
+    scaled.min(config.health_timeout_cap)
 }
 
 fn health_once(config: &RuntimeConfig) -> LifecycleResult<HealthResponse> {
@@ -1291,6 +1310,20 @@ mod tests {
         assert!(validate_port(1024).is_ok());
         assert!(validate_port(65_535).is_ok());
     }
+
+    #[test]
+    fn readiness_budget_scales_with_serial_runner_adoption_and_stays_bounded() {
+        let root = env::temp_dir().join("sessions-readiness-budget-test");
+        let mut config = fixture_config(&root, "tech.somewhere.sessions.readiness", 47_869);
+        config.health_timeout = Duration::from_secs(30);
+        config.health_timeout_per_session = Duration::from_secs(8);
+        config.health_timeout_cap = Duration::from_secs(5 * 60);
+        assert_eq!(readiness_timeout(&config, 0), Duration::from_secs(30));
+        assert_eq!(readiness_timeout(&config, 7), Duration::from_secs(86));
+        assert_eq!(readiness_timeout(&config, 19), Duration::from_secs(182));
+        assert_eq!(readiness_timeout(&config, 10_000), Duration::from_secs(300));
+    }
+
     use std::{io::Read, net::TcpListener};
 
     const HELPER_ENV: &str = "SESSIONS_LAUNCHD_TEST_HELPER";
@@ -1468,6 +1501,8 @@ mod tests {
         ];
         config.verify_signatures = false;
         config.health_timeout = Duration::from_secs(3);
+        config.health_timeout_per_session = Duration::ZERO;
+        config.health_timeout_cap = Duration::from_secs(3);
         config.poll_interval = Duration::from_millis(50);
 
         write_fixture_runtime(&config, "v1", None);
@@ -1540,6 +1575,8 @@ mod tests {
             daemon_arguments: Vec::new(),
             environment: Vec::new(),
             health_timeout: Duration::from_secs(1),
+            health_timeout_per_session: Duration::ZERO,
+            health_timeout_cap: Duration::from_secs(1),
             poll_interval: Duration::from_millis(25),
         }
     }

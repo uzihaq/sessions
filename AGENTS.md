@@ -39,9 +39,11 @@ relevant source path; if prose and code disagree, the code wins.
 ## Working rules
 
 1. **Sessions are sacred.** Never kill, replace, mass-clean, or adopt a session you do not own. The ledger's provenance and mass-kill guard live in `runtime/internal/ledger/` and `runtime/internal/session/manager.go`.
-2. **Do not touch the Mac mini.** Its initial cutover has occurred, but the user
-   paused all further Mini work until the next signed release is public
-   (`STATE.md`). Read-only access still requires a task-specific user request.
+2. **Preserve the Mac Mini runners.** Its initial cutover has occurred and the
+   user authorized completion through the public 0.2.2 signed update only after
+   that path passes on the runner-free MacBook (`STATE.md`). The app/daemon may
+   be updated and verified; important runner processes must not be stopped,
+   replaced, or recreated.
 3. **Isolate development.** Use a worktree and branch. For a scratch daemon, set both `SESSIONS_STATE_DIR` and `SESSIONS_PORT` so it cannot collide with daily-driver state (`docs/DEV.md`).
 4. **Reload only the dev daemon.** Its label is `tech.somewhere.sessions.dev.daemon`. After a reload, compare `sessions ls` before and after and verify the durable `soak-d2` session still exists; count runner metadata, not bare `pgrep` output (`STATE.md`).
 5. **Write ahead of destructive action.** Creation and kill intent are ledgered before process launch or termination (`runtime/internal/session/manager.go`, `runtime/internal/ledger/store.go`). Preserve that ordering.
@@ -49,7 +51,7 @@ relevant source path; if prose and code disagree, the code wins.
 7. **Verify acceptance yourself.** Run the complete gate in the worktree, inspect the diff, and report actual output. Do not imply a check passed if it did not run.
 8. **Keep protocol changes compatible.** Read `runtime/CONTRACT/` before changing frames, HELLO/replay behavior, state files, or Node-runner adoption.
 9. **Keep the native shell above the service.** Sessions.app may install, update, and inspect `sessionsd`; quitting or updating the app must never terminate the daemon or a runner (`docs/NATIVE_APP.md`).
-10. **Do not use the retired Node deploy path.** `sessions deploy` is intentionally non-mutating on the Go product. Mac app release work follows `docs/RELEASE.md`; the mini remains untouched.
+10. **Do not use the retired Node deploy path.** `sessions deploy` is intentionally non-mutating on the Go product. Mac app release and Mini completion work follows `docs/RELEASE.md`.
 
 ## Build, test, and gate commands
 

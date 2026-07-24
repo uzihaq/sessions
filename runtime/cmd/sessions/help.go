@@ -234,6 +234,12 @@ var commandTable = []commandSpec{
 		examples: []string{"sessions deploy"}, run: (*app).cmdDeploy,
 	},
 	{
+		name: "update", usage: "update [--check]",
+		summary: "securely update Sessions.app", group: adminCommandGroup, localJSON: true,
+		longHelp: "Check or install the latest macOS Sessions release. The updater accepts no URL or key overrides: it fetches only the public Somewhere release manifest, requires the pinned Minisign key, validates the exact immutable GitHub artifact path, and verifies the Developer ID and notarization before an atomic app swap. Only the Sessions UI is restarted; sessionsd and runners are never stopped.",
+		examples: []string{"sessions update", "sessions update --check", "sessions --json update --check"}, run: (*app).cmdUpdate,
+	},
+	{
 		name: "pair", usage: "pair [--name NAME]",
 		summary: "pair a device on the same LAN", group: adminCommandGroup, localJSON: true,
 		longHelp: "Mint a five-minute, single-use pairing ticket for the explicit same-network LAN listener. This is the fallback for devices without Tailscale: Sessions apps on the same tailnet discover each other and use Request access instead. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.",

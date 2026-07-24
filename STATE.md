@@ -35,14 +35,17 @@ transfer needed — the durable record IS the handoff.
   created its runner socket successfully, and the same session survived a second immutable runtime/app update before
   the smoke lane was deliberately stopped and removed. The Mini then entered
   its joint cutover and its 19 important lanes were preserved/resumed under
-  Sessions. **USER PAUSE 2026-07-23:** make no further Mini changes until the
-  next signed release is public; the search investigation used only a read-only
-  local copy of the PM transcript.
+  Sessions. The first 0.2.1 launch on the Mini correctly rolled its daemon back
+  to 0.2.0 after the old 20-second lifecycle deadline expired while runner
+  discovery was still active; the app bundle remained 0.2.1 and the runners
+  remained alive. **USER GREEN LIGHT 2026-07-23:** finish and exercise the
+  signed 0.2.2 updater patch on the runner-free MacBook, then complete the Mini
+  update through that public channel.
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/sessions/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
-- **Sessions 0.2.0 is public under `Somewhere-Tech/sessions`; 0.2.1 is the next
-  patch release.** The public app artifacts are notarized/stapled/
+- **Sessions 0.2.1 is public under `Somewhere-Tech/sessions`; 0.2.2 is the next
+  updater-safety patch.** The public app artifacts are notarized/stapled/
   Gatekeeper-accepted, the signed updater manifest is live at
   `https://sessions.somewhere.tech/releases/latest.json`, and
   `somewhere-tech/homebrew-tap` serves both the `sessions` runtime formula and
@@ -77,8 +80,11 @@ The app IS the product package. v2 makes "one update updates everything, nothing
 mini yet. Its later first Sessions.app install remains the joint Node-to-Go cutover (interop-proven by
 `TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
 
-## NEXT: ship the Mac 0.2.1 patch, then Android (see board + WHY.md)
-**Immediate:** notarize and publish the Mac 0.2.1 search/operations/security patch below, then build the Android app
+## NEXT: ship the Mac 0.2.2 updater patch, finish the Mini upgrade, then Android
+**Immediate:** notarize and publish the Mac 0.2.2 updater-safety patch, exercise
+`sessions update` through the public channel on the MacBook, then use that
+signed path to complete the Mini's daemon upgrade without touching its runners.
+Afterward build the Android app
 (Tauri2 paired client + FCM; push machinery ready). Later:
 semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
@@ -159,6 +165,20 @@ mediated by the native client; source history remains preserved. Full contract: 
 - The signed updater now checks quietly on launch and every six hours, shows an in-app badge, and sends at most one
   native notification per available version. Installation remains an explicit user action; relaunch still replaces
   only the UI while launchd and every runner remain alive.
+- The runtime CLI now exposes `sessions update [--check]` without accepting a
+  URL, key, destination, downgrade, or unsigned checksum override. It fetches
+  only the fixed Somewhere metadata route (including its exact deployed
+  `sessions.somewhere.site` redirect), requires an immutable
+  `github.com/somewhere-tech/sessions/releases/download/v<version>/Sessions.app.tar.gz`
+  path, verifies the pinned Minisign signature, rejects traversal/link archive
+  entries, and validates Developer ID, team, bundle identity, version, and
+  Gatekeeper before an atomic same-disk app swap. The temporary rollback app is
+  removed after post-install verification. Only an exact installed Sessions UI
+  process is stopped/reopened; `sessionsd` and runners are never signaled.
+  Native lifecycle readiness now starts at 30 seconds and adds eight seconds
+  per baseline runner (capped at five minutes), matching serial re-adoption's
+  three two-second HELLO attempts plus retry delays; the live-ID baseline and
+  rollback requirements remain unchanged.
 - The native Connections surface now operates the already-shipped direct Somewhere backup flow: it detects the CLI,
   accepts an existing Somewhere project, enables local XChaCha encryption, presents the recovery phrase, reports
   backup status, and can push immediately. Fleet also previews the coming one-user private Fly worker shape. Account
@@ -215,9 +235,10 @@ mediated by the native client; source history remains preserved. Full contract: 
   `runtime/internal/session/retention.go`, `src-tauri/src/lifecycle.rs`).
 
 ## OPEN USER DECISIONS (blockers only)
-None for the observed mini cutover. The product default preserves the existing bypass-permissions behavior, but it is
-now visible and changeable globally or per session. The cutover remains a separate, jointly observed operation; this
-source change does not touch the mini.
+None for the observed Mini completion. The user explicitly authorized Mini
+work after the public 0.2.2 MacBook update gate passes. The product default
+preserves the existing bypass-permissions behavior, but it is now visible and
+changeable globally or per session.
 
 ## Build / run
 - Build (auto-signs): `cd runtime && export PATH=$PATH:/opt/homebrew/bin && make binaries`

@@ -38,6 +38,25 @@ them.
    reinstalling Sessions?
 7. Do tests prove local-only operation still works with the network unavailable?
 
+## Native update traffic
+
+Automatic update awareness and `sessions update --check` send only an HTTPS
+GET with a non-identifying updater user agent to the fixed public release route:
+`sessions.somewhere.tech` redirects to the allowlisted deployed host
+`sessions.somewhere.site`. They send no token, cookie, account credential,
+machine ID, session ID, usage, transcript, prompt, terminal content, or
+telemetry. Installation is explicit.
+
+`sessions update` then accepts only the exact immutable GitHub release path for
+the announced version; GitHub's asset redirect is restricted to
+`release-assets.githubusercontent.com`. Redirect count and response sizes are
+bounded. Even a compromised mutable manifest cannot authorize executable
+bytes: the archive must verify with the public key compiled into the CLI, then
+the app must pass Developer ID/team/bundle/version and Gatekeeper checks before
+the atomic swap. There is no URL, key, proxy credential, or app-path option in
+the command surface. The system HTTPS proxy setting may be honored, but TLS
+validation and the artifact signature remain mandatory.
+
 ## Support-ticket access (coming soon)
 
 `sessions support` may eventually let a user attach diagnostics or grant

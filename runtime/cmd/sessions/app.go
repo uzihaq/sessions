@@ -71,6 +71,7 @@ type app struct {
 	sleep      func(time.Duration)
 	api        *apiClient
 	listModels func(context.Context) ([]codexapp.Model, error)
+	runUpdate  func(context.Context, bool) (nativeUpdateResult, error)
 	commands   []commandSpec
 }
 
@@ -84,7 +85,8 @@ func newApp(arguments []string, stdin io.Reader, stdout, stderr io.Writer) (*app
 		stdin: stdin, stdout: stdout, stderr: stderr,
 		args: args, host: host, port: port, wantJSON: wantJSON,
 		home: home, now: time.Now, sleep: time.Sleep, listModels: listLiveCodexModels,
-		commands: commandTable,
+		runUpdate: runNativeAppUpdate,
+		commands:  commandTable,
 	}
 	if len(app.args) > 0 {
 		app.sub = app.args[0]

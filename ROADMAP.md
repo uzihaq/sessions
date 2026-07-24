@@ -25,18 +25,27 @@ usage, and safe interruption while retaining Terminal as a fallback. See
 [`runtime/internal/codexapp/history.go`](runtime/internal/codexapp/history.go)
 and [`frontend/src/components/RemoteView.tsx`](frontend/src/components/RemoteView.tsx).
 
-The MacBook remains the development channel. The production mini is not part
-of this phase and must remain untouched. Its first Sessions.app installation is a
-later, joint Node-to-Go cutover after the app itself has shipped.
+The MacBook remains the development and release-verification channel. The Mini
+cutover is underway and the user has authorized its completion only after the
+signed 0.2.2 updater path passes on the runner-free MacBook.
 
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
 contract.
 
-## Now: Mac 0.2.1 patch, then Android
+## Now: Mac 0.2.2 safe one-command update, Mini completion, then Android
 
-Sessions 0.2.0 is public. The 0.2.1 patch is implemented in source and closes
-the search, Mini-feedback, and tailnet-approval issues found during cutover
-dogfood. The 0.2 line adds a polished Today journal
+Sessions 0.2.1 is public. The 0.2.2 patch adds a fail-closed
+`sessions update [--check]` path for the native Mac package and scales the
+daemon handoff deadline to the existing serial runner re-adoption contract
+without weakening live-ID verification or rollback. The command has no URL or
+key override, accepts no downgrade, requires the pinned Minisign key and exact
+immutable GitHub release path, validates Developer ID plus Gatekeeper, swaps
+the app atomically on the same disk, removes its temporary rollback copy, and
+reopens only the UI. The app continues to check for updates on launch and every
+six hours, with an in-app badge and one native notification per version.
+
+The 0.2.1 release closed the search, Mini-feedback, and tailnet-approval issues
+found during cutover dogfood. The 0.2 line adds a polished Today journal
 with local usage and session/lane evidence plus an opt-in, cached Codex-or-Claude daily recap; a native Connections
 center for loopback port, same-Wi-Fi LAN, Tailscale Serve, and one-time device pairing; and automatic signed-update
 discovery with an in-app badge and once-per-version native notification. Connections also promotes the optional
@@ -81,8 +90,9 @@ Both dark and light themes follow the supplied native mockups. Richer inline
 child result cards and explicit per-feature model selection remain **Coming
 soon** rather than being presented as shipped.
 
-Exercise that source build and the existing public first-install/updater route without touching the production mini.
-Then reuse the Tauri 2 client and React UI for Android.
+Exercise 0.2.2 through the public signed route on the runner-free MacBook, then
+complete the already-authorized Mini update without stopping its runners. Then
+reuse the Tauri 2 client and React UI for Android.
 The Android app is a paired client for a user's Mac daemon, not a mobile daemon
 host. Native work includes FCM delivery over Sessions' existing encrypted push
 path, secure credential storage, widgets, and a Quick Settings entry point.

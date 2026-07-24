@@ -55,6 +55,7 @@ Admin/operational:
   install                  install and start the development daemon
   uninstall                stop and remove the development daemon
   deploy                   explain the retired Node deploy path
+  update                   securely update Sessions.app
   pair                     pair a device on the same LAN
   devices                  list or revoke paired devices
   lan                      manage same-network access
@@ -666,6 +667,24 @@ The mutating Node-daemon deploy path is retired. Sessions.app is the macOS relea
 
 Examples:
   sessions deploy
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `sessions update`
+
+```text
+Usage:
+  sessions update [--check]
+
+securely update Sessions.app
+
+Check or install the latest macOS Sessions release. The updater accepts no URL or key overrides: it fetches only the public Somewhere release manifest, requires the pinned Minisign key, validates the exact immutable GitHub artifact path, and verifies the Developer ID and notarization before an atomic app swap. Only the Sessions UI is restarted; sessionsd and runners are never stopped.
+
+Examples:
+  sessions update
+  sessions update --check
+  sessions --json update --check
 
 Global flags --json, --host, and --port must appear before the command.
 ```
