@@ -26,17 +26,18 @@ usage, and safe interruption while retaining Terminal as a fallback. See
 and [`frontend/src/components/RemoteView.tsx`](frontend/src/components/RemoteView.tsx).
 
 The MacBook remains the development and release-verification channel. The
-signed 0.2.2 updater path passed there. The Mini kept all nine runners alive
-but exposed one more serial-adoption cost—the initial replay window—and safely
-rolled only its daemon back. The user has authorized completion through the
-corrected signed patch.
+signed 0.2.3 updater path passed there from the previous public version. The
+same public command then upgraded the Mini while preserving all nine exact
+session IDs and runner PIDs. The app, managed CLI, and daemon now report 0.2.3;
+the already-running 0.2.0 runners intentionally retain their immutable runtime
+until they exit.
 
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
 contract.
 
-## Now: Mac 0.2.3 replay-aware Mini completion, then Android
+## Now: Android paired client
 
-Sessions 0.2.2 is public. It adds a fail-closed
+Sessions 0.2.3 is public. It includes a fail-closed
 `sessions update [--check]` path for the native Mac package and scales the
 daemon handoff deadline without weakening live-ID verification or rollback.
 The command has no URL or key override, accepts no downgrade, requires the
@@ -51,7 +52,11 @@ ten-second initial replay. Its app became 0.2.2, the new daemon ran for the
 full 102-second gate, every runner stayed alive, then only the daemon rolled
 back to 0.2.0 with all nine exact session IDs restored. The 0.2.3 patch budgets
 the observed HELLO plus replay path at 15 seconds per baseline runner, from a
-30-second base and with the same five-minute cap.
+30-second base and with the same five-minute cap. The corrected public update
+completed on both the runner-free MacBook and the Mini. On the Mini, discovery
+progressed from one to eight to all nine live sessions in under 30 seconds,
+without changing any runner PID, and the signed app passed Developer ID,
+notarization, and Gatekeeper checks.
 
 The 0.2.1 release closed the search, Mini-feedback, and tailnet-approval issues
 found during cutover dogfood. The 0.2 line adds a polished Today journal
@@ -99,9 +104,8 @@ Both dark and light themes follow the supplied native mockups. Richer inline
 child result cards and explicit per-feature model selection remain **Coming
 soon** rather than being presented as shipped.
 
-Exercise 0.2.3 through the public signed route on the runner-free MacBook, then
-complete the already-authorized Mini update without stopping its runners. Then
-reuse the Tauri 2 client and React UI for Android.
+The macOS release and Mini update gates are complete. Reuse the Tauri 2 client
+and React UI for Android.
 The Android app is a paired client for a user's Mac daemon, not a mobile daemon
 host. Native work includes FCM delivery over Sessions' existing encrypted push
 path, secure credential storage, widgets, and a Quick Settings entry point.

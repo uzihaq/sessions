@@ -43,13 +43,18 @@ transfer needed — the durable record IS the handoff.
   readiness budget while all nine exact runner PIDs stayed alive, then safely
   rolled only the daemon back to 0.2.0. That observation exposed the missing
   successful-attach replay cost: each runner may add a ten-second initial
-  replay after HELLO. Finish through the corrected signed 0.2.3 patch without
-  stopping those runners.
+  replay after HELLO. The corrected public 0.2.3 update then passed on the
+  runner-free MacBook and completed on the Mini. Mini discovery progressed
+  from one to eight to all nine live sessions in under 30 seconds; all nine
+  exact session IDs and original runner PIDs were preserved. The app, managed
+  CLI, and daemon report 0.2.3. The live runners still execute from their
+  immutable 0.2.0 runtime by design, so that runtime must not be removed until
+  those processes exit.
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/sessions/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
-- **Sessions 0.2.2 is public under `Somewhere-Tech/sessions`; 0.2.3 is the
-  replay-budget correction.** The public app artifacts are notarized/stapled/
+- **Sessions 0.2.3 is public under `Somewhere-Tech/sessions`.** The public app
+  artifacts are notarized/stapled/
   Gatekeeper-accepted, the signed updater manifest is live at
   `https://sessions.somewhere.tech/releases/latest.json`, and
   `somewhere-tech/homebrew-tap` serves both the `sessions` runtime formula and
@@ -80,15 +85,13 @@ The app IS the product package. v2 makes "one update updates everything, nothing
    The first live manifest was published only after its corresponding immutable artifact was public.
 4. **SHIPPED:** v0.1.0 uses Developer ID + hardened runtime, passed Apple notarization, carries a stapled ticket,
    and is accepted by Gatekeeper. The updater archive signature and live manifest signature match exactly.
-**USER SEQUENCE LOCKED 2026-07-19:** ship the macOS app first, then build Android. Do not cut over the
-mini yet. Its later first Sessions.app install remains the joint Node-to-Go cutover (interop-proven by
-`TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
+**USER SEQUENCE LOCKED 2026-07-19; COMPLETED THROUGH MINI 2026-07-23:**
+macOS shipped first, then the Mini completed its joint Node-to-Go cutover
+(interop-proven by `TestNodeRunnerUnderGoDaemonCutover` and the preserved live
+runner baseline). Android is next.
 
-## NEXT: ship the Mac 0.2.3 replay-budget patch, finish the Mini upgrade, then Android
-**Immediate:** notarize and publish the Mac 0.2.3 replay-budget patch, exercise
-`sessions update` through the public channel on the MacBook, then use that
-signed path to complete the Mini's daemon upgrade without touching its runners.
-Afterward build the Android app
+## NEXT: build the Android paired client
+**Immediate:** build the Android app
 (Tauri2 paired client + FCM; push machinery ready). Later:
 semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
@@ -226,7 +229,7 @@ mediated by the native client; source history remains preserved. Full contract: 
   `sessionsd`, so GUI, CLI, and mini launches share one contract; per-session Advanced choices take precedence. Sessions
   does not rewrite Claude settings or copy Somewhere credentials. `ensure` adopts the canonical existing Somewhere MCP
   or injects `somewhere mcp`, and a same-name conflict fails closed.
-- **Mini migration feedback is folded into the next 0.2 candidate, without touching the Mini.** The canonical Somewhere
+- **Mini migration feedback shipped before the completed Mini update.** The canonical Somewhere
   task is `tsk_c315cf9ed402416d8c6ba5f16072bef8` on the **Sessions** project (the original report was filed against the
   legacy `pretty-pty-preview` deployment). `sessions doctor` no longer closes its PTY before the probe exits and
   recognizes native plus adopted legacy runners; CLI, daemon health, and standalone archive names receive the same
@@ -239,8 +242,7 @@ mediated by the native client; source history remains preserved. Full contract: 
   `runtime/internal/session/retention.go`, `src-tauri/src/lifecycle.rs`).
 
 ## OPEN USER DECISIONS (blockers only)
-None for the observed Mini completion. The user explicitly authorized Mini
-work through the public 0.2.3 correction. The product default
+None for the completed Mini update or the Android start. The product default
 preserves the existing bypass-permissions behavior, but it is now visible and
 changeable globally or per session.
 

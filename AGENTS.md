@@ -39,12 +39,12 @@ relevant source path; if prose and code disagree, the code wins.
 ## Working rules
 
 1. **Sessions are sacred.** Never kill, replace, mass-clean, or adopt a session you do not own. The ledger's provenance and mass-kill guard live in `runtime/internal/ledger/` and `runtime/internal/session/manager.go`.
-2. **Preserve the Mac Mini runners.** Its initial cutover has occurred and the
-   user authorized completion through the corrected public 0.2.3 signed update
-   after 0.2.2 passed on the MacBook and safely exposed the Mini replay-budget
-   gap (`STATE.md`). The app/daemon may
-   be updated and verified; important runner processes must not be stopped,
-   replaced, or recreated.
+2. **Preserve the Mac Mini runners.** Its public 0.2.3 update completed with all
+   nine exact session IDs and runner PIDs preserved after 0.2.2 safely exposed
+   the Mini replay-budget gap (`STATE.md`). The app/daemon may be updated and
+   verified; important runner processes must not be stopped, replaced, or
+   recreated. The live runners still use their immutable 0.2.0 runtime, which
+   must not be removed until those processes exit.
 3. **Isolate development.** Use a worktree and branch. For a scratch daemon, set both `SESSIONS_STATE_DIR` and `SESSIONS_PORT` so it cannot collide with daily-driver state (`docs/DEV.md`).
 4. **Reload only the dev daemon.** Its label is `tech.somewhere.sessions.dev.daemon`. After a reload, compare `sessions ls` before and after and verify the durable `soak-d2` session still exists; count runner metadata, not bare `pgrep` output (`STATE.md`).
 5. **Write ahead of destructive action.** Creation and kill intent are ledgered before process launch or termination (`runtime/internal/session/manager.go`, `runtime/internal/ledger/store.go`). Preserve that ordering.

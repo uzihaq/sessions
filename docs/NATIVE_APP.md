@@ -155,12 +155,14 @@ sessionsd remains launchd-owned, and every active session remains runner-owned.
 
 1. Build and rehearse from source on the MacBook with isolated scratch state.
 2. Ship the signed, notarized macOS app through its real update channel.
-3. Build the Android paired client after the macOS app has shipped.
-4. Complete the already-authorized production Mini handoff through the public
-   signed 0.2.3 channel after its MacBook gate passes.
+3. Complete the production Mini handoff through the same public signed channel,
+   preserving every runner process.
+4. Build the Android paired client.
 
-The Mini authorization is narrow: the app/daemon may update and verify
-re-adoption, while the important runner processes remain untouched.
+The first three steps are complete through public 0.2.3. The Mini's app,
+managed CLI, and daemon updated while all nine exact session IDs and runner
+PIDs remained unchanged. Those runners still use their immutable 0.2.0 runtime,
+which must remain installed until they exit.
 The compatibility evidence remains in `docs/CUTOVER_AUDIT_2026-07-17.md` and
 the interop tests. `docs/CUTOVER.md` is the manual SSH checklist for that joint
 operation; there is intentionally no automated production cutover script.

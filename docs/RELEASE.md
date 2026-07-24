@@ -9,7 +9,7 @@ update story.
 The checked-in Tauri application builds as `Sessions.app`. It bundles signed Go
 binaries and implements idempotent first install, health/discovery checks,
 live-session baseline verification, rollback for daemon upgrades, and a signed
-Tauri updater. Sessions 0.2.2 is public at the immutable GitHub tag `v0.2.2`;
+Tauri updater. Sessions 0.2.3 is public at the immutable GitHub tag `v0.2.3`;
 its signed updater manifest is live at
 `https://sessions.somewhere.tech/releases/latest.json`. The archive is
 Developer ID signed, notarized, stapled, and Gatekeeper accepted. Future
@@ -163,8 +163,10 @@ be presented as the primary macOS experience.
 
 ## Production Mini
 
-The user authorized completion of the existing Mini handoff through the
-replay-aware public 0.2.3 patch. Follow
-[`CUTOVER.md`](CUTOVER.md), preserve the live runner baseline, and do not stop
-or replace runner processes. The app may replace and verify only the launchd
-daemon/runtime layer.
+The existing Mini handoff completed through the replay-aware public 0.2.3
+patch. The public `sessions update` path preserved all nine exact live session
+IDs and runner PIDs while moving the app, managed CLI, and daemon to 0.2.3.
+Follow [`CUTOVER.md`](CUTOVER.md) for future operations, preserve the live
+runner baseline, and do not stop or replace runner processes. The nine
+already-running runners still use the immutable 0.2.0 runtime by design; do not
+remove it until those processes exit.
