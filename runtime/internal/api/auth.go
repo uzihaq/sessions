@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 var hostedShellOrigins = map[string]struct{}{
@@ -78,12 +80,51 @@ func isLoopbackPeer(request *http.Request) bool {
 			return false
 		}
 	}
+	return isLoopbackRemote(request)
+}
+
+func isLoopbackRemote(request *http.Request) bool {
 	host, _, err := net.SplitHostPort(request.RemoteAddr)
 	if err != nil {
 		host = strings.Trim(request.RemoteAddr, "[]")
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+type tailnetIdentity struct {
+	Login string
+	Name  string
+}
+
+// Tailscale Serve removes spoofed identity headers from inbound requests and
+// adds its own before proxying to the loopback backend. Trust them only when
+// the immediate network peer is loopback; a direct LAN caller must never be
+// able to self-assert a tailnet identity.
+func tailscaleServeIdentity(request *http.Request) (tailnetIdentity, bool) {
+	if !isLoopbackRemote(request) {
+		return tailnetIdentity{}, false
+	}
+	logins := request.Header.Values("Tailscale-User-Login")
+	if len(logins) != 1 {
+		return tailnetIdentity{}, false
+	}
+	login := strings.TrimSpace(logins[0])
+	if !validIdentityHeader(login, 320) {
+		return tailnetIdentity{}, false
+	}
+	name := strings.TrimSpace(request.Header.Get("Tailscale-User-Name"))
+	if name != "" && !validIdentityHeader(name, 160) {
+		return tailnetIdentity{}, false
+	}
+	return tailnetIdentity{Login: login, Name: name}, true
+}
+
+func validIdentityHeader(value string, maximum int) bool {
+	if value == "" || utf8.RuneCountInString(value) > maximum {
+		return false
+	}
+	return !strings.ContainsFunc(value, unicode.IsControl)
 }
 
 func allowedOrigin(origin, bindHost string, additionalHosts ...string) bool {

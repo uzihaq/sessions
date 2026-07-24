@@ -18,18 +18,6 @@ const maxUploadBody = 25 * 1024 * 1024
 
 var unsafeUploadName = regexp.MustCompile(`[^A-Za-z0-9_.\- ]`)
 
-var homeProjectScanSkip = map[string]struct{}{
-	"Applications": {},
-	"Desktop":      {},
-	"Documents":    {},
-	"Downloads":    {},
-	"Library":      {},
-	"Movies":       {},
-	"Music":        {},
-	"Pictures":     {},
-	"Public":       {},
-}
-
 type directoryCandidate struct {
 	Path  string `json:"path"`
 	Label string `json:"label"`
@@ -50,12 +38,14 @@ func listDirectoryCandidates() []directoryCandidate {
 	common := []string{"Desktop", "Documents", "Downloads", "Code", "code", "projects", "Projects", "dev", "src", "work"}
 	seen := make(map[string]bool)
 	out := make([]directoryCandidate, 0, 50)
-	push := func(path, kind string) {
+	push := func(path, kind string, check bool) {
 		if seen[path] {
 			return
 		}
-		if _, err := os.Stat(path); err != nil {
-			return
+		if check {
+			if _, err := os.Stat(path); err != nil {
+				return
+			}
 		}
 		seen[path] = true
 		label := path
@@ -67,25 +57,27 @@ func listDirectoryCandidates() []directoryCandidate {
 		out = append(out, directoryCandidate{Path: path, Label: label, Kind: kind})
 	}
 
-	push(home, "home")
-	for _, name := range common {
-		push(filepath.Join(home, name), "common")
-	}
-	for _, path := range listProjectChildrenExcept(home, 20, homeProjectScanSkip) {
-		push(path, "project")
-	}
 	// Desktop, Documents, and Downloads may be iCloud-backed on macOS. A
 	// synchronous ReadDir there can wait on remote hydration and used to hold
-	// the New Session launcher open indefinitely. Only expand conventional
-	// local development roots; the common folders themselves remain available
-	// as choices and the filesystem picker can browse them on demand.
+	// the New Session launcher open indefinitely. Do not even stat protected
+	// common folders or sweep the whole home directory here: those background
+	// probes can trigger macOS privacy prompts. Expand only conventional local
+	// development roots, then offer broad folders as explicit choices.
 	for _, name := range []string{"Code", "code", "projects", "Projects", "dev", "src", "work"} {
-		for _, path := range listProjectChildren(filepath.Join(home, name), 15) {
-			push(path, "project")
+		root := filepath.Join(home, name)
+		if isProjectDirectory(root) {
+			push(root, "project", true)
+		}
+		for _, path := range listProjectChildren(root, 15) {
+			push(path, "project", true)
 		}
 		if len(out) >= 50 {
 			break
 		}
+	}
+	push(home, "home", false)
+	for _, name := range common {
+		push(filepath.Join(home, name), "common", false)
 	}
 	return out
 }

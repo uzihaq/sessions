@@ -208,6 +208,7 @@ pub fn reconfigure_port(app: &AppHandle, port: u16) -> LifecycleResult<RuntimeSt
 struct RuntimeConfig {
     source_dir: PathBuf,
     managed_root: PathBuf,
+    cli_link_paths: Vec<PathBuf>,
     plist_path: PathBuf,
     log_path: PathBuf,
     label: String,
@@ -250,6 +251,11 @@ impl RuntimeConfig {
                 .join("Application Support")
                 .join("Sessions")
                 .join("runtime"),
+            cli_link_paths: vec![
+                PathBuf::from("/opt/homebrew/bin/sessions"),
+                PathBuf::from("/usr/local/bin/sessions"),
+                home.join(".local").join("bin").join("sessions"),
+            ],
             plist_path: home
                 .join("Library")
                 .join("LaunchAgents")
@@ -408,7 +414,123 @@ fn install_runtime(config: &RuntimeConfig) -> LifecycleResult<(InstallOutcome, S
         InstallOutcome::Installed
     };
 
+    if let Err(error) = install_cli_link(config, &installed.directory) {
+        // CLI discoverability is useful but must never turn a healthy daemon
+        // update into a rollback or put live sessions at risk.
+        eprintln!("Sessions CLI PATH integration: {error}");
+    }
     Ok((outcome, installed.manifest.runtime_version))
+}
+
+#[cfg(unix)]
+fn install_cli_link(config: &RuntimeConfig, runtime_directory: &Path) -> LifecycleResult<PathBuf> {
+    let target = runtime_directory.join("sessions");
+    let mut skipped = Vec::new();
+    let mut managed = Vec::new();
+    let mut available = Vec::new();
+    for candidate in &config.cli_link_paths {
+        let Some(parent) = candidate.parent() else {
+            skipped.push(format!("{} has no parent", candidate.display()));
+            continue;
+        };
+        if let Err(error) = fs::create_dir_all(parent) {
+            skipped.push(format!("{}: {error}", parent.display()));
+            continue;
+        }
+
+        match fs::symlink_metadata(candidate) {
+            Ok(metadata) if !metadata.file_type().is_symlink() => {
+                skipped.push(format!("{} already exists", candidate.display()));
+                continue;
+            }
+            Ok(_) => {
+                let existing = match fs::read_link(candidate) {
+                    Ok(existing) if existing.is_absolute() => existing,
+                    Ok(existing) => parent.join(existing),
+                    Err(error) => {
+                        skipped.push(format!("{}: {error}", candidate.display()));
+                        continue;
+                    }
+                };
+                let sessions_managed = existing.file_name().and_then(|name| name.to_str())
+                    == Some("sessions")
+                    && (existing.starts_with(&config.managed_root)
+                        || existing.starts_with(&config.source_dir));
+                if !sessions_managed {
+                    skipped.push(format!(
+                        "{} points outside Sessions' managed runtime",
+                        candidate.display()
+                    ));
+                    continue;
+                }
+                managed.push(candidate.clone());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                available.push(candidate.clone());
+            }
+            Err(error) => {
+                skipped.push(format!("{}: {error}", candidate.display()));
+                continue;
+            }
+        }
+    }
+
+    if !managed.is_empty() {
+        let mut update_errors = Vec::new();
+        for candidate in &managed {
+            if let Err(error) = replace_cli_link(candidate, &target) {
+                update_errors.push(format!("{}: {error}", candidate.display()));
+            }
+        }
+        if update_errors.is_empty() {
+            return Ok(managed[0].clone());
+        }
+        return Err(format!(
+            "could not update every Sessions-managed CLI link ({})",
+            update_errors.join("; ")
+        ));
+    }
+
+    for candidate in available {
+        match replace_cli_link(&candidate, &target) {
+            Ok(()) => return Ok(candidate),
+            Err(error) => skipped.push(format!("{}: {error}", candidate.display())),
+        }
+    }
+    Err(format!(
+        "could not expose `sessions` on a standard command path ({})",
+        skipped.join("; ")
+    ))
+}
+
+#[cfg(unix)]
+fn replace_cli_link(candidate: &Path, target: &Path) -> LifecycleResult<()> {
+    use std::os::unix::fs::symlink;
+
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| format!("{} has no parent", candidate.display()))?;
+    let temporary = parent.join(format!(
+        ".sessions-link-{}-{}",
+        std::process::id(),
+        unique_suffix()
+    ));
+    let _ = fs::remove_file(&temporary);
+    symlink(target, &temporary)
+        .map_err(|error| format!("create temporary link {}: {error}", temporary.display()))?;
+    if let Err(error) = fs::rename(&temporary, candidate) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("replace link {}: {error}", candidate.display()));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn install_cli_link(
+    _config: &RuntimeConfig,
+    _runtime_directory: &Path,
+) -> LifecycleResult<PathBuf> {
+    Err("automatic CLI PATH integration is unavailable on this platform".to_string())
 }
 
 fn validate_config(config: &RuntimeConfig) -> LifecycleResult<()> {
@@ -1191,6 +1313,57 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn cli_link_tracks_the_current_managed_runtime_without_overwriting_other_tools() {
+        use std::os::unix::fs::symlink;
+
+        let root = env::temp_dir().join(format!(
+            "sessions-cli-link-test-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let mut config = fixture_config(&root, "tech.somewhere.sessions.cli-link", 47870);
+        let occupied = root.join("occupied").join("sessions");
+        fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+        fs::write(&occupied, b"unrelated").unwrap();
+        config.cli_link_paths = vec![occupied.clone(), root.join("bin").join("sessions")];
+
+        let v1 = config.managed_root.join("v1");
+        fs::create_dir_all(&v1).unwrap();
+        fs::write(v1.join("sessions"), b"v1").unwrap();
+        let installed = install_cli_link(&config, &v1).unwrap();
+        assert_eq!(installed, root.join("bin").join("sessions"));
+        assert_eq!(fs::read(&occupied).unwrap(), b"unrelated");
+        assert_eq!(fs::read_link(&installed).unwrap(), v1.join("sessions"));
+
+        let v2 = config.managed_root.join("v2");
+        fs::create_dir_all(&v2).unwrap();
+        fs::write(v2.join("sessions"), b"v2").unwrap();
+        let newly_available = root.join("preferred").join("sessions");
+        config.cli_link_paths = vec![newly_available.clone(), installed.clone()];
+        assert_eq!(install_cli_link(&config, &v2).unwrap(), installed);
+        assert_eq!(fs::read_link(&installed).unwrap(), v2.join("sessions"));
+        assert!(!newly_available.exists());
+
+        let second_managed = root.join("also-managed").join("sessions");
+        fs::create_dir_all(second_managed.parent().unwrap()).unwrap();
+        symlink(v1.join("sessions"), &second_managed).unwrap();
+        config.cli_link_paths = vec![second_managed.clone(), installed.clone()];
+        assert_eq!(install_cli_link(&config, &v2).unwrap(), second_managed);
+        assert_eq!(fs::read_link(&second_managed).unwrap(), v2.join("sessions"));
+        assert_eq!(fs::read_link(&installed).unwrap(), v2.join("sessions"));
+
+        let external = root.join("external-sessions");
+        fs::write(&external, b"external").unwrap();
+        fs::remove_file(&installed).unwrap();
+        symlink(&external, &installed).unwrap();
+        config.cli_link_paths = vec![installed.clone()];
+        assert!(install_cli_link(&config, &v2).is_err());
+        assert_eq!(fs::read_link(&installed).unwrap(), external);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn plist_escapes_paths_and_keeps_daemon_and_runner_separate() {
         let config = fixture_config(
             Path::new("/tmp/Sessions & tests"),
@@ -1353,6 +1526,7 @@ mod tests {
                 .join("Application Support")
                 .join("Sessions")
                 .join("runtime"),
+            cli_link_paths: vec![root.join("bin").join("sessions")],
             plist_path: root.join("LaunchAgents").join(format!("{label}.plist")),
             log_path: root.join("Logs").join("sessionsd.log"),
             label: label.to_string(),

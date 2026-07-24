@@ -58,6 +58,7 @@ type Store struct {
 type boundaryWriter struct{ store *Store }
 type observationWriter struct{ store *Store }
 type migrationWriter struct{ store *Store }
+type retentionWriter struct{ store *Store }
 
 // DefaultPath resolves the ledger outside Sessions' runner state directory.
 func DefaultPath() (string, error) {
@@ -214,6 +215,8 @@ func (s *Store) Boundaries() BoundaryWriter { return boundaryWriter{store: s} }
 func (s *Store) Observations() ObservationWriter { return observationWriter{store: s} }
 
 func (s *Store) Migrations() MigrationWriter { return migrationWriter{store: s} }
+
+func (s *Store) Retention() RetentionWriter { return retentionWriter{store: s} }
 
 func (w boundaryWriter) RecordCreated(ctx context.Context, value Created) error {
 	if value.LaneID == "" {
@@ -393,6 +396,67 @@ func (w migrationWriter) RecordMovedFrom(ctx context.Context, value MovedFrom) e
 	}
 	payload := movedFromPayload{SourceEndpoint: value.SourceEndpoint, SourceLaneID: value.SourceLaneID}
 	return w.store.append(ctx, EventMovedFrom, value.Meta, payload, false)
+}
+
+func (w retentionWriter) RecordArchived(ctx context.Context, values []Archived) error {
+	if len(values) == 0 {
+		return nil
+	}
+	type row struct {
+		eventID string
+		meta    Meta
+	}
+	rows := make([]row, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value.LaneID == "" {
+			return errors.New("record archived: lane id is required")
+		}
+		if _, duplicate := seen[value.LaneID]; duplicate {
+			return fmt.Errorf("record archived: duplicate lane id %q", value.LaneID)
+		}
+		seen[value.LaneID] = struct{}{}
+		if value.AtMS == 0 {
+			value.AtMS = w.store.clock().UnixMilli()
+		}
+		if value.Actor == "" {
+			value.Actor = ActorUser
+		}
+		if !validActor(value.Actor) {
+			return fmt.Errorf("record archived: invalid actor %q", value.Actor)
+		}
+		eventID := value.EventID
+		if eventID == "" {
+			var err error
+			eventID, err = w.store.newEventID()
+			if err != nil {
+				return fmt.Errorf("record archived: generate event id: %w", err)
+			}
+		}
+		rows = append(rows, row{eventID: eventID, meta: value.Meta})
+	}
+
+	transaction, err := w.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("record archived: begin: %w", err)
+	}
+	defer transaction.Rollback()
+	for _, row := range rows {
+		if _, err := transaction.ExecContext(ctx, `
+INSERT INTO lane_events(event_id, lane_id, type, at_ms, actor, schema_version, payload_json)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			row.eventID, row.meta.LaneID, string(EventArchived), row.meta.AtMS,
+			string(row.meta.Actor), SchemaVersion, `{}`); err != nil {
+			return fmt.Errorf("record archived %s: insert: %w", row.meta.LaneID, err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("record archived: commit: %w", err)
+	}
+	if err := w.store.secureFiles(); err != nil {
+		return fmt.Errorf("record archived: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) observe(ctx context.Context, kind EventType, meta Meta, actor Actor, payload any) error {

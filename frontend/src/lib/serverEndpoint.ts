@@ -32,6 +32,23 @@ export function isLoopbackHost(host: string): boolean {
     || (isIpv4(normalized) && normalized.startsWith('127.'));
 }
 
+export function isPrivateNetworkHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  if (isLoopbackHost(normalized)) return true;
+  if (isIpv4(normalized)) {
+    const [first, second] = normalized.split('.').map(Number);
+    return first === 10
+      || (first === 172 && second >= 16 && second <= 31)
+      || (first === 192 && second === 168)
+      || (first === 169 && second === 254);
+  }
+  if (!isIpv6(normalized)) return false;
+  const unbracketed = normalized.replace(/^\[|\]$/g, '');
+  return unbracketed.startsWith('fc')
+    || unbracketed.startsWith('fd')
+    || /^fe[89ab]/.test(unbracketed);
+}
+
 function defaultPort(scheme: ServerScheme, hadExplicitScheme: boolean, host: string): number {
   if (!hadExplicitScheme && (isLoopbackHost(host) || isIpHost(host))) return 8787;
   return scheme === 'https' ? 443 : 80;

@@ -186,10 +186,7 @@ func (a *app) printLANConnection(endpoint string) error {
 	}
 	io.WriteString(a.stdout, "\nLAN access verified (HTTP 200).\n")
 	fmt.Fprintf(a.stdout, "  URL: %s\n", endpoint)
-	if err := printQR(a.stdout, endpoint); err != nil {
-		return err
-	}
-	io.WriteString(a.stdout, "When asked for a token, run: sessions token\n")
+	io.WriteString(a.stdout, "For a device on this network without Tailscale, run `sessions pair` and scan its one-time QR.\n")
 	_, err := io.WriteString(a.stdout, "LAN access works only on this network. From anywhere: sessions remote enable\n")
 	return err
 }

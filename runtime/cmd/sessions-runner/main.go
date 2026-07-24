@@ -5,7 +5,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +31,8 @@ import (
 )
 
 const idleShutdown = 30 * time.Second
+
+var version = "0.2.1"
 
 type config struct {
 	id                string
@@ -127,6 +131,7 @@ type runner struct {
 	shutdownOnce sync.Once
 	readDone     chan struct{}
 	jsonlMissing bool
+	gitBaseline  gitWorktreeState
 }
 
 func main() {
@@ -175,6 +180,10 @@ func run() int {
 	command := exec.Command(cfg.cmd, spawnArgs...)
 	command.Dir = cfg.cwd
 	command.Env = childEnv()
+	var gitBaseline gitWorktreeState
+	if cfg.kind == state.KindLane {
+		gitBaseline = captureGitWorktreeState(cfg.cwd)
+	}
 	var ptmx *os.File
 	var output *os.File
 	if cfg.kind == state.KindLane {
@@ -241,6 +250,7 @@ func run() int {
 		rows:         cfg.rows,
 		readDone:     make(chan struct{}),
 		jsonlMissing: jsonlMissing,
+		gitBaseline:  gitBaseline,
 	}
 	meta := state.Metadata{
 		ID: cfg.id, Name: cfg.name, Description: cfg.description,
@@ -671,27 +681,165 @@ func (r *runner) completionManifest(info exitInfo) state.CompletionManifest {
 	return state.CompletionManifest{
 		ExitCode: code, Signal: info.Signal, DurationMS: duration,
 		LastOutputTail: string(tail), SpecPath: r.cfg.specPath,
-		FilesChanged: gitFilesChanged(r.cfg.cwd),
+		FilesChanged: gitFilesChangedSince(r.cfg.cwd, r.gitBaseline),
 	}
 }
 
-func gitFilesChanged(cwd string) *int {
+type gitWorktreeState struct {
+	root  string
+	head  string
+	paths map[string]string
+}
+
+// captureGitWorktreeState records only paths already visible to Git. Comparing
+// this state at lane exit means files_changed describes what changed during
+// this run, rather than the unrelated dirty-file count the repository happened
+// to have before the lane started.
+func captureGitWorktreeState(cwd string) gitWorktreeState {
 	check := exec.Command("git", "-C", cwd, "rev-parse", "--is-inside-work-tree")
 	if output, err := check.Output(); err != nil || strings.TrimSpace(string(output)) != "true" {
-		return nil
+		return gitWorktreeState{}
 	}
-	status := exec.Command("git", "-C", cwd, "status", "--porcelain=v1", "--untracked-files=all")
-	output, err := status.Output()
+	rootCommand := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel")
+	rootOutput, err := rootCommand.Output()
 	if err != nil {
-		return nil
+		return gitWorktreeState{}
 	}
-	count := 0
-	for _, line := range bytes.Split(output, []byte{'\n'}) {
-		if len(line) > 0 {
-			count++
+	root := strings.TrimSpace(string(rootOutput))
+	if root == "" {
+		return gitWorktreeState{}
+	}
+	head := ""
+	if headOutput, headErr := exec.Command("git", "-C", root, "rev-parse", "--verify", "HEAD").Output(); headErr == nil {
+		head = strings.TrimSpace(string(headOutput))
+	}
+	if head == "" {
+		emptyTree := exec.Command("git", "-C", root, "hash-object", "-t", "tree", "--stdin")
+		emptyTree.Stdin = strings.NewReader("")
+		if emptyTreeOutput, emptyTreeErr := emptyTree.Output(); emptyTreeErr == nil {
+			head = strings.TrimSpace(string(emptyTreeOutput))
 		}
 	}
-	return &count
+	status := exec.Command("git", "-C", root, "status", "--porcelain=v2", "-z", "--untracked-files=all")
+	output, err := status.Output()
+	if err != nil {
+		return gitWorktreeState{}
+	}
+	result := gitWorktreeState{root: root, head: head, paths: make(map[string]string)}
+	skipRenameSource := false
+	for _, encoded := range bytes.Split(output, []byte{0}) {
+		if len(encoded) == 0 {
+			continue
+		}
+		if skipRenameSource {
+			skipRenameSource = false
+			continue
+		}
+		record := string(encoded)
+		path := ""
+		switch {
+		case strings.HasPrefix(record, "? ") || strings.HasPrefix(record, "! "):
+			path = record[2:]
+		case strings.HasPrefix(record, "1 "):
+			path = porcelainPath(record, 9)
+		case strings.HasPrefix(record, "2 "):
+			path = porcelainPath(record, 10)
+			skipRenameSource = true
+		case strings.HasPrefix(record, "u "):
+			path = porcelainPath(record, 11)
+		}
+		if path == "" {
+			continue
+		}
+		result.paths[path] = record + "\x00" + worktreePathSignature(filepath.Join(root, filepath.FromSlash(path)))
+	}
+	return result
+}
+
+func porcelainPath(record string, fields int) string {
+	parts := strings.SplitN(record, " ", fields)
+	if len(parts) != fields {
+		return ""
+	}
+	return parts[fields-1]
+}
+
+func worktreePathSignature(path string) string {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "missing:" + err.Error()
+	}
+	signature := fmt.Sprintf("%s:%d:%d", info.Mode(), info.Size(), info.ModTime().UnixNano())
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, readErr := os.Readlink(path)
+		return signature + ":symlink:" + target + ":" + fmt.Sprint(readErr)
+	}
+	const maximumHashedFile = 64 * 1024 * 1024
+	if !info.Mode().IsRegular() || info.Size() > maximumHashedFile {
+		return signature
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return signature + ":open:" + err.Error()
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return signature + ":read:" + err.Error()
+	}
+	return signature + ":sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func gitFilesChangedSince(cwd string, before gitWorktreeState) *int {
+	if before.root == "" {
+		return nil
+	}
+	after := captureGitWorktreeState(cwd)
+	if after.root == "" || after.root != before.root {
+		return nil
+	}
+	paths := make(map[string]struct{}, len(before.paths)+len(after.paths))
+	for path := range before.paths {
+		paths[path] = struct{}{}
+	}
+	for path := range after.paths {
+		paths[path] = struct{}{}
+	}
+	if before.head != "" && after.head != "" && before.head != after.head {
+		command := exec.Command(
+			"git", "-C", before.root, "diff", "--name-only", "-z", before.head, after.head, "--",
+		)
+		output, err := command.Output()
+		if err != nil {
+			return nil
+		}
+		for _, path := range bytes.Split(output, []byte{0}) {
+			if len(path) > 0 {
+				paths[string(path)] = struct{}{}
+			}
+		}
+	}
+	changed := 0
+	for path := range paths {
+		if before.paths[path] != after.paths[path] {
+			changed++
+			continue
+		}
+		if before.head != after.head {
+			command := exec.Command(
+				"git", "-C", before.root, "diff", "--quiet", before.head, after.head, "--", path,
+			)
+			if err := command.Run(); err != nil {
+				var exitError *exec.ExitError
+				if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+					changed++
+					continue
+				}
+				return nil
+			}
+		}
+	}
+	return &changed
 }
 
 func (r *runner) snapshotLocked() []byte {

@@ -4,6 +4,8 @@ package integrations
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,8 +23,10 @@ import (
 )
 
 const SchemaVersion = 1
+const MaxTranscriptWindowSpan = 500
 
 var ErrHistoryNotFound = errors.New("history session not found")
+var ErrHistoryChanged = errors.New("history changed since search")
 
 type HistorySession struct {
 	ID                    string `json:"id"`
@@ -30,10 +34,13 @@ type HistorySession struct {
 	Tool                  string `json:"tool"`
 	CWD                   string `json:"cwd"`
 	Machine               string `json:"machine"`
+	CreatorKind           string `json:"creator_kind,omitempty"`
+	CreatorID             string `json:"creator_id,omitempty"`
 	CreatedAt             int64  `json:"created_at"`
 	LastActivityAt        int64  `json:"last_activity_at"`
 	MessageCount          int    `json:"message_count"`
 	ConversationAvailable bool   `json:"conversation_available"`
+	SourceFingerprint     string `json:"-"`
 }
 
 type HistoryResponse struct {
@@ -42,7 +49,10 @@ type HistoryResponse struct {
 }
 
 type TranscriptMessage struct {
+	Index     int     `json:"index"`
+	ID        string  `json:"id"`
 	Role      string  `json:"role"`
+	Kind      string  `json:"kind,omitempty"`
 	Text      string  `json:"text"`
 	Timestamp *string `json:"timestamp"`
 }
@@ -52,6 +62,16 @@ type TranscriptResponse struct {
 	Session       HistorySession      `json:"session"`
 	Messages      []TranscriptMessage `json:"messages"`
 	Truncated     bool                `json:"truncated,omitempty"`
+	HasMore       bool                `json:"has_more,omitempty"`
+	NextIndex     int                 `json:"next_index,omitempty"`
+}
+
+type TranscriptWindowOptions struct {
+	Start           int
+	End             int
+	Role            string
+	ExpectedIndex   int
+	ExpectedMessage string
 }
 
 type HistoryOptions struct {
@@ -116,13 +136,56 @@ func (h *HistoryStore) list(live []state.SessionInfo, countMessages bool) ([]His
 }
 
 func (h *HistoryStore) Transcript(live []state.SessionInfo, id string) (TranscriptResponse, error) {
-	return h.transcript(live, id, 0)
+	return h.transcript(context.Background(), live, id, 0)
+}
+
+// TranscriptWindow returns stable-indexed messages from a complete normalized
+// transcript without sending the rest of a potentially very large history to
+// an interactive client. End is exclusive; a negative End means no upper
+// bound. Role optionally selects user, assistant, or searchable tool events.
+func (h *HistoryStore) TranscriptWindow(live []state.SessionInfo, id string, options TranscriptWindowOptions) (TranscriptResponse, error) {
+	if options.End < 0 || options.End-options.Start > MaxTranscriptWindowSpan {
+		options.End = options.Start + MaxTranscriptWindowSpan
+	}
+	source, ok := h.find(live, id)
+	if !ok {
+		return TranscriptResponse{}, ErrHistoryNotFound
+	}
+	session, path, tool, err := h.describe(source, false)
+	if err != nil {
+		return TranscriptResponse{}, err
+	}
+	if path == "" || !session.ConversationAvailable {
+		return TranscriptResponse{}, ErrHistoryNotFound
+	}
+	messages, messageCount, matchedExpected, err := normalizeTranscriptWindow(path, tool, options)
+	if err != nil {
+		return TranscriptResponse{}, fmt.Errorf("read history transcript window %s: %w", id, err)
+	}
+	if options.ExpectedMessage != "" && !matchedExpected {
+		return TranscriptResponse{}, ErrHistoryChanged
+	}
+	session.MessageCount = messageCount
+	nextIndex := options.End
+	hasMore := nextIndex >= 0 && nextIndex < messageCount
+	return TranscriptResponse{
+		SchemaVersion: SchemaVersion,
+		Session:       session,
+		Messages:      messages,
+		Truncated:     len(messages) != messageCount,
+		HasMore:       hasMore,
+		NextIndex:     nextIndex,
+	}, nil
 }
 
 // TranscriptLimited reads at most maxBytes from the normalized conversation
 // file. A non-positive limit preserves the unbounded recall behavior.
 func (h *HistoryStore) TranscriptLimited(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
-	return h.transcript(live, id, maxBytes)
+	return h.transcript(context.Background(), live, id, maxBytes)
+}
+
+func (h *HistoryStore) TranscriptLimitedContext(ctx context.Context, live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
+	return h.transcript(ctx, live, id, maxBytes)
 }
 
 // TranscriptPreview returns a tail-bounded window suitable for interactive
@@ -153,7 +216,7 @@ func (h *HistoryStore) TranscriptPreview(live []state.SessionInfo, id string, ma
 	}, nil
 }
 
-func (h *HistoryStore) transcript(live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
+func (h *HistoryStore) transcript(ctx context.Context, live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
 	source, ok := h.find(live, id)
 	if !ok {
 		return TranscriptResponse{}, ErrHistoryNotFound
@@ -165,7 +228,7 @@ func (h *HistoryStore) transcript(live []state.SessionInfo, id string, maxBytes 
 	if path == "" || !session.ConversationAvailable {
 		return TranscriptResponse{}, ErrHistoryNotFound
 	}
-	messages, err := normalizeTranscript(path, tool, maxBytes)
+	messages, err := normalizeTranscriptContext(ctx, path, tool, maxBytes)
 	if err != nil {
 		return TranscriptResponse{}, fmt.Errorf("read history transcript %s: %w", id, err)
 	}
@@ -221,7 +284,8 @@ func (h *HistoryStore) describe(source backup.Session, countMessages bool) (Hist
 	result := HistorySession{
 		ID: source.ID, Name: source.Name, Tool: tool, CWD: source.CWD,
 		Machine: h.options.Machine, CreatedAt: source.CreatedAt,
-		LastActivityAt: source.LastActivityAt,
+		LastActivityAt: source.LastActivityAt, CreatorKind: source.CreatorKind,
+		CreatorID: source.CreatorID,
 	}
 	if path == "" {
 		return result, "", tool, nil
@@ -238,6 +302,7 @@ func (h *HistoryStore) describe(source backup.Session, countMessages bool) (Hist
 	}
 	result.ConversationAvailable = true
 	result.LastActivityAt = max(result.LastActivityAt, info.ModTime().UnixMilli())
+	result.SourceFingerprint = historySourceFingerprint(path, info)
 	if !countMessages {
 		return result, path, tool, nil
 	}
@@ -247,6 +312,11 @@ func (h *HistoryStore) describe(source backup.Session, countMessages bool) (Hist
 	}
 	result.MessageCount = count
 	return result, path, tool, nil
+}
+
+func historySourceFingerprint(path string, info os.FileInfo) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", path, info.Size(), info.ModTime().UnixNano())))
+	return fmt.Sprintf("%x", sum[:16])
 }
 
 func (h *HistoryStore) messageCount(path, tool string, info os.FileInfo) (int, error) {
@@ -285,6 +355,10 @@ func historyTool(tool state.SessionTool, resolved string) string {
 }
 
 func normalizeTranscript(path, tool string, maxBytes int64) ([]TranscriptMessage, error) {
+	return normalizeTranscriptContext(context.Background(), path, tool, maxBytes)
+}
+
+func normalizeTranscriptContext(ctx context.Context, path, tool string, maxBytes int64) ([]TranscriptMessage, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -295,7 +369,27 @@ func normalizeTranscript(path, tool string, maxBytes int64) ([]TranscriptMessage
 	if maxBytes > 0 {
 		source = io.LimitReader(file, maxBytes)
 	}
-	return normalizeTranscriptReader(bufio.NewReader(source), path, tool)
+	return normalizeTranscriptReaderContext(ctx, bufio.NewReader(source), path, tool)
+}
+
+func normalizeTranscriptWindow(path, tool string, options TranscriptWindowOptions) ([]TranscriptMessage, int, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer file.Close()
+
+	matchedExpected := options.ExpectedMessage == ""
+	messages, messageCount, err := normalizeTranscriptReaderSelected(context.Background(), bufio.NewReader(file), path, tool, func(message TranscriptMessage) bool {
+		if message.Index == options.ExpectedIndex && message.ID == options.ExpectedMessage {
+			matchedExpected = true
+		}
+		if message.Index < options.Start || (options.End >= 0 && message.Index >= options.End) {
+			return false
+		}
+		return options.Role == "" || message.Role == options.Role
+	})
+	return messages, messageCount, matchedExpected, err
 }
 
 func normalizeTranscriptTail(path, tool string, maxBytes int64, maxMessages int) ([]TranscriptMessage, bool, error) {
@@ -349,9 +443,30 @@ func normalizeTranscriptTail(path, tool string, maxBytes int64, maxMessages int)
 }
 
 func normalizeTranscriptReader(reader *bufio.Reader, path, tool string) ([]TranscriptMessage, error) {
+	return normalizeTranscriptReaderContext(context.Background(), reader, path, tool)
+}
+
+func normalizeTranscriptReaderContext(ctx context.Context, reader *bufio.Reader, path, tool string) ([]TranscriptMessage, error) {
+	messages, _, err := normalizeTranscriptReaderSelected(ctx, reader, path, tool, nil)
+	return messages, err
+}
+
+func normalizeTranscriptReaderSelected(
+	ctx context.Context,
+	reader *bufio.Reader,
+	path, tool string,
+	include func(TranscriptMessage) bool,
+) ([]TranscriptMessage, int, error) {
 	messages := make([]TranscriptMessage, 0)
+	relayCalls := make(map[string]string)
 	lineIndex := 0
+	messageIndex := 0
 	for {
+		if lineIndex%256 == 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+		}
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			trimmed := strings.TrimSpace(string(line))
@@ -365,12 +480,24 @@ func normalizeTranscriptReader(reader *bufio.Reader, path, tool string) ([]Trans
 							RolloutBasename: filepath.Base(path), LineIndex: currentIndex,
 						})
 						for _, event := range normalized.Events {
-							if message, ok := transcriptMessage(event); ok {
+							for _, message := range transcriptMessages(event, relayCalls) {
+								message.Index = messageIndex
+								message.ID = transcriptMessageID(message)
+								messageIndex++
+								if include == nil || include(message) {
+									messages = append(messages, message)
+								}
+							}
+						}
+					} else {
+						for _, message := range transcriptMessages(decoded, relayCalls) {
+							message.Index = messageIndex
+							message.ID = transcriptMessageID(message)
+							messageIndex++
+							if include == nil || include(message) {
 								messages = append(messages, message)
 							}
 						}
-					} else if message, ok := transcriptMessage(decoded); ok {
-						messages = append(messages, message)
 					}
 				}
 			}
@@ -379,26 +506,95 @@ func normalizeTranscriptReader(reader *bufio.Reader, path, tool string) ([]Trans
 			break
 		}
 		if readErr != nil {
-			return nil, readErr
+			return nil, 0, readErr
 		}
 	}
-	return messages, nil
+	return messages, messageIndex, nil
 }
 
-func transcriptMessage(event map[string]any) (TranscriptMessage, bool) {
+func transcriptMessageID(message TranscriptMessage) string {
+	timestamp := ""
+	if message.Timestamp != nil {
+		timestamp = *message.Timestamp
+	}
+	sum := sha256.Sum256([]byte(message.Role + "\x00" + message.Kind + "\x00" + timestamp + "\x00" + message.Text))
+	return fmt.Sprintf("%x", sum[:16])
+}
+
+func transcriptMessages(event map[string]any, relayCalls map[string]string) []TranscriptMessage {
 	message, ok := event["message"].(map[string]any)
 	if !ok {
-		return TranscriptMessage{}, false
+		return nil
 	}
 	role, _ := message["role"].(string)
 	if role != "user" && role != "assistant" {
-		return TranscriptMessage{}, false
+		return nil
 	}
-	text := contentText(message["content"])
-	if text == "" {
-		return TranscriptMessage{}, false
+	timestamp := normalizedTimestamp(event["timestamp"])
+	result := make([]TranscriptMessage, 0, 2)
+	if text := contentText(message["content"]); text != "" {
+		messageRole := role
+		if role == "user" && isSyntheticUserMessage(text) {
+			messageRole = "tool"
+		}
+		kind := ""
+		if messageRole == "tool" {
+			kind = "automation"
+		}
+		result = append(result, TranscriptMessage{Role: messageRole, Kind: kind, Text: text, Timestamp: timestamp})
 	}
-	return TranscriptMessage{Role: role, Text: text, Timestamp: normalizedTimestamp(event["timestamp"])}, true
+	blocks, _ := message["content"].([]any)
+	for _, item := range blocks {
+		block, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch block["type"] {
+		case "tool_use":
+			name, _ := block["name"].(string)
+			if !isRelayTool(name) {
+				continue
+			}
+			id, _ := block["id"].(string)
+			if id != "" {
+				relayCalls[id] = name
+			}
+			if text := relayToolRequest(name, block["input"]); text != "" {
+				result = append(result, TranscriptMessage{Role: "tool", Kind: relayToolKind(name), Text: text, Timestamp: timestamp})
+			}
+		case "tool_result":
+			id, _ := block["tool_use_id"].(string)
+			name := relayCalls[id]
+			if name == "" {
+				continue
+			}
+			if text := relayToolResult(name, block["content"]); text != "" {
+				result = append(result, TranscriptMessage{Role: "tool", Kind: relayToolKind(name), Text: text, Timestamp: timestamp})
+			}
+		}
+	}
+	return result
+}
+
+func isSyntheticUserMessage(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	for _, prefix := range []string{
+		"<task-notification>", "<system-reminder>", "<local-command-", "<command-message>",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		line := trimmed
+		if end := strings.IndexByte(line, ']'); end >= 0 {
+			line = strings.ToUpper(line[:end+1])
+			return strings.Contains(line, " TICK") ||
+				strings.Contains(line, " AUTOMATION") ||
+				strings.Contains(line, " ROUTINE")
+		}
+	}
+	return false
 }
 
 func contentText(content any) string {
@@ -420,6 +616,98 @@ func contentText(content any) string {
 	default:
 		return ""
 	}
+}
+
+var searchableRelayTools = map[string]struct{}{
+	"agent":                  {},
+	"spawn_agent":            {},
+	"send_message":           {},
+	"send_message_to_thread": {},
+	"followup_task":          {},
+	"create_thread":          {},
+	"fork_thread":            {},
+	"read_thread":            {},
+	"wait_agent":             {},
+	"wait_threads":           {},
+	"handoff_thread":         {},
+}
+
+func isRelayTool(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for candidate := range searchableRelayTools {
+		if name == candidate || strings.HasSuffix(name, "__"+candidate) || strings.HasSuffix(name, "."+candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func relayToolRequest(name string, input any) string {
+	values, _ := input.(map[string]any)
+	if len(values) == 0 {
+		return ""
+	}
+	target := firstString(values, "target", "thread_id", "threadId", "recipient", "task_name", "subagent_type")
+	body := firstString(values, "message", "prompt", "task", "objective", "description")
+	if body == "" {
+		return ""
+	}
+	label := relayToolLabel(name)
+	if target != "" {
+		label += " to " + target
+	}
+	return boundedRelayText(label+": "+body, 64<<10)
+}
+
+func relayToolKind(name string) string {
+	switch relayToolLabel(name) {
+	case "agent", "spawn_agent", "create_thread", "fork_thread":
+		return "delegation"
+	case "send_message", "send_message_to_thread", "followup_task", "handoff_thread":
+		return "handoff"
+	default:
+		return "status"
+	}
+}
+
+func relayToolResult(name string, content any) string {
+	text := contentText(content)
+	if text == "" {
+		if value, ok := content.(string); ok {
+			text = strings.TrimSpace(value)
+		}
+	}
+	if text == "" {
+		return ""
+	}
+	return boundedRelayText(relayToolLabel(name)+" result: "+text, 64<<10)
+}
+
+func relayToolLabel(name string) string {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	for candidate := range searchableRelayTools {
+		if normalized == candidate || strings.HasSuffix(normalized, "__"+candidate) || strings.HasSuffix(normalized, "."+candidate) {
+			return candidate
+		}
+	}
+	return normalized
+}
+
+func firstString(values map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := values[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func boundedRelayText(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "…"
 }
 
 func normalizedTimestamp(value any) *string {

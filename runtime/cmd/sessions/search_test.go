@@ -47,16 +47,16 @@ func TestSearchCLIForwardsFiltersAndGroupsHumanOutput(t *testing.T) {
 		t.Fatalf("query=%#v want=%#v", received, wantQuery)
 	}
 	want := "aaaaaaaa  alpha  codex\n" +
-		"  assistant  2026-07-17T20:00:00Z\n    saw [[needle]] here\n" +
-		"  assistant  (no timestamp)\n    another [[needle]]\n\n" +
-		"bbbbbbbb  beta  claude\n  user  (no timestamp)\n    asked for [[needle]]\n"
+		"  assistant  2026-07-17T20:00:00Z  message 1\n    saw [[needle]] here\n\n" +
+		"aaaaaaaa  alpha  codex\n  assistant  (no timestamp)  message 1\n    another [[needle]]\n\n" +
+		"bbbbbbbb  beta  claude\n  user  (no timestamp)  message 1\n    asked for [[needle]]\n\n"
 	if stdout.String() != want {
 		t.Fatalf("stdout=%q want=%q", stdout.String(), want)
 	}
 	stdout.Reset()
 	stderr.Reset()
 	code = run([]string{"--host", server.URL, "search", "emails", "--ranked"}, strings.NewReader(""), &stdout, &stderr)
-	if code != 0 || stderr.Len() != 0 || !mapsEqual(received, map[string]string{"q": "emails", "ranked": "1"}) {
+	if code != 0 || stderr.Len() != 0 || !mapsEqual(received, map[string]string{"q": "emails", "ranked": "true"}) {
 		t.Fatalf("ranked exit=%d query=%#v stdout=%q stderr=%q", code, received, stdout.String(), stderr.String())
 	}
 }
@@ -79,7 +79,7 @@ func TestSearchCLIJSONShapeAndValidation(t *testing.T) {
 		t.Fatalf("shape=%#v err=%v raw=%q", shape, err, stdout.String())
 	}
 	for _, args := range [][]string{
-		{"search"}, {"search", "x", "--role", "tool"}, {"search", "x", "--tool", "terminal"},
+		{"search"}, {"search", "x", "--role", "system"}, {"search", "x", "--tool", "terminal"},
 		{"search", "x", "-n", "0"}, {"search", "x", "--session"}, {"search", "x", "--unknown"},
 		{"search", "x", "--ranked", "--regex"},
 	} {

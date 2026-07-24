@@ -8,8 +8,8 @@ mod lifecycle;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap, env, fs, path::PathBuf, process::Command, sync::Mutex, thread,
-    time::Duration,
+    collections::HashMap, env, fs, io::Read, net::IpAddr, path::PathBuf, process::Command,
+    sync::Mutex, thread, time::Duration,
 };
 use tauri::{
     menu::{Menu, MenuItem, SubmenuBuilder},
@@ -84,6 +84,93 @@ struct NativeConnectionSettings {
 struct NativeConnectionCommand {
     data: Value,
     detail: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePairingClaim {
+    endpoint: String,
+    machine_id: String,
+    machine_name: String,
+    device_id: String,
+    token: String,
+    name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTailnetPeer {
+    endpoint: String,
+    hostname: String,
+    os: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct TailscalePeer {
+    #[serde(default)]
+    host_name: String,
+    #[serde(default)]
+    dns_name: String,
+    #[serde(default)]
+    os: String,
+    #[serde(default)]
+    online: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct NativeTailscaleStatus {
+    backend_state: String,
+    #[serde(default)]
+    peer: HashMap<String, TailscalePeer>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TailnetRequestResponse {
+    request_id: String,
+    request_secret: String,
+    expires_at: String,
+    status: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTailnetRequest {
+    endpoint: String,
+    request_id: String,
+    request_secret: String,
+    expires_at: String,
+    status: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeTailnetClaim {
+    status: String,
+    claim: Option<NativePairingClaim>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairingClaimResponse {
+    machine_id: Option<String>,
+    machine_name: Option<String>,
+    device_id: String,
+    token: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionsHealthResponse {
+    ok: bool,
+    name: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ParsedPairingLink {
+    endpoint: String,
+    claim_url: String,
+    ticket: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -419,6 +506,46 @@ async fn native_connection_action(
 }
 
 #[tauri::command]
+async fn native_pairing_claim(pair_url: String) -> Result<NativePairingClaim, String> {
+    tauri::async_runtime::spawn_blocking(move || claim_native_pairing_link(&pair_url))
+        .await
+        .map_err(|error| format!("pairing worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn native_tailnet_discover() -> Result<Vec<NativeTailnetPeer>, String> {
+    tauri::async_runtime::spawn_blocking(discover_tailnet_peers)
+        .await
+        .map_err(|error| format!("tailnet discovery worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn native_tailnet_request(
+    endpoint: String,
+    client_id: String,
+    name: String,
+) -> Result<NativeTailnetRequest, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        request_tailnet_access(&endpoint, &client_id, &name)
+    })
+    .await
+    .map_err(|error| format!("tailnet access worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn native_tailnet_claim(
+    endpoint: String,
+    request_id: String,
+    request_secret: String,
+) -> Result<NativeTailnetClaim, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        claim_tailnet_access(&endpoint, &request_id, &request_secret)
+    })
+    .await
+    .map_err(|error| format!("tailnet claim worker failed: {error}"))?
+}
+
+#[tauri::command]
 async fn native_backup_action(
     app: AppHandle,
     action: String,
@@ -506,6 +633,13 @@ fn find_executable(name: &str) -> Option<PathBuf> {
     .find(|candidate| candidate.is_file())
 }
 
+fn tailscale_executable() -> Option<PathBuf> {
+    find_executable("tailscale").or_else(|| {
+        let app_binary = PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale");
+        app_binary.is_file().then_some(app_binary)
+    })
+}
+
 fn fetch_somewhere_latest() -> Option<String> {
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(2))
@@ -549,6 +683,446 @@ fn version_is_newer(candidate: &str, current: &str) -> bool {
     parts(candidate)
         .zip(parts(current))
         .is_some_and(|(candidate, current)| candidate > current)
+}
+
+fn pairing_http_host_is_private(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<IpAddr>().is_ok_and(|address| match address {
+        IpAddr::V4(address) => address.is_loopback() || address.is_private(),
+        IpAddr::V6(address) => address.is_loopback() || address.is_unique_local(),
+    })
+}
+
+fn valid_remote_uuid(value: &str) -> bool {
+    if value.len() != 36 {
+        return false;
+    }
+    value.char_indices().all(|(index, character)| {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            character == '-'
+        } else {
+            character.is_ascii_hexdigit() && !character.is_ascii_uppercase()
+        }
+    }) && value.as_bytes().get(14) == Some(&b'4')
+        && value
+            .as_bytes()
+            .get(19)
+            .is_some_and(|value| matches!(*value, b'8' | b'9' | b'a' | b'b'))
+}
+
+fn parse_tailnet_endpoint(value: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(value.trim())
+        .map_err(|_| "Sessions received an invalid tailnet address".to_string())?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "Sessions received an invalid tailnet address".to_string())?;
+    if parsed.scheme() != "https"
+        || !host.to_ascii_lowercase().ends_with(".ts.net")
+        || parsed.port().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || !matches!(parsed.path(), "" | "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(
+            "Sessions discovery accepts only a Tailscale HTTPS machine address".to_string(),
+        );
+    }
+    Ok(format!("https://{}", host.to_ascii_lowercase()))
+}
+
+fn tailnet_http_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("prepare Tailscale request: {error}"))
+}
+
+fn discover_tailnet_peers() -> Result<Vec<NativeTailnetPeer>, String> {
+    let executable = tailscale_executable().ok_or_else(|| {
+        "Tailscale is not installed. Install it, sign in, and try again.".to_string()
+    })?;
+    let output = Command::new(executable)
+        .args(["status", "--json"])
+        .output()
+        .map_err(|error| format!("could not read Tailscale status: {error}"))?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "Tailscale is not connected. Open Tailscale and sign in.".to_string()
+        } else {
+            format!("Tailscale is not ready: {detail}")
+        });
+    }
+    let status: NativeTailscaleStatus = serde_json::from_slice(&output.stdout)
+        .map_err(|_| "Tailscale returned an unreadable device list".to_string())?;
+    if status.backend_state != "Running" {
+        return Err("Tailscale is not connected. Open Tailscale and sign in.".to_string());
+    }
+
+    let candidates: Vec<NativeTailnetPeer> = status
+        .peer
+        .into_values()
+        .filter(|peer| peer.online)
+        .filter_map(|peer| {
+            let dns_name = peer.dns_name.trim().trim_end_matches('.');
+            let endpoint = parse_tailnet_endpoint(&format!("https://{dns_name}")).ok()?;
+            let hostname = peer.host_name.trim();
+            Some(NativeTailnetPeer {
+                endpoint,
+                hostname: if hostname.is_empty() {
+                    dns_name
+                } else {
+                    hostname
+                }
+                .to_string(),
+                os: peer.os.trim().to_string(),
+            })
+        })
+        .take(32)
+        .collect();
+    let client = tailnet_http_client(Duration::from_secs(5))?;
+    let handles: Vec<_> = candidates
+        .into_iter()
+        .map(|candidate| {
+            let client = client.clone();
+            thread::spawn(move || {
+                let response = client
+                    .get(format!("{}/api/health", candidate.endpoint))
+                    .header("accept", "application/json")
+                    .send()
+                    .ok()?;
+                if !response.status().is_success() {
+                    return None;
+                }
+                let health = response.json::<SessionsHealthResponse>().ok()?;
+                (health.ok && health.name == "sessionsd").then_some(candidate)
+            })
+        })
+        .collect();
+    let mut peers: Vec<NativeTailnetPeer> = handles
+        .into_iter()
+        .filter_map(|handle| handle.join().ok().flatten())
+        .collect();
+    peers.sort_by(|left, right| {
+        left.hostname
+            .to_lowercase()
+            .cmp(&right.hostname.to_lowercase())
+    });
+    Ok(peers)
+}
+
+fn response_error(body: &[u8], fallback: String) -> String {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value.get("error")?.as_str().map(str::to_string))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(fallback)
+}
+
+fn local_device_name() -> String {
+    let candidates = [
+        ("/usr/sbin/scutil", &["--get", "ComputerName"][..]),
+        ("/bin/hostname", &[][..]),
+    ];
+    for (executable, args) in candidates {
+        if let Ok(output) = Command::new(executable).args(args).output() {
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if output.status.success()
+                && !value.is_empty()
+                && value.chars().count() <= 80
+                && !value.chars().any(char::is_control)
+            {
+                return value;
+            }
+        }
+    }
+    "Sessions device".to_string()
+}
+
+fn request_tailnet_access(
+    endpoint: &str,
+    client_id: &str,
+    name: &str,
+) -> Result<NativeTailnetRequest, String> {
+    let endpoint = parse_tailnet_endpoint(endpoint)?;
+    if !valid_remote_uuid(client_id.trim()) {
+        return Err("Sessions could not create a stable identity for this device".to_string());
+    }
+    let requested_name = name.trim();
+    let name = if requested_name.is_empty() {
+        local_device_name()
+    } else {
+        requested_name.to_string()
+    };
+    if name.chars().count() > 80 || name.chars().any(char::is_control) {
+        return Err("device name must be at most 80 characters".to_string());
+    }
+    let client = tailnet_http_client(Duration::from_secs(12))?;
+    let response = client
+        .post(format!("{endpoint}/api/tailnet/access/request"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({ "client_id": client_id, "name": name }))
+        .send()
+        .map_err(|error| format!("could not request access from the other Mac: {error}"))?;
+    let status = response.status();
+    let body = bounded_pairing_response(response)?;
+    if status.as_u16() != 202 {
+        return Err(response_error(
+            &body,
+            format!("the other Mac returned HTTP {}", status.as_u16()),
+        ));
+    }
+    let requested: TailnetRequestResponse = serde_json::from_slice(&body)
+        .map_err(|_| "the other Mac returned an invalid access request".to_string())?;
+    if !valid_remote_uuid(&requested.request_id)
+        || requested.request_secret.trim().is_empty()
+        || requested.request_secret.len() > 512
+        || requested.request_secret.chars().any(char::is_control)
+        || requested.status != "pending"
+        || requested.expires_at.trim().is_empty()
+    {
+        return Err("the other Mac returned an invalid access request".to_string());
+    }
+    Ok(NativeTailnetRequest {
+        endpoint,
+        request_id: requested.request_id,
+        request_secret: requested.request_secret,
+        expires_at: requested.expires_at,
+        status: requested.status,
+    })
+}
+
+fn validate_native_claim(
+    endpoint: String,
+    claimed: PairingClaimResponse,
+) -> Result<NativePairingClaim, String> {
+    let machine_id = claimed
+        .machine_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| valid_remote_uuid(value))
+        .ok_or_else(|| "the other Mac is running an older Sessions daemon".to_string())?
+        .to_string();
+    let machine_name = claimed
+        .machine_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            url::Url::parse(&endpoint)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_string))
+                .unwrap_or_else(|| "Sessions machine".to_string())
+        });
+    if !valid_remote_uuid(claimed.device_id.trim())
+        || claimed.token.trim().is_empty()
+        || claimed.token.len() > 512
+        || claimed.token.chars().any(char::is_control)
+        || claimed.name.trim().is_empty()
+        || claimed.name.chars().count() > 80
+        || claimed.name.chars().any(char::is_control)
+        || machine_name.chars().count() > 80
+        || machine_name.chars().any(char::is_control)
+    {
+        return Err("the other machine returned an invalid device credential".to_string());
+    }
+    Ok(NativePairingClaim {
+        endpoint,
+        machine_id,
+        machine_name,
+        device_id: claimed.device_id,
+        token: claimed.token,
+        name: claimed.name,
+    })
+}
+
+fn claim_tailnet_access(
+    endpoint: &str,
+    request_id: &str,
+    request_secret: &str,
+) -> Result<NativeTailnetClaim, String> {
+    let endpoint = parse_tailnet_endpoint(endpoint)?;
+    if !valid_remote_uuid(request_id.trim())
+        || request_secret.trim().is_empty()
+        || request_secret.len() > 512
+        || request_secret.chars().any(char::is_control)
+    {
+        return Err("the access request is invalid or expired".to_string());
+    }
+    let client = tailnet_http_client(Duration::from_secs(12))?;
+    let response = client
+        .post(format!("{endpoint}/api/tailnet/access/claim"))
+        .header("accept", "application/json")
+        .json(&serde_json::json!({
+            "request_id": request_id,
+            "request_secret": request_secret
+        }))
+        .send()
+        .map_err(|error| format!("could not check the access request: {error}"))?;
+    let status = response.status();
+    let body = bounded_pairing_response(response)?;
+    match status.as_u16() {
+        202 => Ok(NativeTailnetClaim {
+            status: "pending".to_string(),
+            claim: None,
+        }),
+        403 => Ok(NativeTailnetClaim {
+            status: "denied".to_string(),
+            claim: None,
+        }),
+        410 => Ok(NativeTailnetClaim {
+            status: "expired".to_string(),
+            claim: None,
+        }),
+        201 => {
+            let claimed: PairingClaimResponse = serde_json::from_slice(&body)
+                .map_err(|_| "the other Mac returned an invalid device credential".to_string())?;
+            Ok(NativeTailnetClaim {
+                status: "accepted".to_string(),
+                claim: Some(validate_native_claim(endpoint, claimed)?),
+            })
+        }
+        _ => Err(response_error(
+            &body,
+            format!("the other Mac returned HTTP {}", status.as_u16()),
+        )),
+    }
+}
+
+fn parse_native_pairing_link(value: &str) -> Result<ParsedPairingLink, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("paste the full pairing link from the other Sessions app".to_string());
+    }
+    if value.len() > 4096 {
+        return Err("pairing link is too long".to_string());
+    }
+
+    let mut parsed = url::Url::parse(value)
+        .map_err(|_| "paste the full pairing link, including https://".to_string())?;
+    if parsed.host_str().is_none() {
+        return Err("pairing link is missing a machine address".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("pairing links cannot contain a username or password".to_string());
+    }
+    match parsed.scheme() {
+        "https" => {}
+        "http" if pairing_http_host_is_private(parsed.host_str().unwrap_or_default()) => {}
+        "http" => {
+            return Err("unencrypted pairing is allowed only to a private LAN address".to_string())
+        }
+        _ => return Err("pairing links must use HTTPS or private-LAN HTTP".to_string()),
+    }
+    if !matches!(parsed.path(), "" | "/") || parsed.query().is_some() {
+        return Err("pairing link has an unexpected path or query".to_string());
+    }
+
+    let fragment = parsed
+        .fragment()
+        .ok_or_else(|| "pairing link is missing its one-time ticket".to_string())?;
+    let mut ticket: Option<String> = None;
+    for (key, value) in url::form_urlencoded::parse(fragment.as_bytes()) {
+        if key != "pair" || ticket.is_some() {
+            return Err("pairing link has an invalid one-time ticket".to_string());
+        }
+        let value = value.trim();
+        if value.is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+            return Err("pairing link has an invalid one-time ticket".to_string());
+        }
+        ticket = Some(value.to_string());
+    }
+    let ticket = ticket.ok_or_else(|| "pairing link is missing its one-time ticket".to_string())?;
+
+    parsed.set_fragment(None);
+    parsed.set_path("");
+    let endpoint = parsed.as_str().trim_end_matches('/').to_string();
+    let claim_url = format!("{endpoint}/api/pair/claim");
+    Ok(ParsedPairingLink {
+        endpoint,
+        claim_url,
+        ticket,
+    })
+}
+
+fn claim_native_pairing_link(value: &str) -> Result<NativePairingClaim, String> {
+    let link = parse_native_pairing_link(value)?;
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(12))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("prepare secure pairing request: {error}"))?;
+
+    // Match the stronger remote-environment onboarding pattern: identify the
+    // endpoint before consuming its one-time credential. A typo or unrelated
+    // HTTPS service therefore cannot burn a valid pairing link.
+    let health_url = format!("{}/api/health", link.endpoint);
+    let health_response = client
+        .get(&health_url)
+        .header("accept", "application/json")
+        .send()
+        .map_err(|error| format!("could not reach the other Sessions machine: {error}"))?;
+    let health_status = health_response.status();
+    let health_body = bounded_pairing_response(health_response)?;
+    if !health_status.is_success() {
+        return Err(format!(
+            "the pairing link does not reach Sessions (HTTP {})",
+            health_status.as_u16()
+        ));
+    }
+    let health: SessionsHealthResponse = serde_json::from_slice(&health_body)
+        .map_err(|_| "the pairing link does not reach a Sessions daemon".to_string())?;
+    if !health.ok || health.name != "sessionsd" {
+        return Err("the pairing link does not reach a Sessions daemon".to_string());
+    }
+
+    let response = client
+        .post(&link.claim_url)
+        .header("accept", "application/json")
+        .json(&serde_json::json!({ "ticket": link.ticket }))
+        .send()
+        .map_err(|error| format!("could not reach the other Sessions machine: {error}"))?;
+    let status = response.status();
+    let body = bounded_pairing_response(response)?;
+    if !status.is_success() {
+        let detail = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|value| value.get("error")?.as_str().map(str::to_string))
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("the other machine returned HTTP {}", status.as_u16()));
+        return Err(format!(
+            "{detail}. Create a new pairing link and try again."
+        ));
+    }
+    let claimed: PairingClaimResponse = serde_json::from_slice(&body)
+        .map_err(|_| "the other machine returned an invalid device credential".to_string())?;
+    validate_native_claim(link.endpoint, claimed).map_err(|error| {
+        if error == "the other Mac is running an older Sessions daemon" {
+            format!("{error}; update Sessions there and create a new pairing link")
+        } else {
+            error
+        }
+    })
+}
+
+fn bounded_pairing_response(response: reqwest::blocking::Response) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    response
+        .take(64 * 1024 + 1)
+        .read_to_end(&mut body)
+        .map_err(|error| format!("read pairing response: {error}"))?;
+    if body.len() > 64 * 1024 {
+        return Err("the other machine returned an oversized pairing response".to_string());
+    }
+    Ok(body)
 }
 
 fn run_connection_action(
@@ -917,6 +1491,10 @@ pub fn run() {
             native_connection_settings,
             set_runtime_port,
             native_connection_action,
+            native_pairing_claim,
+            native_tailnet_discover,
+            native_tailnet_request,
+            native_tailnet_claim,
             native_backup_action,
             somewhere_cli_status
         ])
@@ -978,6 +1556,52 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::Write as _,
+        net::{TcpListener, TcpStream},
+    };
+
+    fn read_test_http_request(stream: &mut TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = Vec::new();
+        loop {
+            let mut chunk = [0_u8; 2048];
+            let count = stream.read(&mut chunk).unwrap();
+            if count == 0 {
+                break;
+            }
+            request.extend_from_slice(&chunk[..count]);
+            let Some(headers_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+            else {
+                continue;
+            };
+            let headers_end = headers_end + 4;
+            let headers = String::from_utf8_lossy(&request[..headers_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            if request.len() >= headers_end + content_length {
+                break;
+            }
+        }
+        String::from_utf8(request).unwrap()
+    }
+
+    fn write_test_http_json(stream: &mut TcpStream, status: &str, body: &str) {
+        write!(
+            stream,
+            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+    }
 
     #[test]
     fn scoped_queries_are_validated_and_stable() {
@@ -1038,5 +1662,124 @@ mod tests {
         assert!(!version_is_newer("1.9.0", "1.10.0"));
         assert!(!version_is_newer("invalid", "1.0.0"));
         assert_eq!(clean_version("v0.27.3\n"), Some("0.27.3".to_string()));
+    }
+
+    #[test]
+    fn native_pairing_links_keep_tickets_out_of_the_request_url() {
+        let parsed = parse_native_pairing_link(
+            "https://mac-mini.example.ts.net/#pair=ticket-id.ticket-secret",
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            ParsedPairingLink {
+                endpoint: "https://mac-mini.example.ts.net".to_string(),
+                claim_url: "https://mac-mini.example.ts.net/api/pair/claim".to_string(),
+                ticket: "ticket-id.ticket-secret".to_string(),
+            }
+        );
+
+        let lan = parse_native_pairing_link("http://192.168.1.25:8787/#pair=one%2Etwo").unwrap();
+        assert_eq!(lan.endpoint, "http://192.168.1.25:8787");
+        assert_eq!(lan.ticket, "one.two");
+    }
+
+    #[test]
+    fn native_pairing_rejects_unsafe_or_ambiguous_links() {
+        for invalid in [
+            "ticket-only",
+            "http://example.com/#pair=secret",
+            "ftp://192.168.1.25/#pair=secret",
+            "https://user:password@example.com/#pair=secret",
+            "https://example.com/other#pair=secret",
+            "https://example.com/?query=1#pair=secret",
+            "https://example.com/#pair=one&pair=two",
+            "https://example.com/#other=secret",
+        ] {
+            assert!(
+                parse_native_pairing_link(invalid).is_err(),
+                "unsafe link was accepted: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_machine_ids_are_strict_v4_uuids() {
+        assert!(valid_remote_uuid("11111111-1111-4111-8111-111111111111"));
+        assert!(!valid_remote_uuid("11111111-1111-5111-8111-111111111111"));
+        assert!(!valid_remote_uuid("11111111-1111-4111-C111-111111111111"));
+        assert!(!valid_remote_uuid("../machine"));
+    }
+
+    #[test]
+    fn tailnet_discovery_accepts_only_https_machine_names() {
+        assert_eq!(
+            parse_tailnet_endpoint("https://Mac-Mini.tail1234.ts.net/").unwrap(),
+            "https://mac-mini.tail1234.ts.net"
+        );
+        for invalid in [
+            "http://mac-mini.tail1234.ts.net",
+            "https://example.com",
+            "https://mac-mini.tail1234.ts.net:8443",
+            "https://mac-mini.tail1234.ts.net/api/health",
+            "https://user@mac-mini.tail1234.ts.net",
+        ] {
+            assert!(
+                parse_tailnet_endpoint(invalid).is_err(),
+                "unsafe tailnet endpoint was accepted: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn tailscale_status_parses_online_peer_metadata() {
+        let status: NativeTailscaleStatus = serde_json::from_str(
+            r#"{
+              "BackendState":"Running",
+              "Peer":{
+                "nodekey:example":{
+                  "HostName":"Studio Mac",
+                  "DNSName":"studio-mac.tail1234.ts.net.",
+                  "OS":"macOS",
+                  "Online":true
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(status.backend_state, "Running");
+        let peer = status.peer.get("nodekey:example").unwrap();
+        assert_eq!(peer.host_name, "Studio Mac");
+        assert!(peer.online);
+    }
+
+    #[test]
+    fn native_pairing_probes_before_it_consumes_the_ticket() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut health, _) = listener.accept().unwrap();
+            let health_request = read_test_http_request(&mut health);
+            assert!(health_request.starts_with("GET /api/health HTTP/1.1"));
+            write_test_http_json(&mut health, "200 OK", r#"{"ok":true,"name":"sessionsd"}"#);
+
+            let (mut claim, _) = listener.accept().unwrap();
+            let claim_request = read_test_http_request(&mut claim);
+            assert!(claim_request.starts_with("POST /api/pair/claim HTTP/1.1"));
+            assert!(claim_request.contains(r#""ticket":"ticket-id.ticket-secret""#));
+            write_test_http_json(
+                &mut claim,
+                "201 Created",
+                r#"{"machine_id":"11111111-1111-4111-8111-111111111111","machine_name":"Studio Mac","device_id":"22222222-2222-4222-8222-222222222222","token":"device-token","name":"MacBook"}"#,
+            );
+        });
+
+        let paired =
+            claim_native_pairing_link(&format!("http://{address}/#pair=ticket-id.ticket-secret"))
+                .unwrap();
+        assert_eq!(paired.machine_name, "Studio Mac");
+        assert_eq!(paired.name, "MacBook");
+        assert_eq!(paired.endpoint, format!("http://{address}"));
+        server.join().unwrap();
     }
 }

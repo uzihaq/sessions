@@ -11,6 +11,10 @@ import { readWindowScope } from './windowScope';
 
 export interface ServerConfig {
   id: string;
+  // Stable daemon identity returned only after a successful pairing claim.
+  // A machine can have LAN and Tailscale endpoints without becoming two fleet
+  // entries; endpoint URLs are access paths, not machine identity.
+  machineId?: string;
   name: string;
   host: string;
   port: number;
@@ -96,6 +100,52 @@ function writeActiveId(id: string | null): void {
     if (id) window.localStorage.setItem(ACTIVE_KEY, id);
     else window.localStorage.removeItem(ACTIVE_KEY);
   } catch { /* ignore */ }
+}
+
+export interface ServerSelectionSnapshot {
+  servers: ServerConfig[];
+  activeId: string | null;
+}
+
+export function captureServerSelection(): ServerSelectionSnapshot {
+  const state = useServers.getState();
+  return {
+    servers: state.servers.map((server) => ({ ...server })),
+    activeId: state.activeId
+  };
+}
+
+export function restoreServerSelection(snapshot: ServerSelectionSnapshot): void {
+  const servers = snapshot.servers.map((server) => ({ ...server }));
+  writeServers(servers);
+  writeActiveId(snapshot.activeId);
+  useServers.setState({ servers, activeId: snapshot.activeId });
+}
+
+// Pairing creates a live remote credential, so unlike ordinary preference
+// updates it must not report success until the credential and active selection
+// can be read back from durable browser storage.
+export function assertServerPersisted(server: ServerConfig): void {
+  try {
+    const encoded = window.localStorage.getItem(STORAGE_KEY);
+    const parsed = encoded ? JSON.parse(encoded) as ServerConfig[] : null;
+    const stored = Array.isArray(parsed)
+      ? parsed.find((candidate) => candidate.id === server.id)
+      : undefined;
+    if (
+      !stored
+      || stored.machineId !== server.machineId
+      || stored.token !== server.token
+      || stored.host !== server.host
+      || stored.port !== server.port
+      || (stored.scheme ?? 'http') !== (server.scheme ?? 'http')
+      || window.localStorage.getItem(ACTIVE_KEY) !== server.id
+    ) {
+      throw new Error('stored server did not match the paired machine');
+    }
+  } catch {
+    throw new Error('Sessions could not durably save this machine.');
+  }
 }
 
 interface ServersStore {

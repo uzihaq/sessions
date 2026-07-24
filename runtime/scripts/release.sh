@@ -82,7 +82,7 @@ echo "release version: $version"
 echo "output directory: $output_dir"
 
 if [[ "$dry_run" == true ]]; then
-  echo "DRY RUN: DIST_GO_DIR=<scratch>/binaries make -C $go_root binaries"
+  echo "DRY RUN: SESSIONS_BUILD_VERSION=v$version DIST_GO_DIR=<scratch>/binaries make -C $go_root binaries"
   for target in "${targets[@]}"; do
     goos="${target%/*}"
     goarch="${target#*/}"
@@ -111,7 +111,7 @@ binary_dir="$scratch_dir/binaries"
 stage_root="$scratch_dir/stage"
 mkdir -p "$binary_dir" "$stage_root" "$output_dir"
 
-DIST_GO_DIR="$binary_dir" make -C "$go_root" binaries
+SESSIONS_BUILD_VERSION="v$version" DIST_GO_DIR="$binary_dir" make -C "$go_root" binaries
 
 for target in "${targets[@]}"; do
   goos="${target%/*}"

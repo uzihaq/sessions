@@ -60,6 +60,12 @@ var commandTable = []commandSpec{
 		examples: []string{"sessions worktrees", "sessions --json worktrees", "sessions worktrees clean --dry-run", "sessions worktrees clean"}, run: (*app).cmdWorktrees,
 	},
 	{
+		name: "gc", usage: "gc [--older-than DURATION] [--apply]",
+		summary: "archive old closed records safely", group: dailyCommandGroup, localJSON: true,
+		longHelp: "Preview or archive sessions and lanes that have been closed longer than the retention age (30d by default). The default is a dry run; --apply records an append-only archive fact. Live runners and ancestors with retained descendants are never archived. Recovery history, transcripts, and worktrees are preserved.",
+		examples: []string{"sessions gc", "sessions gc --older-than 7d", "sessions gc --older-than 30d --apply", "sessions --json gc"}, run: (*app).cmdGC,
+	},
+	{
 		name: "ls", usage: "ls [--mine | --all] [-a | --include-exited]",
 		summary: "list sessions", group: dailyCommandGroup, localJSON: true,
 		longHelp: "List agent sessions known to the daemon. --mine follows SESSIONS_OWNER_ID, then the SESSIONS_SESSION_ID descendant subtree, then the daemon OS user. The OS-user fallback is user-wide, not invocation-scoped. Exited sessions are hidden by default; -a and --include-exited include them.",
@@ -102,10 +108,10 @@ var commandTable = []commandSpec{
 		examples: []string{"sessions last 0123abcd", "sessions last 0123abcd --role assistant -n 1", "sessions --json last 0123abcd"}, run: (*app).cmdLastDispatch,
 	},
 	{
-		name: "search", usage: "search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex | --ranked] [--json]",
+		name: "search", usage: "search <query> [--session ID[,ID...]] [--role user|assistant|tool] [--tool claude|codex|shell] [--name GLOB] [--cwd PATH] [--since DATE] [--until DATE] [--context N] [--timeline] [-n N] [--exact | --regex | --ranked] [--json]",
 		summary: "search normalized session chat history", group: dailyCommandGroup, localJSON: true,
-		longHelp: "Search chat history across every live and persisted session known to the daemon. Matching is a case-insensitive substring by default; --regex uses a Go regular expression. --ranked opts into BM25-ranked, stemmed search with quoted phrases and AND/OR/NOT boolean operators, and cannot be combined with --regex. Filters are evaluated by the daemon, so --host can search a remote Sessions instance.",
-		examples: []string{"sessions search 'migration plan'", "sessions search 'failed|timed out' --regex --role assistant", `sessions search '"migration plan" OR rollback' --ranked`, "sessions search needle --session 0123abcd --json"}, run: (*app).cmdSearch,
+		longHelp: "Search chat history across every live and persisted session known to the daemon. Ranked token recall is the default: bare words are alternatives, quoted phrases stay exact, boolean AND/OR/NOT and near(a,b,N) are supported, and results include a stable content-derived message bookmark plus optional surrounding turns. --exact uses a case-insensitive contiguous substring; --regex uses a Go regular expression. Filter to real user requests, agent replies, or typed delegation/handoff/automation/status operations with --role; scope by sessions, lane-name glob, workspace, provider, and date. --timeline merges matching moments chronologically. Filters are evaluated by the daemon, so --host can search a remote Sessions instance.",
+		examples: []string{"sessions search 'drafts rollout' --role user --since 2026-07-23", "sessions search 'hello world' --role user --context 3", `sessions search 'near(draft,egress,8) OR "stable session"' --timeline`, "sessions search '{{first_name}}' --exact --session 0123abcd --json"}, run: (*app).cmdSearch,
 	},
 	{
 		name: "usage", usage: "usage [daily|weekly|monthly|session|tag|provider|model] [--mode auto|calculate|display] [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--provider claude|codex] [--dimension KEY] [--json]",
@@ -229,8 +235,8 @@ var commandTable = []commandSpec{
 	},
 	{
 		name: "pair", usage: "pair [--name NAME]",
-		summary: "pair a device with one QR scan", group: adminCommandGroup, localJSON: true,
-		longHelp: "Mint a five-minute, single-use pairing ticket and print one QR code for the best verified endpoint: Tailscale remote access first, then same-network LAN access. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.",
+		summary: "pair a device on the same LAN", group: adminCommandGroup, localJSON: true,
+		longHelp: "Mint a five-minute, single-use pairing ticket for the explicit same-network LAN listener. This is the fallback for devices without Tailscale: Sessions apps on the same tailnet discover each other and use Request access instead. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.",
 		examples: []string{"sessions pair", "sessions pair --name 'Uzair phone'", "sessions --json pair"}, run: (*app).cmdPair,
 	},
 	{
@@ -254,7 +260,7 @@ var commandTable = []commandSpec{
 	{
 		name: "remote", usage: "remote <enable|disable|status>",
 		summary: "manage tailnet-only remote access", group: adminCommandGroup, localJSON: true,
-		longHelp: "Enable, disable, or inspect the Tailscale Serve HTTPS endpoint used for Sessions remote access.",
+		longHelp: "Enable, disable, or inspect the Tailscale Serve HTTPS endpoint used for Sessions remote access. Once enabled, other Sessions apps in the same tailnet can discover this Mac and request access; the host must accept before a revocable device credential is issued.",
 		examples: []string{"sessions remote enable", "sessions remote status", "sessions remote disable"}, run: (*app).cmdRemote,
 	},
 	{

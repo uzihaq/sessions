@@ -37,8 +37,8 @@ function workspaceKind(kind: DirectoryCandidate['kind']): string {
 }
 
 function fallbackWorkspaces(path: string): DirectoryCandidate[] {
-  const macHome = /^\/Users\/[^/]+/.exec(path)?.[0];
-  const home = macHome ?? path.trim();
+  const inferredHome = /^(?:\/Users|\/home)\/[^/]+/.exec(path)?.[0];
+  const home = inferredHome ?? path.trim();
   if (!home) return [];
   return [
     { path: home, label: '~', kind: 'home' },
@@ -245,6 +245,12 @@ export function NewSessionDialog({ onClose, onOpenResume, parentSession = null }
     () => (recentWorkspaces.length > 0 ? recentWorkspaces : fallbackWorkspaces(initialDefaults.cwd || cwd)).slice(0, 3),
     [recentWorkspaces, initialDefaults.cwd, cwd]
   );
+  const homeWorkspace = useMemo(
+    () => recentWorkspaces.find((item) => item.kind === 'home')?.path
+      ?? fallbackWorkspaces(initialDefaults.cwd || cwd).find((item) => item.kind === 'home')?.path
+      ?? '',
+    [recentWorkspaces, initialDefaults.cwd, cwd]
+  );
 
   const startSession = async (resumeId: string | null): Promise<void> => {
     if (!profileValid) {
@@ -335,6 +341,7 @@ export function NewSessionDialog({ onClose, onOpenResume, parentSession = null }
               </div>
               {displayedWorkspaces.length > 0 ? <div className="recent-workspaces">{displayedWorkspaces.map((item) => <button type="button" key={item.path} className={cwd === item.path ? 'is-active' : ''} onClick={() => setCwd(item.path)}><span className="workspace-folder-icon" aria-hidden /><span className="workspace-card-copy"><strong>{item.label}</strong><small>{getActiveServer().name} · {workspaceKind(item.kind)}</small></span><span className="workspace-radio" aria-hidden /></button>)}</div> : null}
               <div className="workspace-selection"><span className="workspace-status-dot" aria-hidden /><strong>{getActiveServer().name}</strong><span>·</span><code>{cwd || 'Choose a workspace'}</code></div>
+              {cwd === homeWorkspace ? <span className="field-help">Your whole home folder includes protected locations such as Music and cloud drives. Choose a project folder to avoid extra macOS permission prompts.</span> : null}
             </div>
           )}
           <div className="field launcher-agent-field">

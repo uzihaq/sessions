@@ -120,6 +120,43 @@ export async function listSessions(): Promise<SessionInfo[]> {
   return body.sessions.map(normalizeSessionInfo);
 }
 
+export interface TailnetAccessRequest {
+  request_id: string;
+  client_id: string;
+  name: string;
+  login: string;
+  user_name?: string;
+  created_at: string;
+  expires_at: string;
+  status: 'pending';
+}
+
+export async function listTailnetAccessRequests(
+  server: ServerConfig = getActiveServer()
+): Promise<TailnetAccessRequest[] | null> {
+  const r = await serverFetch(server, `${httpBaseForServer(server)}/api/tailnet/access/requests`);
+  if (r.status === 404) return null;
+  const body = await json<{ requests: TailnetAccessRequest[] }>(r);
+  return body.requests;
+}
+
+export async function decideTailnetAccessRequest(
+  requestId: string,
+  decision: 'accept' | 'deny',
+  server: ServerConfig = getActiveServer()
+): Promise<void> {
+  const r = await serverFetch(
+    server,
+    `${httpBaseForServer(server)}/api/tailnet/access/requests/${encodeURIComponent(requestId)}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decision })
+    }
+  );
+  await json<TailnetAccessRequest>(r);
+}
+
 type WireSessionInfo = SessionInfo & {
   config_dir?: string;
   worktree_path?: string;
@@ -137,6 +174,7 @@ function normalizeSessionInfo(session: SessionInfo): SessionInfo {
   const wire = session as WireSessionInfo;
   return {
     ...session,
+    args: Array.isArray(session.args) ? session.args : [],
     configDir: session.configDir ?? wire.config_dir,
     worktreePath: session.worktreePath ?? wire.worktree_path,
     sourceRepo: session.sourceRepo ?? wire.source_repo,
@@ -254,10 +292,21 @@ export interface SearchMatch {
   session_id: string;
   name: string;
   tool: 'claude' | 'codex' | 'shell';
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
+  kind?: 'delegation' | 'handoff' | 'status' | 'automation';
   timestamp: string | null;
-  text: string;
+  message_index: number;
+  message_id: string;
   snippet: string;
+  match_start: number;
+  match_end: number;
+  score: number;
+  cwd: string;
+  machine: string;
+  creator_kind?: string;
+  creator_id?: string;
+  context_before?: HistoryMessage[];
+  context_after?: HistoryMessage[];
 }
 
 export interface SearchResponse { matches: SearchMatch[]; total: number }
@@ -268,7 +317,20 @@ export interface SmartSearchPlan { provider: AIProvider; query: string }
 
 export async function searchServer(
   server: ServerConfig,
-  options: { query: string; mode: 'ranked' | 'exact' | 'regex'; role?: string; tool?: string; limit?: number },
+  options: {
+    query: string;
+    mode: 'ranked' | 'exact' | 'regex';
+    role?: string;
+    tool?: string;
+    session?: string;
+    name?: string;
+    cwd?: string;
+    since?: string;
+    until?: string;
+    context?: number;
+    timeline?: boolean;
+    limit?: number;
+  },
   signal?: AbortSignal
 ): Promise<SearchResponse> {
   const query = new URLSearchParams({ q: options.query, limit: String(options.limit ?? 100) });
@@ -276,6 +338,13 @@ export async function searchServer(
   if (options.mode === 'regex') query.set('regex', 'true');
   if (options.role) query.set('role', options.role);
   if (options.tool) query.set('tool', options.tool);
+  if (options.session) query.set('session', options.session);
+  if (options.name) query.set('name', options.name);
+  if (options.cwd) query.set('cwd', options.cwd);
+  if (options.since) query.set('since', options.since);
+  if (options.until) query.set('until', options.until);
+  if (options.context !== undefined) query.set('context', String(options.context));
+  if (options.timeline) query.set('timeline', 'true');
   const r = await serverFetch(server, `${httpBaseForServer(server)}/api/search?${query.toString()}`, { signal });
   return json<SearchResponse>(r);
 }
@@ -324,6 +393,8 @@ export interface HistorySession {
   tool: 'claude' | 'codex' | 'shell';
   cwd: string;
   machine: string;
+  creator_kind?: string;
+  creator_id?: string;
   created_at: number;
   last_activity_at: number;
   message_count: number;
@@ -331,7 +402,10 @@ export interface HistorySession {
 }
 
 export interface HistoryMessage {
-  role: 'user' | 'assistant';
+  index: number;
+  id: string;
+  role: 'user' | 'assistant' | 'tool';
+  kind?: 'delegation' | 'handoff' | 'status' | 'automation';
   text: string;
   timestamp: string | null;
 }
@@ -341,16 +415,35 @@ export interface HistoryTranscript {
   session: HistorySession;
   messages: HistoryMessage[];
   truncated?: boolean;
+  has_more?: boolean;
+  next_index?: number;
 }
 
 export async function fetchServerHistoryTranscript(
   server: ServerConfig,
   sessionId: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  window?: {
+    preview?: boolean;
+    start?: number;
+    end?: number;
+    role?: 'user' | 'assistant' | 'tool';
+    anchor?: number;
+    messageId?: string;
+  }
 ): Promise<HistoryTranscript> {
+  const query = new URLSearchParams({ format: 'json' });
+  if (window?.start !== undefined) query.set('start', String(window.start));
+  if (window?.end !== undefined) query.set('end', String(window.end));
+  if (window?.role) query.set('role', window.role);
+  if (window?.messageId) {
+    query.set('anchor', String(window.anchor ?? 0));
+    query.set('message_id', window.messageId);
+  }
+  const variant = window?.preview ? '/preview' : window ? '/window' : '';
   const r = await serverFetch(
     server,
-    `${httpBaseForServer(server)}/api/history/${encodeURIComponent(sessionId)}/preview?format=json`,
+    `${httpBaseForServer(server)}/api/history/${encodeURIComponent(sessionId)}${variant}?${query.toString()}`,
     { signal }
   );
   if (r.status === 404) {
@@ -364,6 +457,9 @@ export async function fetchServerHistoryTranscript(
       if (error instanceof Error && error.message.startsWith('This conversation')) throw error;
     }
     throw new Error('Conversation viewing is not available on this runtime. Update Sessions or connect to a current sessionsd.');
+  }
+  if (r.status === 409) {
+    throw new Error('This conversation changed after the search result was created. Go back and run the search again to refresh the bookmark.');
   }
   return json<HistoryTranscript>(r);
 }

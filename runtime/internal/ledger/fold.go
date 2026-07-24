@@ -29,6 +29,8 @@ type LaneState struct {
 	LastProviderActivityAtMS int64
 	LastActivitySource       ActivitySource
 	LatestEvent              EventType
+	ClosedAtMS               int64
+	ArchivedAtMS             int64
 	ExitCode                 *int
 	ExitSignal               *string
 
@@ -43,6 +45,7 @@ type LaneState struct {
 	RunnerLost        bool
 	Reaped            bool
 	ReopenedAs        string
+	Archived          bool
 	ProviderReboundAs string
 	MovedToMachine    string
 	MovedToLaneID     string
@@ -161,9 +164,15 @@ func Fold(events []Event) []LaneState {
 			// can turn a tombstoned lane into a recovery candidate.
 			state.UserKillRequested = true
 			state.ManagedActive = false
+			if state.ClosedAtMS == 0 {
+				state.ClosedAtMS = event.AtMS
+			}
 		case EventRunnerExited:
 			state.RunnerExited = true
 			state.ManagedActive = false
+			if state.ClosedAtMS == 0 {
+				state.ClosedAtMS = event.AtMS
+			}
 			var payload runnerExitPayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
 				state.ExitCode = payload.Code
@@ -175,12 +184,22 @@ func Fold(events []Event) []LaneState {
 		case EventReaped:
 			state.Reaped = true
 			state.ManagedActive = false
+			if state.ClosedAtMS == 0 {
+				state.ClosedAtMS = event.AtMS
+			}
 		case EventReopened:
 			var payload reopenedPayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
 				state.ReopenedAs = payload.NewLaneID
 				state.ManagedActive = false
+				if state.ClosedAtMS == 0 {
+					state.ClosedAtMS = event.AtMS
+				}
 			}
+		case EventArchived:
+			state.Archived = true
+			state.ArchivedAtMS = event.AtMS
+			state.ManagedActive = false
 		case EventMovedTo:
 			var payload movedToPayload
 			if json.Unmarshal(event.Payload, &payload) == nil {
@@ -243,7 +262,7 @@ type Classification struct {
 
 func ClassifyLane(lane LaneState, runtime RuntimeState) Classification {
 	classification := Classification{Lane: lane}
-	closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped || lane.ReopenedAs != ""
+	closed := lane.UserKillRequested || lane.RunnerExited || lane.Reaped || lane.ReopenedAs != "" || lane.Archived
 	switch {
 	case closed:
 		classification.Class = ClassClosed

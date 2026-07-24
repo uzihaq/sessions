@@ -42,6 +42,15 @@ created lazily on the first protected request if no valid token exists. A
 present `~/.local/state/sessions/open` file bypasses token auth. Failed auth is
 `401 {"error":"unauthorized"}`.
 
+The Go runtime adds two narrowly exempt Tailscale bootstrap routes documented
+below. They do not accept caller-supplied identity: the immediate TCP peer must
+be loopback and Tailscale Serve must have injected exactly one valid
+`Tailscale-User-Login` header. Every approval-management route and every route
+used after the bootstrap still requires the normal bearer credential. Local
+processes are outside this identity-display boundary: like the normal loopback
+API shortcut, a malicious process already running as the user can fabricate
+these headers and already has local daemon control.
+
 ## Origin and CORS rules
 
 An absent `Origin` is allowed. A present value must parse as a URL and satisfy
@@ -118,7 +127,7 @@ No auth. Returns 200:
 {
   "ok": true,
   "name": "sessionsd",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "listen": { "host": "127.0.0.1", "port": 8787 },
   "system": { "os": "darwin", "arch": "arm64" },
   "discovering": false,
@@ -139,7 +148,7 @@ No auth. Returns 200:
 {
   "ok": true,
   "name": "sessionsd",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "discovering": false,
   "sessionsLoaded": 1,
   "uptimeSec": 12,
@@ -294,6 +303,30 @@ refused operations return `action:"skipped"` with a `reason`. Dry-run returns
 There is no force option, and session kill does not call this route
 ([`internal/session/worktrees.go`](../internal/session/worktrees.go),
 [`internal/session/manager.go`](../internal/session/manager.go)).
+
+### `POST /api/retention/gc`
+
+Auth required. Body is
+`{"older_than_ms":2592000000,"dry_run":true|false}`. The age must be between
+one hour and ten years. This is list-retention, not transcript deletion: it
+considers only durably closed ledger records and appends an `archived` fact
+instead of deleting lifecycle events or runner artifacts. A live runner is
+always skipped. An ancestor is also skipped while any descendant remains
+retained, so archiving cannot break the visible lineage graph.
+
+The default CLI flow is a dry run (`sessions gc`); mutation requires
+`sessions gc --apply`. Each result item reports `archived`, `would_archive`, or
+`skipped` plus an instructional reason. Success is:
+
+```json
+{"dry_run":true,"cutoff_ms":1782250000000,"items":[]}
+```
+
+The route is implemented by
+[`internal/api/retention_handlers.go`](../internal/api/retention_handlers.go);
+candidate selection and the atomic append-only batch live in
+[`internal/session/retention.go`](../internal/session/retention.go) and
+[`internal/ledger/store.go`](../internal/ledger/store.go).
 
 ### `DELETE /api/sessions/:id`
 
@@ -471,6 +504,63 @@ Errors:
   input first falls back to `path.resolve`, the eventual `statSync` normally
   supplies the `ENOENT` 404.
 
+## Go runtime extension: tailnet discovery approval
+
+The native client discovers online peers from the local `tailscale status
+--json` result and probes their unauthenticated `/api/health` route. A healthy
+peer is only a discovery candidate; it grants no session access.
+
+`POST /api/tailnet/access/request` is exempt from bearer authentication only
+when the immediate connection came through local Tailscale Serve with a
+verified Tailscale identity. It rejects any request carrying an `Origin` header
+and requires `Content-Type: application/json`, so browser JavaScript—including
+the allowed Somewhere origins and daemon-served same-origin UI—cannot
+participate in native onboarding or read its credential. It accepts:
+
+```json
+{"client_id":"<lowercase v4 UUID>","name":"MacBook Pro"}
+```
+
+It returns 202 with a ten-minute, in-memory request:
+
+```json
+{"request_id":"<UUID>","request_secret":"<random secret>","expires_at":"<RFC3339>","status":"pending"}
+```
+
+Repeating the request for the same Tailscale login and client UUID returns the
+same pending request. At most 64 requests wait at once. The request secret is
+returned only to the requester and is never exposed by the host listing.
+
+The normally authenticated `GET /api/tailnet/access/requests` returns
+`{"requests":[...]}` with pending request ID, client ID, device name, Tailscale
+login/display name, creation/expiry times, and status. The authenticated
+`POST /api/tailnet/access/requests/<request-id>` accepts
+`{"decision":"accept"}` or `{"decision":"deny"}`.
+
+The requester polls `POST /api/tailnet/access/claim` through the same verified
+Tailscale Serve identity with:
+
+```json
+{"request_id":"<UUID>","request_secret":"<random secret>"}
+```
+
+Pending claims return 202, denied claims 403, and expired or mismatched claims
+410. An accepted claim creates a two-minute pending per-device bearer
+credential plus the daemon's stable machine ID/name, using the same response
+shape as `POST /api/pair/claim`. Repeated claims return the same device ID and
+token, so a lost 201 response is safe. The first authenticated API request with
+that token durably acknowledges it; until then it is hidden from the device
+list and cannot authorize after its deadline. Issuance starts its own two-minute
+acknowledgement window even when host approval happened near the original
+request deadline. Thus a response lost before the client receives the token
+cannot leave a permanent active credential. Expired pending device records are
+purged when the device store is next loaded. Pending request state itself
+disappears on daemon restart or after its current deadline; the client can
+safely request again.
+
+`sessions pair` remains the explicit same-LAN fallback for devices without
+Tailscale. It no longer creates Tailscale QR links.
+
 ## Go runtime extensions: smart search
 
 The following authenticated routes are additive Go-runtime surfaces implemented
@@ -482,6 +572,37 @@ by `internal/api/search_handlers.go`; older `prettyd` builds return the standard
 Returns the smart-feature provider as `200 {"provider":"codex"}` or
 `200 {"provider":"claude"}`. A missing setting defaults to `codex`; the default
 does not itself launch a model.
+
+### `GET /api/search`
+
+Searches normalized Claude and Codex history on this daemon. `q` is required.
+Ranked FTS5 recall is selected with `ranked=true`; bare terms are OR
+alternatives, exact phrases and uppercase `AND`/`OR`/`NOT` are accepted, and
+`near(a,b,N)` becomes an FTS5 proximity expression. `regex=true` selects Go
+regular-expression matching; omitting both uses a case-insensitive contiguous
+substring. Ranked and regex cannot be combined.
+
+Optional filters are `session` (one ID/prefix or a comma-separated set),
+`role=user|assistant|tool`, `tool=claude|codex|shell`, `name` (a session-name
+glob), `cwd` (that workspace or a descendant), `since` and `until`
+(`YYYY-MM-DD` or RFC3339), `context=0..20`, `timeline=true|false`, and
+`limit=1..1000`. A date-only `until` includes that whole local calendar day.
+Search spans every known persisted session by default. Invalid filters,
+ambiguous session prefixes, malformed regex/FTS queries, or incompatible modes
+return 400.
+
+Each match includes session/name/provider/role/timestamp and a bounded snippet,
+a stable zero-based `message_index`, content-derived `message_id`, byte match
+span, normalized ranking score, workspace, machine, optional creator identity,
+and requested neighboring messages. The full matching body is deliberately
+omitted; the anchored history route retrieves it only when opened. Ranked
+results are best-first unless timeline mode merges them chronologically.
+Synthetic scheduled/task notifications and selected session-control relay
+payloads have role `tool`; `kind` distinguishes `automation`, `delegation`,
+`handoff`, and `status`, while arbitrary command/tool output is not indexed.
+The private FTS index uses source path/size/nanosecond-mtime fingerprints,
+serializes refreshes, stops parsing a canceled request, and purges indexed text
+when its provider history is no longer available.
 
 ### `PUT /api/ai/settings`
 
@@ -529,7 +650,7 @@ sends no transcripts, snippets, session IDs, results, or index content. The CLI
 chooses its own default model. Success returns the bounded FTS5 plan:
 
 ```json
-{"provider":"codex","query":"apple AND signing"}
+{"provider":"codex","query":"apple OR notarization OR signing"}
 ```
 
 The browser applies that query through the existing local `GET /api/search`
@@ -541,10 +662,27 @@ failures return 502, and other methods return 405. The handler deadline is two
 minutes. Cache keys are SHA-256 digests, the cache holds at most 128 plans, and
 entries are evicted on their expiry timer even without another lookup.
 
-## Go runtime extension: bounded history preview
+## Go runtime extensions: history views
 
 The existing authenticated `GET /api/history/<id>` route remains complete by
-default. Native interactive viewing requests the distinct
+default. The transcript response assigns a stable zero-based `index` to every
+normalized message.
+
+Native search viewing first requests
+`GET /api/history/<id>/window?format=json&start=N&end=M`; `end` is exclusive.
+One response spans at most 500 original message positions; omitting `end`
+selects the next 500 after `start`. `role=user|assistant|tool` retains only that
+normalized role inside the page. The response keeps the complete transcript
+count in `session.message_count`, preserves original message indices, sets
+`truncated:true` when it omitted messages, and returns `has_more` plus
+`next_index` for paging. The initial search open also supplies
+`anchor=<message_index>&message_id=<message_id>`; a stale or rewritten bookmark
+returns 409 rather than marking the wrong message. Invalid or overlarge ranges
+and invalid roles return 400. This lets the native client page through
+user-only, after-hit, bookmarked-range, or full views without materializing a
+giant transcript in one daemon response or WebView render.
+
+The compatibility viewer may request the distinct
 `GET /api/history/<id>/preview?format=json` path, which reads at most the latest 2 MiB of the JSONL
 artifact and returns at most its latest 400 normalized messages. The additive
 response field `"truncated":true` appears when either bound removed older

@@ -35,18 +35,26 @@ const (
 	creatorOwnerHeader   = "X-Sessions-Owner-ID"
 )
 
+// Version is stamped into sessionsd at build time and reported by both health
+// endpoints. Keep the source fallback aligned with the current app version so
+// an un-stamped development build is still honest.
+var Version = "0.2.1"
+
 type Server struct {
 	config               state.Config
 	registry             sessionService
 	push                 pushService
 	tokens               tokenStore
 	pair                 *pairService
+	tailnetAccess        *tailnetAccessService
 	lan                  *lanListener
 	backups              *backup.Service
 	integrationEndpoints *integrations.Service
 	usage                *usage.Service
 	recaps               *recap.Service
 	smartSearch          *smartsearch.Service
+	identity             machineIdentity
+	identityError        error
 }
 
 type sessionService interface {
@@ -83,9 +91,12 @@ func NewWithUsage(config state.Config, registry sessionService, localUsage *usag
 		}
 		notifications = sessionruntime.NewPushService(root)
 	}
+	identity, identityErr := loadOrCreateMachineIdentity(config)
 	server := &Server{
 		config: config, registry: registry, push: notifications, tokens: tokenStore{path: config.TokenPath},
-		pair: newPairService(config),
+		pair:          newPairService(config),
+		tailnetAccess: newTailnetAccessService(),
+		identity:      identity, identityError: identityErr,
 		integrationEndpoints: integrations.NewService(integrations.ServiceOptions{
 			StateDir: config.StateRoot, RunnerStateDir: config.RunnerStateDir,
 		}),
@@ -137,7 +148,7 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	}
 	if path == "/api/health" && request.Method == http.MethodGet {
 		s.sendJSON(response, http.StatusOK, map[string]any{
-			"ok": true, "name": "sessionsd", "version": "0.1.0",
+			"ok": true, "name": "sessionsd", "version": Version,
 			"listen":         map[string]any{"host": s.config.Host, "port": s.config.Port},
 			"lan":            s.lan.state(),
 			"system":         map[string]any{"os": goruntime.GOOS, "arch": goruntime.GOARCH},
@@ -148,7 +159,7 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	}
 	if path == "/api/health/deep" && request.Method == http.MethodGet {
 		s.sendJSON(response, http.StatusOK, map[string]any{
-			"ok": true, "name": "sessionsd", "version": "0.1.0",
+			"ok": true, "name": "sessionsd", "version": Version,
 			"discovering":    s.registry.IsDiscovering(),
 			"sessionsLoaded": len(s.registry.List(true)),
 			"uptimeSec":      int64(math.Round(s.registry.Uptime().Seconds())),
@@ -157,6 +168,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if s.handlePairClaimRoute(response, request, corsOrigin) {
+		return
+	}
+	if s.handleTailnetAccessPublicRoute(response, request, corsOrigin) {
 		return
 	}
 
@@ -184,6 +198,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 		return
 	}
 	if s.handlePairRoutes(response, request, corsOrigin) {
+		return
+	}
+	if s.handleTailnetAccessAdminRoute(response, request, corsOrigin) {
 		return
 	}
 	if path == "/api/push/vapid" && request.Method == http.MethodGet {
@@ -229,6 +246,9 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if path == "/api/sessions" && request.Method == http.MethodGet {
 		includeExited := request.URL.Query().Get("include_exited") == "1"
 		s.sendJSON(response, http.StatusOK, map[string]any{"sessions": s.registry.List(includeExited)}, corsOrigin)
+		return
+	}
+	if s.handleRetentionRoute(response, request, corsOrigin) {
 		return
 	}
 	if s.handleMoveRoute(response, request, corsOrigin) {

@@ -57,17 +57,20 @@ type pairingTicketResponse struct {
 }
 
 type pairingClaimResponse struct {
-	DeviceID string `json:"device_id"`
-	Token    string `json:"token"`
-	Name     string `json:"name"`
+	DeviceID    string `json:"device_id"`
+	Token       string `json:"token"`
+	Name        string `json:"name"`
+	MachineID   string `json:"machine_id,omitempty"`
+	MachineName string `json:"machine_name,omitempty"`
 }
 
 type deviceRecord struct {
-	DeviceID   string    `json:"device_id"`
-	Name       string    `json:"name"`
-	TokenHash  string    `json:"token_hash"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at"`
+	DeviceID     string     `json:"device_id"`
+	Name         string     `json:"name"`
+	TokenHash    string     `json:"token_hash"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUsedAt   time.Time  `json:"last_used_at"`
+	PendingUntil *time.Time `json:"pending_until,omitempty"`
 }
 
 type deviceView struct {
@@ -163,9 +166,6 @@ func (p *pairService) claim(encoded, name, userAgent string) (pairingClaimRespon
 		p.mu.Unlock()
 		return pairingClaimResponse{}, errPairTicketGone
 	}
-	delete(p.tickets, id)
-	p.mu.Unlock()
-
 	deviceName := truncateDeviceName(name)
 	if deviceName == "" {
 		deviceName = ticket.Name
@@ -178,8 +178,14 @@ func (p *pairService) claim(encoded, name, userAgent string) (pairingClaimRespon
 	}
 	record, token, err := p.devices.create(deviceName)
 	if err != nil {
+		p.mu.Unlock()
 		return pairingClaimResponse{}, err
 	}
+	// Keep the ticket reserved while the credential is made durable. This
+	// prevents concurrent claims and, if persistence fails, leaves the
+	// single-use link available for a retry instead of burning it.
+	delete(p.tickets, id)
+	p.mu.Unlock()
 	return pairingClaimResponse{DeviceID: record.DeviceID, Token: token, Name: record.Name}, nil
 }
 
@@ -206,6 +212,15 @@ func (p *pairService) pruneFailuresLocked(now time.Time) {
 }
 
 func (s *deviceStore) create(name string) (deviceRecord, string, error) {
+	return s.createPending(name, time.Time{})
+}
+
+// createPending persists a credential which cannot authorize after pendingUntil
+// unless the client proves receipt by using it once before then. The first
+// successful authorization clears PendingUntil durably. This makes an accepted
+// tailnet claim idempotent without leaving a live orphan if its HTTP response is
+// lost.
+func (s *deviceStore) createPending(name string, pendingUntil time.Time) (deviceRecord, string, error) {
 	token, err := randomBase64URL(32)
 	if err != nil {
 		return deviceRecord{}, "", fmt.Errorf("generate device token: %w", err)
@@ -219,6 +234,10 @@ func (s *deviceStore) create(name string) (deviceRecord, string, error) {
 	record := deviceRecord{
 		DeviceID: id, Name: name, TokenHash: hex.EncodeToString(hash[:]),
 		CreatedAt: now, LastUsedAt: now,
+	}
+	if !pendingUntil.IsZero() {
+		expires := pendingUntil.UTC()
+		record.PendingUntil = &expires
 	}
 
 	s.mu.Lock()
@@ -259,6 +278,31 @@ func (s *deviceStore) authorize(token string) (bool, error) {
 			continue
 		}
 		now := s.now().UTC()
+		if record.PendingUntil != nil {
+			if !now.Before(*record.PendingUntil) {
+				lastPersisted := s.lastPersisted[id]
+				delete(s.records, id)
+				delete(s.lastPersisted, id)
+				if err := s.saveLocked(); err != nil {
+					s.records[id] = record
+					s.lastPersisted[id] = lastPersisted
+					return false, err
+				}
+				return false, nil
+			}
+			// The first authenticated API request is the acknowledgement that
+			// the claimant received and durably stored this token.
+			pendingRecord := record
+			record.PendingUntil = nil
+			record.LastUsedAt = now
+			s.records[id] = record
+			if err := s.saveLocked(); err != nil {
+				s.records[id] = pendingRecord
+				return false, err
+			}
+			s.lastPersisted[id] = now
+			return true, nil
+		}
 		record.LastUsedAt = now
 		s.records[id] = record
 		if now.Sub(s.lastPersisted[id]) >= deviceLastUsedWriteGap {
@@ -280,6 +324,9 @@ func (s *deviceStore) list() ([]deviceView, error) {
 	}
 	devices := make([]deviceView, 0, len(s.records))
 	for _, record := range s.records {
+		if record.PendingUntil != nil {
+			continue
+		}
 		devices = append(devices, deviceView{
 			DeviceID: record.DeviceID, Name: record.Name,
 			CreatedAt: record.CreatedAt, LastUsedAt: record.LastUsedAt,
@@ -333,6 +380,8 @@ func (s *deviceStore) loadLocked() error {
 	}
 	records := make(map[string]deviceRecord, len(stored.Devices))
 	lastPersisted := make(map[string]time.Time, len(stored.Devices))
+	prunedExpiredPending := false
+	now := s.now().UTC()
 	for _, record := range stored.Devices {
 		if record.DeviceID == "" || record.Name == "" || record.CreatedAt.IsZero() || record.LastUsedAt.IsZero() {
 			return errors.New("decode devices: invalid device record")
@@ -344,6 +393,10 @@ func (s *deviceStore) loadLocked() error {
 		if _, duplicate := records[record.DeviceID]; duplicate {
 			return fmt.Errorf("decode devices: duplicate device id %s", record.DeviceID)
 		}
+		if record.PendingUntil != nil && !now.Before(*record.PendingUntil) {
+			prunedExpiredPending = true
+			continue
+		}
 		records[record.DeviceID] = record
 		lastPersisted[record.DeviceID] = record.LastUsedAt
 	}
@@ -353,6 +406,12 @@ func (s *deviceStore) loadLocked() error {
 	s.records = records
 	s.lastPersisted = lastPersisted
 	s.loaded = true
+	if prunedExpiredPending {
+		if err := s.saveLocked(); err != nil {
+			s.loaded = false
+			return fmt.Errorf("purge expired pending devices: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -405,6 +464,12 @@ func (s *Server) handlePairClaimRoute(response http.ResponseWriter, request *htt
 		s.sendJSON(response, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"}, corsOrigin)
 		return true
 	}
+	if s.identityError != nil || s.identity.ID == "" {
+		s.sendJSON(response, http.StatusServiceUnavailable, map[string]any{
+			"error": "pairing is temporarily unavailable on this machine",
+		}, corsOrigin)
+		return true
+	}
 	var body struct {
 		Ticket string `json:"ticket"`
 		Name   string `json:"name"`
@@ -428,6 +493,8 @@ func (s *Server) handlePairClaimRoute(response http.ResponseWriter, request *htt
 		s.sendJSON(response, http.StatusInternalServerError, map[string]any{"error": err.Error()}, corsOrigin)
 		return true
 	}
+	claimed.MachineID = s.identity.ID
+	claimed.MachineName = s.identity.Name
 	s.sendJSON(response, http.StatusCreated, claimed, corsOrigin)
 	return true
 }

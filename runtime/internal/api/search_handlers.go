@@ -133,6 +133,7 @@ func searchOptions(request *http.Request) (historysearch.Options, error) {
 	options := historysearch.Options{
 		Query: query.Get("q"), SessionID: query.Get("session"),
 		Role: query.Get("role"), Tool: query.Get("tool"),
+		NameGlob: query.Get("name"), CWD: query.Get("cwd"),
 	}
 	if raw := query.Get("regex"); raw != "" {
 		value, err := strconv.ParseBool(raw)
@@ -158,7 +159,53 @@ func searchOptions(request *http.Request) (historysearch.Options, error) {
 		}
 		options.Limit = value
 	}
+	if raw := query.Get("context"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return historysearch.Options{}, &searchQueryError{message: "context must be an integer"}
+		}
+		if value < 0 || value > historysearch.MaxContext {
+			return historysearch.Options{}, &searchQueryError{message: "context must be between 0 and " + strconv.Itoa(historysearch.MaxContext)}
+		}
+		options.Context = value
+	}
+	if raw := query.Get("timeline"); raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			return historysearch.Options{}, &searchQueryError{message: "timeline must be true or false"}
+		}
+		options.Timeline = value
+	}
+	if raw := query.Get("since"); raw != "" {
+		value, err := parseSearchTime(raw, false)
+		if err != nil {
+			return historysearch.Options{}, err
+		}
+		options.SinceMS = value
+	}
+	if raw := query.Get("until"); raw != "" {
+		value, err := parseSearchTime(raw, true)
+		if err != nil {
+			return historysearch.Options{}, err
+		}
+		options.UntilMS = value
+	}
 	return options, nil
+}
+
+func parseSearchTime(raw string, endOfDate bool) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return parsed.UnixMilli(), nil
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+	if err != nil {
+		return 0, &searchQueryError{message: "date filters must be YYYY-MM-DD or RFC3339"}
+	}
+	if endOfDate {
+		parsed = parsed.AddDate(0, 0, 1)
+	}
+	return parsed.UnixMilli(), nil
 }
 
 type searchQueryError struct{ message string }

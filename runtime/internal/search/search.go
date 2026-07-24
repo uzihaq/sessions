@@ -7,8 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -19,9 +22,10 @@ import (
 const (
 	DefaultLimit     = 100
 	MaxLimit         = 1000
-	MaxFileReadBytes = 64 << 20
+	MaxFileReadBytes = 0
 	SnippetContext   = 96
 	MaxSnippetRunes  = 240
+	MaxContext       = 20
 )
 
 type Options struct {
@@ -29,19 +33,37 @@ type Options struct {
 	SessionID string
 	Role      string
 	Tool      string
+	NameGlob  string
+	CWD       string
+	SinceMS   int64
+	UntilMS   int64
+	Context   int
+	Timeline  bool
 	Regex     bool
 	Ranked    bool
 	Limit     int
 }
 
 type Match struct {
-	SessionID string  `json:"session_id"`
-	Name      string  `json:"name"`
-	Tool      string  `json:"tool"`
-	Role      string  `json:"role"`
-	Timestamp *string `json:"timestamp"`
-	Text      string  `json:"text"`
-	Snippet   string  `json:"snippet"`
+	SessionID     string                           `json:"session_id"`
+	Name          string                           `json:"name"`
+	Tool          string                           `json:"tool"`
+	Role          string                           `json:"role"`
+	Kind          string                           `json:"kind,omitempty"`
+	Timestamp     *string                          `json:"timestamp"`
+	MessageIndex  int                              `json:"message_index"`
+	MessageID     string                           `json:"message_id"`
+	Text          string                           `json:"-"`
+	Snippet       string                           `json:"snippet"`
+	MatchStart    int                              `json:"match_start"`
+	MatchEnd      int                              `json:"match_end"`
+	Score         float64                          `json:"score"`
+	CWD           string                           `json:"cwd"`
+	Machine       string                           `json:"machine"`
+	CreatorKind   string                           `json:"creator_kind,omitempty"`
+	CreatorID     string                           `json:"creator_id,omitempty"`
+	ContextBefore []integrations.TranscriptMessage `json:"context_before,omitempty"`
+	ContextAfter  []integrations.TranscriptMessage `json:"context_after,omitempty"`
 }
 
 type Response struct {
@@ -51,7 +73,7 @@ type Response struct {
 
 type HistorySource interface {
 	SearchSessions([]state.SessionInfo) ([]integrations.HistorySession, error)
-	TranscriptLimited([]state.SessionInfo, string, int64) (integrations.TranscriptResponse, error)
+	TranscriptLimitedContext(context.Context, []state.SessionInfo, string, int64) (integrations.TranscriptResponse, error)
 }
 
 type optionError struct{ message string }
@@ -98,11 +120,18 @@ func (m matcher) find(text string) (int, int, bool) {
 func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, options Options, indexPath string) (Response, error) {
 	options.Role = strings.ToLower(strings.TrimSpace(options.Role))
 	options.Tool = strings.ToLower(strings.TrimSpace(options.Tool))
+	options.NameGlob = strings.TrimSpace(options.NameGlob)
+	options.CWD = strings.TrimSpace(options.CWD)
+	if options.NameGlob != "" {
+		if _, err := filepath.Match(options.NameGlob, "session"); err != nil {
+			return Response{}, &optionError{message: fmt.Sprintf("invalid session name glob: %v", err)}
+		}
+	}
 	if options.Ranked && options.Regex {
 		return Response{}, &optionError{message: "--ranked cannot combine with --regex"}
 	}
-	if options.Role != "" && options.Role != "user" && options.Role != "assistant" {
-		return Response{}, &optionError{message: "role must be user or assistant"}
+	if options.Role != "" && options.Role != "user" && options.Role != "assistant" && options.Role != "tool" {
+		return Response{}, &optionError{message: "role must be user, assistant, or tool"}
 	}
 	if options.Tool != "" && options.Tool != "claude" && options.Tool != "codex" && options.Tool != "shell" {
 		return Response{}, &optionError{message: "tool must be claude, codex, or shell"}
@@ -112,6 +141,12 @@ func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, op
 	}
 	if options.Limit < 1 || options.Limit > MaxLimit {
 		return Response{}, &optionError{message: fmt.Sprintf("limit must be between 1 and %d", MaxLimit)}
+	}
+	if options.Context < 0 || options.Context > MaxContext {
+		return Response{}, &optionError{message: fmt.Sprintf("context must be between 0 and %d", MaxContext)}
+	}
+	if options.SinceMS != 0 && options.UntilMS != 0 && options.SinceMS >= options.UntilMS {
+		return Response{}, &optionError{message: "since must be before until"}
 	}
 	if options.Ranked {
 		return runRanked(ctx, source, live, options, indexPath)
@@ -125,7 +160,7 @@ func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, op
 	if err != nil {
 		return Response{}, err
 	}
-	selectedID, err := resolveSessionID(sessions, options.SessionID)
+	selectedIDs, err := resolveSessionIDs(sessions, options.SessionID)
 	if err != nil {
 		return Response{}, err
 	}
@@ -135,24 +170,27 @@ func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, op
 			return Response{}, err
 		}
 		tool := normalizeTool(session.Tool)
-		if selectedID != "" && session.ID != selectedID {
+		if len(selectedIDs) > 0 && !selectedIDs[session.ID] {
 			continue
 		}
 		if options.Tool != "" && tool != options.Tool {
 			continue
 		}
+		if !sessionAllowed(session, options) {
+			continue
+		}
 		if !session.ConversationAvailable {
 			continue
 		}
-		transcript, err := source.TranscriptLimited(live, session.ID, MaxFileReadBytes)
+		transcript, err := source.TranscriptLimitedContext(ctx, live, session.ID, MaxFileReadBytes)
 		if errors.Is(err, integrations.ErrHistoryNotFound) {
 			continue
 		}
 		if err != nil {
 			return Response{}, err
 		}
-		for _, message := range transcript.Messages {
-			if options.Role != "" && message.Role != options.Role {
+		for index, message := range transcript.Messages {
+			if !messageAllowed(message, options) {
 				continue
 			}
 			start, end, ok := matchText.find(message.Text)
@@ -162,13 +200,22 @@ func Run(ctx context.Context, source HistorySource, live []state.SessionInfo, op
 			result.Matches = append(result.Matches, Match{
 				SessionID: session.ID, Name: session.Name, Tool: tool,
 				Role: message.Role, Timestamp: message.Timestamp, Text: message.Text,
-				Snippet: makeSnippet(message.Text, start, end),
+				Kind: message.Kind, MessageID: message.ID,
+				MessageIndex: index, Snippet: makeSnippet(message.Text, start, end),
+				MatchStart: start, MatchEnd: end, Score: 1, CWD: session.CWD,
+				Machine: session.Machine, CreatorKind: session.CreatorKind,
+				CreatorID:     session.CreatorID,
+				ContextBefore: contextBefore(transcript.Messages, index, options.Context),
+				ContextAfter:  contextAfter(transcript.Messages, index, options.Context),
 			})
 			if len(result.Matches) == options.Limit {
 				result.Total = len(result.Matches)
 				return result, nil
 			}
 		}
+	}
+	if options.Timeline {
+		sortMatchesTimeline(result.Matches)
 	}
 	result.Total = len(result.Matches)
 	return result, nil
@@ -185,11 +232,23 @@ func normalizeTool(tool string) string {
 	}
 }
 
-func resolveSessionID(sessions []integrations.HistorySession, requested string) (string, error) {
-	requested = strings.TrimSpace(requested)
-	if requested == "" {
-		return "", nil
+func resolveSessionIDs(sessions []integrations.HistorySession, requested string) (map[string]bool, error) {
+	selected := make(map[string]bool)
+	for _, value := range strings.Split(requested, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		resolved, err := resolveOneSessionID(sessions, value)
+		if err != nil {
+			return nil, err
+		}
+		selected[resolved] = true
 	}
+	return selected, nil
+}
+
+func resolveOneSessionID(sessions []integrations.HistorySession, requested string) (string, error) {
 	for _, session := range sessions {
 		if session.ID == requested {
 			return session.ID, nil
@@ -209,6 +268,82 @@ func resolveSessionID(sessions []integrations.HistorySession, requested string) 
 	default:
 		return "", &optionError{message: fmt.Sprintf("ambiguous history session prefix %q", requested)}
 	}
+}
+
+func sessionAllowed(session integrations.HistorySession, options Options) bool {
+	if options.NameGlob != "" {
+		matched, err := filepath.Match(strings.ToLower(options.NameGlob), strings.ToLower(session.Name))
+		if err != nil || !matched {
+			return false
+		}
+	}
+	if options.CWD != "" {
+		want := filepath.Clean(options.CWD)
+		got := filepath.Clean(session.CWD)
+		if got != want && !strings.HasPrefix(got, want+string(filepath.Separator)) {
+			return false
+		}
+	}
+	return true
+}
+
+func messageAllowed(message integrations.TranscriptMessage, options Options) bool {
+	if options.Role != "" && message.Role != options.Role {
+		return false
+	}
+	if options.SinceMS == 0 && options.UntilMS == 0 {
+		return true
+	}
+	timestamp, ok := messageTimestampMS(message.Timestamp)
+	if !ok {
+		return false
+	}
+	return (options.SinceMS == 0 || timestamp >= options.SinceMS) &&
+		(options.UntilMS == 0 || timestamp < options.UntilMS)
+}
+
+func messageTimestampMS(value *string) (int64, bool) {
+	if value == nil || *value == "" {
+		return 0, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, *value)
+	if err != nil {
+		return 0, false
+	}
+	return parsed.UnixMilli(), true
+}
+
+func contextBefore(messages []integrations.TranscriptMessage, index, count int) []integrations.TranscriptMessage {
+	if count <= 0 || index <= 0 {
+		return nil
+	}
+	start := max(0, index-count)
+	return append([]integrations.TranscriptMessage(nil), messages[start:index]...)
+}
+
+func contextAfter(messages []integrations.TranscriptMessage, index, count int) []integrations.TranscriptMessage {
+	if count <= 0 || index+1 >= len(messages) {
+		return nil
+	}
+	end := min(len(messages), index+1+count)
+	return append([]integrations.TranscriptMessage(nil), messages[index+1:end]...)
+}
+
+func sortMatchesTimeline(matches []Match) {
+	sort.SliceStable(matches, func(i, j int) bool {
+		left, leftOK := messageTimestampMS(matches[i].Timestamp)
+		right, rightOK := messageTimestampMS(matches[j].Timestamp)
+		if leftOK != rightOK {
+			return leftOK
+		}
+		if left != right {
+			return left < right
+		}
+		if matches[i].SessionID != matches[j].SessionID {
+			return matches[i].SessionID < matches[j].SessionID
+		}
+		return matches[i].MessageIndex < matches[j].MessageIndex
+	})
 }
 
 func makeSnippet(text string, matchStart, matchEnd int) string {

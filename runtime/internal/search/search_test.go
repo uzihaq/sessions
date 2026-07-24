@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
@@ -29,16 +30,24 @@ func (f *fakeHistory) TranscriptLimited(_ []state.SessionInfo, id string, limit 
 	return transcript, nil
 }
 
+func (f *fakeHistory) TranscriptLimitedContext(ctx context.Context, live []state.SessionInfo, id string, limit int64) (integrations.TranscriptResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return integrations.TranscriptResponse{}, err
+	}
+	return f.TranscriptLimited(live, id, limit)
+}
+
 func searchFixture() *fakeHistory {
 	firstTimestamp := "2026-07-17T10:00:00Z"
 	secondTimestamp := "2026-07-17T11:00:00Z"
 	first := integrations.HistorySession{
 		ID: "aaaaaaaa-1111-4222-8333-444444444444", Name: "alpha", Tool: "claude",
+		CWD: "/repo/alpha", Machine: "mini", CreatorKind: "user", CreatorID: "uid:501",
 		ConversationAvailable: true,
 	}
 	second := integrations.HistorySession{
 		ID: "bbbbbbbb-1111-4222-8333-444444444444", Name: "beta", Tool: "codex",
-		ConversationAvailable: true,
+		CWD: "/repo/beta", Machine: "macbook", ConversationAvailable: true,
 	}
 	return &fakeHistory{
 		sessions: []integrations.HistorySession{first, second},
@@ -52,6 +61,34 @@ func searchFixture() *fakeHistory {
 				{Role: "assistant", Timestamp: &secondTimestamp, Text: "The worker failed with error code 42."},
 			}},
 		},
+	}
+}
+
+func TestSearchReturnsStableAnchorsContextAndOperationalFilters(t *testing.T) {
+	fixture := searchFixture()
+	result, err := Run(context.Background(), fixture, nil, Options{
+		Query: "needle", SessionID: "aaaaaaaa", NameGlob: "a*", CWD: "/repo",
+		Role: "assistant", Context: 1,
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Matches) != 1 {
+		t.Fatalf("result=%#v", result)
+	}
+	match := result.Matches[0]
+	if match.MessageIndex != 1 || match.CWD != "/repo/alpha" || match.Machine != "mini" ||
+		match.CreatorKind != "user" || match.CreatorID != "uid:501" ||
+		len(match.ContextBefore) != 1 || match.ContextBefore[0].Role != "user" {
+		t.Fatalf("anchored match=%#v", match)
+	}
+
+	since := time.Date(2026, time.July, 17, 10, 30, 0, 0, time.UTC).UnixMilli()
+	result, err = Run(context.Background(), searchFixture(), nil, Options{
+		Query: "error", SinceMS: since, Timeline: true,
+	}, "")
+	if err != nil || len(result.Matches) != 1 || result.Matches[0].SessionID != fixture.sessions[1].ID {
+		t.Fatalf("dated result=%#v err=%v", result, err)
 	}
 }
 
@@ -114,7 +151,7 @@ func TestSearchLimitValidationAndEmptyShape(t *testing.T) {
 		t.Fatalf("empty result=%#v err=%v", result, err)
 	}
 	for _, options := range []Options{
-		{}, {Query: "(", Regex: true}, {Query: "x", Role: "tool"},
+		{}, {Query: "(", Regex: true}, {Query: "x", Role: "system"},
 		{Query: "x", Tool: "terminal"}, {Query: "x", Limit: MaxLimit + 1},
 		{Query: "x", SessionID: "missing"},
 	} {

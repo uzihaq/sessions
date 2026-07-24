@@ -25,6 +25,8 @@ type doctorRow struct {
 	OK    bool   `json:"ok"`
 }
 
+const legacyRunnerLabelPrefix = "tech.pretty-pty.runner."
+
 func (a *app) cmdDoctor() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -33,9 +35,14 @@ func (a *app) cmdDoctor() error {
 	if err != nil {
 		return fail(2, "PTY preflight failed: %s; run xcode-select --install", err)
 	}
+	// Closing the PTY master before the tiny child has actually exited sends
+	// SIGHUP on macOS. That made doctor diagnose a broken PTY on otherwise
+	// healthy installs. Wait for the child first; the context still bounds the
+	// probe, and the master is closed immediately afterwards.
+	waitErr := command.Wait()
 	_ = terminal.Close()
-	if err := command.Wait(); err != nil && ctx.Err() == nil {
-		return fail(2, "PTY preflight failed: %s; run xcode-select --install", err)
+	if waitErr != nil && ctx.Err() == nil {
+		return fail(2, "PTY preflight failed: %s; run xcode-select --install", waitErr)
 	}
 	if ctx.Err() != nil {
 		return fail(2, "PTY preflight failed: test PTY timed out; run xcode-select --install")
@@ -51,16 +58,7 @@ func (a *app) cmdDoctor() error {
 	processTypePattern := regexp.MustCompile(`<key>ProcessType</key>\s*<string>([^<]+)</string>`)
 	rows := make([]doctorRow, 0, len(sessions))
 	for _, value := range sessions {
-		qos := "no-plist"
-		plistPath := filepath.Join(a.home, "Library", "LaunchAgents", "tech.somewhere.sessions.runner."+value.ID+".plist")
-		if encoded, readErr := os.ReadFile(plistPath); readErr == nil {
-			match := processTypePattern.FindSubmatch(encoded)
-			if match != nil {
-				qos = string(match[1])
-			} else {
-				qos = "none"
-			}
-		}
+		qos := runnerQoS(a.home, value.ID, processTypePattern)
 		spawn := "dead?"
 		if value.PID != 0 {
 			parent := psField("ppid=", value.PID)
@@ -69,18 +67,11 @@ func (a *app) cmdDoctor() error {
 			if parentPID != 0 {
 				parentCommand = psField("command=", parentPID)
 			}
-			switch {
-			case strings.Contains(parentCommand, "dist/runner.js"):
-				spawn = "dist"
-			case regexp.MustCompile(`\btsx\b`).MatchString(parentCommand):
-				spawn = "tsx-SLOW"
-			case parentCommand != "":
-				spawn = "other"
-			}
+			spawn = classifyRunnerSpawn(parentCommand)
 		}
 		rows = append(rows, doctorRow{
 			ID: value.ID, Tool: toolOfSession(value), Size: fmt.Sprintf("%dx%d", value.Cols, value.Rows),
-			QoS: qos, Spawn: spawn, OK: qos == "Interactive" && spawn == "dist",
+			QoS: qos, Spawn: spawn, OK: qos == "Interactive" && (spawn == "native" || spawn == "dist"),
 		})
 	}
 	if a.wantJSON {
@@ -114,6 +105,44 @@ func (a *app) cmdDoctor() error {
 		io.WriteString(a.stdout, "— all healthy (Interactive QoS, fast dist spawn).\n")
 	}
 	return nil
+}
+
+func runnerQoS(home, id string, processTypePattern *regexp.Regexp) string {
+	for _, plistPath := range runnerPlistPaths(home, id) {
+		encoded, err := os.ReadFile(plistPath)
+		if err != nil {
+			continue
+		}
+		match := processTypePattern.FindSubmatch(encoded)
+		if match != nil {
+			return string(match[1])
+		}
+		return "none"
+	}
+	return "no-plist"
+}
+
+func runnerPlistPaths(home, id string) []string {
+	launchAgents := filepath.Join(home, "Library", "LaunchAgents")
+	return []string{
+		filepath.Join(launchAgents, "tech.somewhere.sessions.runner."+id+".plist"),
+		filepath.Join(launchAgents, legacyRunnerLabelPrefix+id+".plist"),
+	}
+}
+
+func classifyRunnerSpawn(parentCommand string) string {
+	switch {
+	case strings.Contains(parentCommand, "sessions-runner"):
+		return "native"
+	case strings.Contains(parentCommand, "dist/runner.js"):
+		return "dist"
+	case regexp.MustCompile(`\btsx\b`).MatchString(parentCommand):
+		return "tsx-SLOW"
+	case parentCommand != "":
+		return "other"
+	default:
+		return "dead?"
+	}
 }
 
 func psField(format string, pid int) string {

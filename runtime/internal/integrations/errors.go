@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -237,6 +238,14 @@ func (s *Service) TranscriptLimited(live []state.SessionInfo, id string, maxByte
 
 func (s *Service) TranscriptPreview(live []state.SessionInfo, id string, maxBytes int64, maxMessages int) (TranscriptResponse, error) {
 	return s.history.TranscriptPreview(live, id, maxBytes, maxMessages)
+}
+
+func (s *Service) TranscriptWindow(live []state.SessionInfo, id string, options TranscriptWindowOptions) (TranscriptResponse, error) {
+	return s.history.TranscriptWindow(live, id, options)
+}
+
+func (s *Service) TranscriptLimitedContext(ctx context.Context, live []state.SessionInfo, id string, maxBytes int64) (TranscriptResponse, error) {
+	return s.history.TranscriptLimitedContext(ctx, live, id, maxBytes)
 }
 
 func (s *Service) Raw(live []state.SessionInfo, id string) ([]byte, error) {

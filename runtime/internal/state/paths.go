@@ -77,7 +77,8 @@ type Metadata struct {
 }
 
 // CompletionManifest is the durable terminal fact emitted by a headless lane.
-// FilesChanged is absent when the lane cwd is not a Git worktree.
+// FilesChanged is the number of Git-visible paths whose state changed between
+// lane start and lane exit. It is absent when either snapshot is unavailable.
 type CompletionManifest struct {
 	ExitCode       int     `json:"exit_code"`
 	Signal         *string `json:"signal"`

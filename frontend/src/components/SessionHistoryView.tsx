@@ -31,7 +31,7 @@ export function SessionHistoryView({ session, onDelegate }: Props): JSX.Element 
     setLoading(true);
     setError(null);
     setTranscript(null);
-    void fetchServerHistoryTranscript(getActiveServer(), session.id, controller.signal)
+    void fetchServerHistoryTranscript(getActiveServer(), session.id, controller.signal, { preview: true })
       .then((value) => {
         if (!controller.signal.aborted) setTranscript(value);
       })

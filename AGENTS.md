@@ -30,6 +30,7 @@ relevant source path; if prose and code disagree, the code wins.
 - Product rationale and durable decisions: [`docs/WHY.md`](docs/WHY.md).
 - Native package and process-lifetime contract: [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md).
 - Hosted worker security and product boundary: [`docs/CLOUD_VM.md`](docs/CLOUD_VM.md).
+- Sessions-owned outbound traffic and future support grants: [`docs/NETWORK_SECURITY.md`](docs/NETWORK_SECURITY.md).
 - Wire and compatibility promises: [`runtime/CONTRACT/`](runtime/CONTRACT/).
 - Implementation orientation: [`docs/CODEBASE.md`](docs/CODEBASE.md).
 - Generated command reference: [`docs/CLI.md`](docs/CLI.md); regenerate it instead of editing it.
@@ -38,7 +39,9 @@ relevant source path; if prose and code disagree, the code wins.
 ## Working rules
 
 1. **Sessions are sacred.** Never kill, replace, mass-clean, or adopt a session you do not own. The ledger's provenance and mass-kill guard live in `runtime/internal/ledger/` and `runtime/internal/session/manager.go`.
-2. **Never touch the Mac mini.** `100.86.76.84` still runs the old production daemon and remains untouched until the user explicitly performs cutover (`STATE.md`).
+2. **Do not touch the Mac mini.** Its initial cutover has occurred, but the user
+   paused all further Mini work until the next signed release is public
+   (`STATE.md`). Read-only access still requires a task-specific user request.
 3. **Isolate development.** Use a worktree and branch. For a scratch daemon, set both `SESSIONS_STATE_DIR` and `SESSIONS_PORT` so it cannot collide with daily-driver state (`docs/DEV.md`).
 4. **Reload only the dev daemon.** Its label is `tech.somewhere.sessions.dev.daemon`. After a reload, compare `sessions ls` before and after and verify the durable `soak-d2` session still exists; count runner metadata, not bare `pgrep` output (`STATE.md`).
 5. **Write ahead of destructive action.** Creation and kill intent are ledgered before process launch or termination (`runtime/internal/session/manager.go`, `runtime/internal/ledger/store.go`). Preserve that ordering.

@@ -145,7 +145,7 @@ func TestHeadlessLaneLifecycleManifestAndLedger(t *testing.T) {
 	defer server.Close()
 
 	requestBody, _ := json.Marshal(state.CreateSessionRequest{
-		Cmd: "/bin/sh", Args: []string{"-c", "sleep 0.1; printf 'OUT_MARKER\\n'; printf 'ERR_MARKER\\n' >&2; exit 3"},
+		Cmd: "/bin/sh", Args: []string{"-c", "sleep 0.1; printf 'lane edit\\n' > created-by-lane.txt; printf 'OUT_MARKER\\n'; printf 'ERR_MARKER\\n' >&2; exit 3"},
 		Cwd: repo, Name: "scratch failure", SpecPath: specPath,
 	})
 	createdResponse := doE2ERequest(t, http.MethodPost, server.URL+"/api/lanes", requestBody)

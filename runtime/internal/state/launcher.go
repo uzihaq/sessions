@@ -110,13 +110,35 @@ func (l *LaunchdLauncher) waitAndAttach(ctx context.Context, info proto.RunnerIn
 // Reap unloads a cleanly exited runner so launchd cannot retain a stale
 // service registration after its plist is removed.
 func (l *LaunchdLauncher) Reap(id string) error {
-	domain := fmt.Sprintf("gui/%d/tech.somewhere.sessions.runner.%s", os.Getuid(), id)
-	output, err := exec.Command("launchctl", "bootout", domain).CombinedOutput()
-	if removeErr := os.Remove(plistPath(l.config.LaunchAgentsDir, id)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) && err == nil {
-		err = removeErr
+	candidates := []struct {
+		label string
+		path  string
+	}{
+		{label: launchdLabelPrefix + id, path: plistPath(l.config.LaunchAgentsDir, id)},
+		{label: legacyLaunchdLabelPrefix + id, path: LegacyRunnerPlistPath(l.config.LaunchAgentsDir, id)},
 	}
-	if err != nil {
-		return fmt.Errorf("launchctl bootout %s: %w: %s", id, err, strings.TrimSpace(string(output)))
+	found := false
+	var reapErrors []error
+	for _, candidate := range candidates {
+		if _, statErr := os.Stat(candidate.path); statErr != nil {
+			if !errors.Is(statErr, os.ErrNotExist) {
+				reapErrors = append(reapErrors, statErr)
+			}
+			continue
+		}
+		found = true
+		domain := fmt.Sprintf("gui/%d/%s", os.Getuid(), candidate.label)
+		output, bootoutErr := exec.Command("launchctl", "bootout", domain).CombinedOutput()
+		if bootoutErr != nil {
+			reapErrors = append(reapErrors,
+				fmt.Errorf("launchctl bootout %s: %w: %s", candidate.label, bootoutErr, strings.TrimSpace(string(output))))
+		}
+		if removeErr := os.Remove(candidate.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			reapErrors = append(reapErrors, removeErr)
+		}
 	}
-	return nil
+	if !found {
+		return nil
+	}
+	return errors.Join(reapErrors...)
 }

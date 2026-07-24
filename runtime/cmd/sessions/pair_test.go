@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,7 +12,7 @@ import (
 	"time"
 )
 
-func TestPairWithNeitherLANNorRemoteEnabledTeachesFix(t *testing.T) {
+func TestPairWithoutLANTeachesTailscaleAndDoesNotMintTicket(t *testing.T) {
 	ticketRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -29,17 +28,15 @@ func TestPairWithNeitherLANNorRemoteEnabledTeachesFix(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("HOME", t.TempDir())
-	stubPairRemoteDiscovery(t, "", errors.New("remote disabled"))
-
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--host", server.URL, "pair"}, strings.NewReader(""), &stdout, &stderr)
 	if code == 0 {
 		t.Fatalf("pair unexpectedly succeeded: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	if ticketRequests != 1 {
-		t.Fatalf("ticket requests = %d, want mint before endpoint selection", ticketRequests)
+	if ticketRequests != 0 {
+		t.Fatalf("ticket requests = %d, want no ticket before LAN verification", ticketRequests)
 	}
-	for _, teaching := range []string{"sessions lan enable", "same WiFi", "sessions remote enable", "anywhere"} {
+	for _, teaching := range []string{"sessions lan enable", "Tailscale devices", "do not use a QR code"} {
 		if !strings.Contains(stderr.String(), teaching) {
 			t.Fatalf("teaching error missing %q: %q", teaching, stderr.String())
 		}
@@ -70,7 +67,6 @@ func TestPairUsesVerifiedLANAndPrintsOneQR(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("HOME", t.TempDir())
-	stubPairRemoteDiscovery(t, "", errors.New("remote disabled"))
 	previousPicker := primaryLANIPv4
 	primaryLANIPv4 = func() (net.IP, error) { return net.ParseIP("127.0.0.1"), nil }
 	t.Cleanup(func() { primaryLANIPv4 = previousPicker })
@@ -94,34 +90,6 @@ func TestPairUsesVerifiedLANAndPrintsOneQR(t *testing.T) {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("pair output missing %q: %q", expected, stdout.String())
 		}
-	}
-}
-
-func TestPairPrefersVerifiedRemoteEndpoint(t *testing.T) {
-	lanRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		switch {
-		case request.Method == http.MethodPost && request.URL.Path == "/api/pair/ticket":
-			_, _ = io.WriteString(response, `{"ticket":"ticket-id.ticket-secret","expires_at":"2026-07-19T12:05:00Z"}`)
-		case request.URL.Path == "/api/lan":
-			lanRequests++
-			http.Error(response, "LAN should not be queried", http.StatusInternalServerError)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-	t.Setenv("HOME", t.TempDir())
-	stubPairRemoteDiscovery(t, "https://sessions.example.ts.net", nil)
-
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"--host", server.URL, "pair"}, strings.NewReader(""), &stdout, &stderr)
-	if code != 0 || stderr.Len() != 0 || lanRequests != 0 {
-		t.Fatalf("pair exit=%d lanRequests=%d stdout=%q stderr=%q", code, lanRequests, stdout.String(), stderr.String())
-	}
-	if !strings.Contains(stdout.String(), "https://sessions.example.ts.net/#pair=ticket-id.ticket-secret") {
-		t.Fatalf("remote pair URL missing: %q", stdout.String())
 	}
 }
 
@@ -178,11 +146,4 @@ func TestDevicesListJSONAndRevokePrefix(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &parsed); err != nil || len(parsed.Devices) != 2 {
 		t.Fatalf("json list = %#v, err=%v, output=%q", parsed, err, stdout.String())
 	}
-}
-
-func stubPairRemoteDiscovery(t *testing.T, endpoint string, err error) {
-	t.Helper()
-	previous := discoverPairRemoteEndpoint
-	discoverPairRemoteEndpoint = func() (string, error) { return endpoint, err }
-	t.Cleanup(func() { discoverPairRemoteEndpoint = previous })
 }

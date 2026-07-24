@@ -849,6 +849,32 @@ func TestMassKillGuardRefusesDiscoverySweepBeforeBootout(t *testing.T) {
 	}
 }
 
+func TestDiscoveryReapsExitedLegacyRunnerPlist(t *testing.T) {
+	root := t.TempDir()
+	config := testConfig(root)
+	if err := os.MkdirAll(config.LaunchAgentsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	id := "00000000-0000-4000-8000-000000000099"
+	path := state.LegacyRunnerPlistPath(config.LaunchAgentsDir, id)
+	if err := os.WriteFile(path, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(config, prototest.NewLauncher(), ManagerOptions{DisableWatchers: true})
+	t.Cleanup(manager.Close)
+	if err := manager.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy exited-runner plist remained after discovery: %v", err)
+	}
+}
+
 func TestLaunchdFreeCreateWritesMetadataAndPlist(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)

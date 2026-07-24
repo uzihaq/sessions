@@ -108,6 +108,60 @@ export async function runNativeConnectionAction<T = Record<string, unknown>>(
   return invoke<NativeConnectionCommand<T>>('native_connection_action', { kind, action, name });
 }
 
+export interface NativePairingClaim {
+  endpoint: string;
+  machineId: string;
+  machineName: string;
+  deviceId: string;
+  token: string;
+  name: string;
+}
+
+export async function claimNativePairingLink(pairUrl: string): Promise<NativePairingClaim> {
+  if (!isTauri()) throw new Error('Cross-machine pairing is available in Sessions.app');
+  return invoke<NativePairingClaim>('native_pairing_claim', { pairUrl });
+}
+
+export interface NativeTailnetPeer {
+  endpoint: string;
+  hostname: string;
+  os: string;
+}
+
+export interface NativeTailnetRequest {
+  endpoint: string;
+  requestId: string;
+  requestSecret: string;
+  expiresAt: string;
+  status: 'pending';
+}
+
+export interface NativeTailnetClaim {
+  status: 'pending' | 'accepted' | 'denied' | 'expired';
+  claim: NativePairingClaim | null;
+}
+
+export async function discoverNativeTailnetPeers(): Promise<NativeTailnetPeer[]> {
+  if (!isTauri()) throw new Error('Tailnet discovery is available in Sessions.app');
+  return invoke<NativeTailnetPeer[]>('native_tailnet_discover');
+}
+
+export async function requestNativeTailnetAccess(
+  endpoint: string,
+  clientId: string,
+  name: string
+): Promise<NativeTailnetRequest> {
+  if (!isTauri()) throw new Error('Tailnet access requests are available in Sessions.app');
+  return invoke<NativeTailnetRequest>('native_tailnet_request', { endpoint, clientId, name });
+}
+
+export async function claimNativeTailnetAccess(
+  request: Pick<NativeTailnetRequest, 'endpoint' | 'requestId' | 'requestSecret'>
+): Promise<NativeTailnetClaim> {
+  if (!isTauri()) throw new Error('Tailnet access requests are available in Sessions.app');
+  return invoke<NativeTailnetClaim>('native_tailnet_claim', request);
+}
+
 export interface BackupStatus {
   enabled: boolean;
   encrypt: boolean;

@@ -1,9 +1,13 @@
 import {
   adoptCurrentOriginServer,
+  assertServerPersisted,
+  captureServerSelection,
+  restoreServerSelection,
   useServers,
   type ServerConfig
 } from './servers';
-import { isLoopbackHost, parseServerEndpoint } from './serverEndpoint';
+import { isLoopbackHost, isPrivateNetworkHost, parseServerEndpoint } from './serverEndpoint';
+import { claimNativePairingLink, type NativePairingClaim } from './tauriBridge';
 
 function matchesEndpoint(
   server: ServerConfig,
@@ -24,8 +28,10 @@ function scrubFragment(): void {
 
 interface RememberServerOptions {
   name?: string;
+  machineId?: string;
   token?: string | null;
   select?: boolean;
+  allowPrivateHTTP?: boolean;
 }
 
 // Shared first-run/add-server path. Hosted browser connections require TLS,
@@ -37,12 +43,21 @@ export function rememberServerEndpoint(
   options: RememberServerOptions = {}
 ): ServerConfig {
   const endpoint = parseServerEndpoint(endpointValue);
-  if (endpoint.scheme === 'http' && !isLoopbackHost(endpoint.host)) {
+  if (
+    endpoint.scheme === 'http'
+    && !isLoopbackHost(endpoint.host)
+    && !(options.allowPrivateHTTP && isPrivateNetworkHost(endpoint.host))
+  ) {
     throw new Error('Use HTTPS for remote servers. HTTP is allowed only on localhost.');
   }
 
   const store = useServers.getState();
-  const existing = store.servers.find((server) => matchesEndpoint(server, endpoint));
+  const machineId = options.machineId?.trim();
+  const matchingMachine = machineId
+    ? store.servers.find((server) => server.machineId === machineId)
+    : undefined;
+  const matchingEndpoint = store.servers.find((server) => matchesEndpoint(server, endpoint));
+  const existing = matchingMachine ?? matchingEndpoint;
   const tokenUpdate = options.token === undefined
     ? {}
     : { token: options.token?.trim() || undefined };
@@ -51,20 +66,94 @@ export function rememberServerEndpoint(
   if (existing) {
     store.updateServer(existing.id, {
       ...endpoint,
+      ...(machineId ? { machineId } : {}),
       ...tokenUpdate,
       ...(name ? { name } : {})
     });
-    if (options.select !== false) store.setActive(existing.id);
+    // A pre-identity/manual entry can match the endpoint while another entry
+    // already carries this machine ID. Collapse both access paths into the
+    // stable machine entry instead of leaving a duplicate in Fleet.
+    for (const duplicate of store.servers) {
+      if (
+        duplicate.id !== existing.id
+        && !duplicate.isDefault
+        && (
+          (machineId && duplicate.machineId === machineId)
+          || matchesEndpoint(duplicate, endpoint)
+        )
+      ) {
+        store.removeServer(duplicate.id);
+      }
+    }
+    if (options.select !== false) useServers.getState().setActive(existing.id);
     return useServers.getState().servers.find((server) => server.id === existing.id) ?? existing;
   }
 
   const created = store.addServer({
     name: name || endpoint.host,
+    ...(machineId ? { machineId } : {}),
     ...endpoint,
     ...tokenUpdate
   });
   if (options.select !== false) store.setActive(created.id);
   return created;
+}
+
+export async function claimNativeMachinePairing(
+  pairingLink: string
+): Promise<{ claim: NativePairingClaim; server: ServerConfig }> {
+  const claim = await claimNativePairingLink(pairingLink);
+  const previous = captureServerSelection();
+  const server = rememberServerEndpoint(claim.endpoint, {
+    name: claim.machineName,
+    machineId: claim.machineId,
+    token: claim.token,
+    allowPrivateHTTP: true
+  });
+  try {
+    assertServerPersisted(server);
+  } catch {
+    restoreServerSelection(previous);
+    // Avoid leaving an invisible live credential on the source machine when
+    // native storage is unavailable. This is best-effort because the original
+    // persistence error must remain the actionable message.
+    let revoked = false;
+    try {
+      const response = await fetch(`${claim.endpoint}/api/devices/${encodeURIComponent(claim.deviceId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${claim.token}` }
+      });
+      revoked = response.ok;
+    } catch { /* source device can also revoke it from Connections/CLI */ }
+    throw new Error(
+      revoked
+        ? 'Sessions could not save this machine, so it revoked the new credential. Free local storage and pair again.'
+        : 'Sessions could not save this machine. On the source Mac, revoke this device in Connections or with `sessions devices`, then pair again.'
+    );
+  }
+  return { claim, server };
+}
+
+export async function rememberNativeMachineClaim(
+  claim: NativePairingClaim
+): Promise<ServerConfig> {
+  const previous = captureServerSelection();
+  const server = rememberServerEndpoint(claim.endpoint, {
+    name: claim.machineName,
+    machineId: claim.machineId,
+    token: claim.token
+  });
+  try {
+    assertServerPersisted(server);
+  } catch {
+    restoreServerSelection(previous);
+    // Tailnet credentials remain non-authorizing until their first successful
+    // authenticated API use. Do not use this token merely to revoke it: that
+    // would acknowledge it in one durable write before deletion in another.
+    // Leaving it untouched makes storage failure fail closed at its deadline.
+    throw new Error('Sessions could not save this machine. The unacknowledged credential will expire automatically; free local storage and request access again.');
+  }
+  return server;
 }
 
 // Hosted connection links have the form:

@@ -22,6 +22,8 @@ type Session struct {
 	Args           []string
 	CreatedAt      int64
 	LastActivityAt int64
+	CreatorKind    string
+	CreatorID      string
 	OptOut         bool
 }
 
@@ -45,6 +47,7 @@ func CollectSessions(live []state.SessionInfo, runnerStateDir string) []Session 
 			ID: info.ID, Name: info.Name, CWD: info.Cwd, ConfigDir: info.ConfigDir, Tool: info.Tool,
 			Command: info.Cmd, Args: append([]string(nil), info.Args...),
 			CreatedAt: info.CreatedAt, LastActivityAt: lastActivity,
+			CreatorKind: info.CreatorKind, CreatorID: info.CreatorID,
 			OptOut: sessionOptedOut(runnerStateDir, info.ID),
 		}
 	}

@@ -8,7 +8,10 @@ import (
 	"strings"
 )
 
-const launchdLabelPrefix = "tech.somewhere.sessions.runner."
+const (
+	launchdLabelPrefix       = "tech.somewhere.sessions.runner."
+	legacyLaunchdLabelPrefix = "tech.pretty-pty.runner."
+)
 
 type plistArgs struct {
 	ID               string
@@ -24,6 +27,12 @@ func plistPath(launchAgentsDir, id string) string {
 
 // RunnerPlistPath returns the canonical per-session launchd plist path.
 func RunnerPlistPath(launchAgentsDir, id string) string { return plistPath(launchAgentsDir, id) }
+
+// LegacyRunnerPlistPath returns the Node runtime's per-session launchd path.
+// Adopted Node runners retain this registration until they exit.
+func LegacyRunnerPlistPath(launchAgentsDir, id string) string {
+	return filepath.Join(launchAgentsDir, legacyLaunchdLabelPrefix+id+".plist")
+}
 
 func writePlist(launchAgentsDir string, args plistArgs) (string, error) {
 	if len(args.ProgramArguments) == 0 {

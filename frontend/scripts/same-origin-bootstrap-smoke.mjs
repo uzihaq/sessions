@@ -62,6 +62,8 @@ async function openCase(health, pairClaim = null) {
   await page.setRequestInterception(true);
   page.on('request', (request) => {
     const url = request.url();
+    const requestUrl = new URL(url);
+    const pathname = requestUrl.pathname;
     if (url === `${origin}/api/pair/claim`) {
       pairClaimRequests += 1;
       try {
@@ -103,7 +105,7 @@ async function openCase(health, pairClaim = null) {
       }
       return;
     }
-    if (url === `${origin}/api/sessions`) {
+    if (requestUrl.origin === origin && pathname === '/api/sessions') {
       sessionsRequests += 1;
       sessionsAuthorizations.push(request.headers().authorization ?? '');
       const status = sessionsUnauthorized ? 401 : 200;

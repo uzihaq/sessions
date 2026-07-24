@@ -19,17 +19,34 @@ explicit install/update/docs commands (`frontend/src/components/SomewhereCard.ts
 while `src-tauri/src/lifecycle.rs` verifies their manifest, stages immutable
 runtime versions, installs `tech.somewhere.sessions.daemon`, waits for health
 and discovery, verifies the live-session baseline, and rolls back on failure.
+It also maintains a non-destructive `sessions` symlink in the first writable
+standard command directory, updating only links that already point into a
+Sessions-managed runtime and leaving unrelated executables untouched.
 The signed app-bundle updater is configured in `src-tauri/tauri.conf.json` and
 exposed through the native-only settings flow in
 `frontend/src/lib/tauriBridge.ts`; the bridge serializes update discovery and
 delivers once-per-version native notifications. `frontend/src/components/TodayView.tsx`
 renders the local work journal and opt-in recap, while
 `frontend/src/components/ConnectionsView.tsx` presents loopback, LAN, Tailscale,
-pairing, and safe port migration. `frontend/src/components/SearchView.tsx`
-fans exact, regex, ranked, or explicitly submitted AI-planned searches across
-the configured fleet, persists the query and provider/speaker filters locally,
-and opens a byte- and message-bounded history tail in a read-only viewer rather
-than resuming it. Provider badges
+tailnet machine discovery/request state, the LAN pairing fallback, and safe
+port migration. `frontend/src/components/TailnetAccessInbox.tsx` polls the
+local daemon even while the window is viewing a remote machine, then renders
+the host's explicit Accept/Deny decision.
+`frontend/src/lib/hostedBootstrap.ts` deliberately keeps browser pairing
+same-origin while routing a pasted native link through the Tauri command in
+`src-tauri/src/lib.rs`; the device credential is then stored as a normal
+machine entry. Native onboarding probes `/api/health` before consuming the
+single-use ticket. The claim returns the daemon identity persisted in
+`~/.local/state/sessions/machine-id`; `frontend/src/lib/hostedBootstrap.ts`
+uses that identity to update an existing machine even when its access endpoint
+changes. `frontend/src/components/SearchView.tsx`
+fans keyword, exact, regex, or explicitly submitted AI-planned searches across
+the configured fleet; persists query, role, provider, date, session-name,
+workspace, and ordering state locally; renders best-first message results; and
+opens the exact stable message index in a read-only transcript reader. The
+reader initially requests only a server-side window, then can deliberately
+request everything after the match, user messages only, the full transcript,
+or a bookmarked range between two user messages. Provider badges
 reuse the Claude and Codex product icons through
 `frontend/src/components/ProviderBadge.tsx`. `scripts/release-app.sh` validates the
 version, signing key, notarization credentials, nested signatures, stapling,
@@ -141,7 +158,32 @@ QR pairing lives here too: single-use five-minute tickets are claimed by an
 unauthenticated, rate-limited `POST /api/pair/claim`, which mints per-device
 tokens stored as SHA-256 hashes with list/revoke management
 (`runtime/internal/api/pair.go`); device tokens authorize anywhere the master
-token does.
+token does. The native claimant validates the link transport and shape, refuses
+redirects, sends the ticket in the POST body rather than the URL, bounds the
+response, and never exposes the master token (`src-tauri/src/lib.rs`). Device
+tokens remain bearer credentials in this release; narrower scopes, protected
+native at-rest storage, and short-lived WebSocket tickets remain required
+hardening before adding less-trusted ingress.
+
+The normal Tailscale onboarding path is request/accept, implemented in
+`runtime/internal/api/tailnet_access.go`. The native Rust layer reads the local
+Tailscale peer list, accepts only `.ts.net` HTTPS endpoints, concurrently
+health-probes bounded candidates, sends the request, and polls its in-memory
+secret. The daemon accepts the two unauthenticated bootstrap requests only when
+the immediate peer is loopback and Tailscale Serve supplied a bounded login
+identity (`runtime/internal/api/auth.go`). Host list/decision routes require
+normal daemon authentication. Public bootstrap routes reject every browser
+`Origin` and non-JSON content type. Acceptance does not itself expose a token:
+the same Tailscale identity must claim the decision. Claims are idempotent, and
+the resulting durable credential remains pending until its first authenticated
+API use; if a 201 response is lost, retries return the same token, while a token
+the client never receives cannot authorize after its separate two-minute
+acknowledgement deadline. Expired pending records are purged when the device
+store reloads.
+Tailscale's headers identify the user account, not the node, so the approval UI
+labels the caller's device name as self-reported. A process already running
+locally can fabricate those display headers, but local processes already have
+the daemon's loopback control authority.
 Daily recap routes combine local usage totals with compact factual activity
 from both managed lanes and locally observed, still-outside Claude/Codex
 conversations. The latter are streamed only from provider logs that contributed
@@ -212,9 +254,14 @@ are checked against the provider catalog rather than guessed
 
 `integrations` is a stable local contract for reading live or persisted provider
 history; it does not call a model service (`runtime/internal/integrations/history.go`).
-Its normal transcript and raw contracts remain complete for deliberate
-integrations, while the native viewer uses `TranscriptPreview` to cap both the
-tail byte window and rendered message count.
+Every normalized message receives a stable transcript index. Plain user and
+assistant text remains the primary stream; synthetic scheduled/task
+notifications become tool events, and only selected session-control relay
+payloads are expanded so delegated prompts remain searchable without admitting
+arbitrary command output. Normal transcript and raw contracts remain complete
+for deliberate integrations. `TranscriptWindow` returns role/range-selected
+stable indices for the native reader; the older tail-bounded
+`TranscriptPreview` remains available to compatibility surfaces.
 It also keeps append-only integration failures and records lost or nonzero
 runner exits (`runtime/internal/integrations/errors.go`).
 
@@ -234,7 +281,14 @@ recovery; it deliberately excludes prompts and terminal bytes
 fold derives `live-managed`, `closed`, `unexpectedly-lost`, or `external` state
 from those events and exposes safe resume recipes (`runtime/internal/ledger/fold.go`).
 The store enables WAL and synchronous-full durability and blocks update/delete
-with database triggers.
+with database triggers. Explicit retention uses a separate atomic writer to
+append `archived` facts for old closed records; it never deletes the evidence.
+`runtime/internal/session/retention.go` refuses live registry entries and any
+still-present socket, metadata process, or current/legacy LaunchAgent; apply is
+also refused while discovery is running. It preserves an ancestor while any
+descendant remains visible. The authenticated API and dry-run-first CLI surfaces
+are `runtime/internal/api/retention_handlers.go` and
+`runtime/cmd/sessions/gc.go`.
 
 ### `migrate`
 
@@ -292,17 +346,30 @@ explicit, unambiguous provider artifact (`runtime/internal/recovery/adopt.go`).
 
 ### `search`
 
-`search` scans normalized transcripts with case-insensitive substring matching
-by default and optional regular expressions (`runtime/internal/search/search.go`).
-The opt-in ranked path maintains a SQLite FTS5 index and uses FTS ranking rather
-than replacing literal search (`runtime/internal/search/index.go`). Transcript
-reads are bounded so a malformed or giant artifact cannot consume unbounded
-memory.
+`search` offers three local retrieval contracts
+(`runtime/internal/search/search.go`): ranked token recall by default, explicit
+case-insensitive contiguous substring matching, and regular expressions. The
+SQLite FTS5 path (`runtime/internal/search/index.go`) uses BM25, stemming,
+phrases, boolean operators, and `near(a,b,N)` proximity; bare terms are OR
+alternatives for recall. Results carry a stable message index plus
+content-derived bookmark ID, ranking score, match span,
+provider/session/workspace/machine/creator metadata, and optional neighboring
+messages; full bodies are fetched only after the user opens a hit. Filters
+compose role (user/assistant/tool), multiple
+session IDs, lane-name glob, workspace, provider, and date bounds; timeline
+mode reorders the cross-session result set chronologically. Complete provider
+histories are indexed, but an actual source path/size/nanosecond-mtime
+fingerprint prevents unrelated runner activity from reparsing a large unchanged
+transcript. Refreshes are serialized and cancelable; unavailable transcripts
+are removed from the plaintext local index. Search-result history is streamed
+into 500-position pages, and the first page verifies the bookmarked message ID
+before displaying it.
 
 ### `smartsearch`
 
 `smartsearch` translates one explicit, bounded natural-language request into a
-compact SQLite FTS5 query (`runtime/internal/smartsearch/service.go`). It sends
+compact, recall-oriented SQLite FTS5 query
+(`runtime/internal/smartsearch/service.go`). It sends
 no transcripts, session IDs, result snippets, or index contents to the selected
 CLI; provider and speaker filters remain deterministic API parameters. The
 generated query is bounded again and then executed by `internal/search` against
@@ -412,6 +479,10 @@ The binding check in `runtime/internal/session/manager.go` prevents two live
 sessions from resuming the same provider conversation. The runner keeps exited
 state available briefly for reconnecting clients before removing its transient
 socket and metadata (`runtime/cmd/sessions-runner/main.go`).
+During the Mini compatibility window, doctor and clean-exit reaping recognize
+both the Sessions runner LaunchAgent and the retained legacy Node runner
+LaunchAgent; new sessions always use the Sessions label
+(`runtime/cmd/sessions/doctor.go`, `runtime/internal/state/launcher.go`).
 
 ## Lane lifecycle
 
@@ -422,6 +493,12 @@ through pipes and writes a manifest at exit instead of allocating a PTY
 write-ahead ledger and ownership checks used by sessions make the lane visible
 to `sessions lanes`, `sessions recover`, and explicit adoption
 (`runtime/internal/ledger/fold.go`, `runtime/internal/recovery/`).
+The manifest's `files_changed` is a repository-root-relative, before/after
+Git-visible path delta captured around that lane, including start/end commit
+tree changes. Pre-existing dirty paths therefore contribute zero unless their
+content or Git state changes while the lane runs, and committed work remains
+visible even when the lane exits with a clean worktree
+(`runtime/cmd/sessions-runner/main.go`).
 
 Recovery is deliberately two-step: reports are read-only, while reopen/adopt
 are explicit mutations. A safe recipe can reopen provider context, but it does

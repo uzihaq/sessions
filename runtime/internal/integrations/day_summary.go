@@ -44,6 +44,7 @@ func SummarizeConversationDay(path, tool string, start, end time.Time, observedT
 	fork := false
 	currentTurnID := ""
 	observedTurns := make(map[string]struct{}, len(observedTurnIDs))
+	relayCalls := make(map[string]string)
 	for _, turnID := range observedTurnIDs {
 		observedTurns[turnID] = struct{}{}
 	}
@@ -83,7 +84,7 @@ func SummarizeConversationDay(path, tool string, start, end time.Time, observedT
 						RolloutBasename: filepath.Base(path), LineIndex: lineIndex,
 					})
 					for _, event := range normalized.Events {
-						if message, ok := transcriptMessage(event); ok {
+						for _, message := range transcriptMessages(event, relayCalls) {
 							mergeDayMessage(&result, message, start, end)
 						}
 					}
@@ -91,7 +92,7 @@ func SummarizeConversationDay(path, tool string, start, end time.Time, observedT
 					if cwd, ok := decoded["cwd"].(string); ok && strings.TrimSpace(cwd) != "" {
 						result.CWD = cwd
 					}
-					if message, ok := transcriptMessage(decoded); ok {
+					for _, message := range transcriptMessages(decoded, relayCalls) {
 						mergeDayMessage(&result, message, start, end)
 					}
 				}

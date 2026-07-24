@@ -30,6 +30,7 @@ const (
 	EventRunnerLost         EventType = "runner_lost"
 	EventReaped             EventType = "reaped"
 	EventReopened           EventType = "reopened"
+	EventArchived           EventType = "archived"
 	EventDaemonRestart      EventType = "daemon_restart"
 	EventMovedTo            EventType = "moved_to"
 	EventMovedFrom          EventType = "moved_from"
@@ -168,6 +169,12 @@ type Reopened struct {
 	NewLaneID string
 }
 
+// Archived hides an already-closed lane from retained list surfaces. It is a
+// monotonic retention fact, not deletion: recovery history remains append-only.
+type Archived struct {
+	Meta
+}
+
 // MovedTo and MovedFrom are provenance facts for resume-elsewhere. They do
 // not imply that either runner was killed.
 type MovedTo struct {
@@ -216,6 +223,13 @@ type ObservationWriter interface {
 type MigrationWriter interface {
 	RecordMovedTo(context.Context, MovedTo) error
 	RecordMovedFrom(context.Context, MovedFrom) error
+}
+
+// RetentionWriter records an explicit user-approved batch atomically. Keeping
+// this separate from lifecycle observations prevents background discovery from
+// silently aging records out.
+type RetentionWriter interface {
+	RecordArchived(context.Context, []Archived) error
 }
 
 type Options struct {

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 const externalPairingPeer = "198.51.100.42:4242"
@@ -20,7 +22,8 @@ func TestPairTicketSingleUseExpiryAndUnknown(t *testing.T) {
 		daemon := newTestDaemon(t)
 		ticket := mintPairingTicket(t, daemon.handler, "Phone")
 		claimed := claimPairingTicket(t, daemon.handler, ticket.Ticket, "", http.StatusCreated)
-		if claimed.Name != "Phone" || claimed.DeviceID == "" || claimed.Token == "" {
+		if claimed.Name != "Phone" || claimed.DeviceID == "" || claimed.Token == "" ||
+			!validMachineID(claimed.MachineID) || claimed.MachineName == "" {
 			t.Fatalf("claim response = %#v", claimed)
 		}
 		response := claimPairingTicketResponse(t, daemon.handler, ticket.Ticket, "", http.StatusGone)
@@ -48,6 +51,33 @@ func TestPairTicketSingleUseExpiryAndUnknown(t *testing.T) {
 			t.Fatalf("unknown claim body = %q", response.Body.String())
 		}
 	})
+}
+
+func TestPairTicketSurvivesDevicePersistenceFailure(t *testing.T) {
+	root := t.TempDir()
+	service := newPairService(state.Config{StateRoot: root, UserStateRoot: root})
+	ticket, err := service.mint("MacBook")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unwritableTarget := filepath.Join(root, "devices-target-is-a-directory")
+	if err := os.MkdirAll(unwritableTarget, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service.devices.path = unwritableTarget
+	if _, err := service.claim(ticket.Ticket, "", "test"); err == nil {
+		t.Fatal("claim unexpectedly succeeded when the device credential could not be persisted")
+	}
+
+	service.devices.path = filepath.Join(root, "devices.json")
+	claimed, err := service.claim(ticket.Ticket, "", "test")
+	if err != nil {
+		t.Fatalf("retry after persistence failure: %v", err)
+	}
+	if claimed.DeviceID == "" || claimed.Token == "" {
+		t.Fatalf("retry claim = %#v", claimed)
+	}
 }
 
 func TestDeviceTokenMasterTokenAndLoopbackAuthorization(t *testing.T) {

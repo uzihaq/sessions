@@ -1,8 +1,11 @@
 package integrations
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +16,17 @@ import (
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 	"github.com/somewhere-tech/sessions/runtime/internal/watch"
 )
+
+func TestTranscriptNormalizationStopsWhenSearchIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := normalizeTranscriptReaderContext(ctx, bufio.NewReader(strings.NewReader(
+		`{"message":{"role":"user","content":"should not be parsed"}}`+"\n",
+	)), "fixture.jsonl", "claude")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v, want context canceled", err)
+	}
+}
 
 func TestHistoryNormalizesCodexRolloutThroughWatchContract(t *testing.T) {
 	root := t.TempDir()
@@ -124,7 +138,7 @@ func TestTranscriptPreviewReturnsBoundedTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	var lines []string
-	for index := range 8 {
+	for index := range 600 {
 		lines = append(lines, fmt.Sprintf(`{"type":"user","message":{"role":"user","content":"message-%d"}}`, index))
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
@@ -135,14 +149,85 @@ func TestTranscriptPreviewReturnsBoundedTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !preview.Truncated || len(preview.Messages) != 3 || preview.Messages[0].Text != "message-5" || preview.Messages[2].Text != "message-7" {
+	if !preview.Truncated || len(preview.Messages) != 3 || preview.Messages[0].Text != "message-597" || preview.Messages[2].Text != "message-599" {
 		t.Fatalf("message-bounded preview=%#v", preview)
 	}
 	preview, err = store.TranscriptPreview(nil, id, int64(len(lines[len(lines)-1])+2), 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !preview.Truncated || len(preview.Messages) != 1 || preview.Messages[0].Text != "message-7" {
+	if !preview.Truncated || len(preview.Messages) != 1 || preview.Messages[0].Text != "message-599" {
 		t.Fatalf("byte-bounded preview=%#v", preview)
+	}
+	window, err := store.TranscriptWindow(nil, id, TranscriptWindowOptions{End: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(window.Messages) != MaxTranscriptWindowSpan || window.Session.MessageCount != 600 ||
+		!window.HasMore || window.NextIndex != MaxTranscriptWindowSpan ||
+		window.Messages[0].Index != 0 || window.Messages[len(window.Messages)-1].Index != 499 {
+		t.Fatalf("paged window=%#v", window)
+	}
+}
+
+func TestTranscriptIndexesMessagesAndExpandsOnlySearchableRelayPayloads(t *testing.T) {
+	records := []map[string]any{
+		{"timestamp": "2026-07-23T20:00:00Z", "message": map[string]any{"role": "user", "content": "Find my drafts direction"}},
+		{"timestamp": "2026-07-23T20:01:00Z", "message": map[string]any{"role": "user", "content": "<task-notification>child finished</task-notification>"}},
+		{"timestamp": "2026-07-23T20:02:00Z", "message": map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": "relay-1", "name": "mcp__sessions__send_message", "input": map[string]any{
+				"target": "builder", "message": "Check why hello world failed",
+			}},
+		}}},
+		{"timestamp": "2026-07-23T20:03:00Z", "message": map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": "relay-1", "content": "Builder found a transport timeout"},
+		}}},
+		{"timestamp": "2026-07-23T20:04:00Z", "message": map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": "relay-2", "name": "Agent", "input": map[string]any{
+				"description": "Autopsy the failed build", "prompt": "Reconstruct the founder's hello world directions",
+			}},
+		}}},
+		{"timestamp": "2026-07-23T20:05:00Z", "message": map[string]any{"role": "assistant", "content": []any{
+			map[string]any{"type": "tool_use", "id": "exec-1", "name": "exec_command", "input": map[string]any{"cmd": "printenv"}},
+		}}},
+		{"timestamp": "2026-07-23T20:06:00Z", "message": map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": "exec-1", "content": "SECRET=not-indexed"},
+		}}},
+	}
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	for _, record := range records {
+		if err := encoder.Encode(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	messages, err := normalizeTranscriptReader(bufio.NewReader(&encoded), "fixture.jsonl", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 5 {
+		t.Fatalf("messages=%#v", messages)
+	}
+	wantRoles := []string{"user", "tool", "tool", "tool", "tool"}
+	for index, message := range messages {
+		if message.Index != index || message.ID == "" || message.Role != wantRoles[index] {
+			t.Fatalf("message[%d]=%#v", index, message)
+		}
+	}
+	if messages[1].Kind != "automation" || messages[2].Kind != "handoff" ||
+		messages[3].Kind != "handoff" || messages[4].Kind != "delegation" {
+		t.Fatalf("message kinds=%#v", messages)
+	}
+	var joined string
+	for _, message := range messages {
+		joined += message.Text
+	}
+	for _, want := range []string{"drafts direction", "child finished", "hello world failed", "transport timeout", "founder's hello world directions"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("normalized relay text %q does not contain %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, "SECRET") || strings.Contains(joined, "printenv") {
+		t.Fatalf("arbitrary tool payload was indexed: %q", joined)
 	}
 }

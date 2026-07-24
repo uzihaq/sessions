@@ -19,6 +19,7 @@ import (
 )
 
 var anyHosts = map[string]struct{}{"0.0.0.0": {}, "::": {}, "::0": {}, "*": {}}
+var version = "0.2.1"
 
 func main() {
 	config, err := state.ConfigFromEnv()
@@ -53,9 +54,11 @@ func main() {
 	}()
 	manager := session.NewManager(config, state.NewLaunchdLauncher(config), session.ManagerOptions{
 		Boundaries: ledgerStore.Boundaries(), Observations: ledgerStore.Observations(), LedgerReader: ledgerStore,
+		Retention:     ledgerStore.Retention(),
 		UsageRecorder: usageService,
 	})
 	defer manager.Close()
+	api.Version = version
 	handler := api.NewWithUsage(config, manager, usageService, manager.Push())
 	// An explicitly isolated scratch daemon must not restore the user's
 	// persisted LAN listener on a second port.

@@ -43,6 +43,40 @@ func TestRankedSearchMatchesPhrases(t *testing.T) {
 	}
 }
 
+func TestRankedSearchUsesBroadTokensByDefaultAndSupportsProximity(t *testing.T) {
+	fixture := rankedFixture(
+		"the founder called the default asinine",
+		"dev mode should be paid only",
+		"alpha one two beta",
+		"alpha one two three four five beta",
+	)
+	indexPath := filepath.Join(t.TempDir(), "search-index.db")
+	result := runRankedFixture(t, fixture, "asinine dev", indexPath)
+	if result.Total != 2 {
+		t.Fatalf("broad token result=%#v", result)
+	}
+	result = runRankedFixture(t, fixture, "near(alpha,beta,3)", indexPath)
+	if result.Total != 1 || result.Matches[0].Text != "alpha one two beta" {
+		t.Fatalf("proximity result=%#v", result)
+	}
+}
+
+func TestRankedSearchReturnsScoreAnchorAndContext(t *testing.T) {
+	fixture := rankedFixture("before marker", "alpha alpha target", "after marker")
+	result, err := Run(context.Background(), fixture, nil, Options{
+		Query: "alpha", Ranked: true, Context: 1,
+	}, filepath.Join(t.TempDir(), "search-index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 1 || result.Matches[0].MessageIndex != 1 || result.Matches[0].Score != 1 ||
+		len(result.Matches[0].ContextBefore) != 1 || len(result.Matches[0].ContextAfter) != 1 ||
+		result.Matches[0].ContextBefore[0].Text != "before marker" ||
+		result.Matches[0].ContextAfter[0].Text != "after marker" {
+		t.Fatalf("anchored result=%#v", result)
+	}
+}
+
 func TestRankedSearchSupportsBooleanNot(t *testing.T) {
 	fixture := rankedFixture("alpha gamma", "alpha beta")
 	result := runRankedFixture(t, fixture, "alpha NOT beta", filepath.Join(t.TempDir(), "search-index.db"))
@@ -65,6 +99,42 @@ func TestRankedSearchRefreshRemovesStaleRows(t *testing.T) {
 	}
 	if result := runRankedFixture(t, fixture, "stale", indexPath); result.Total != 0 || result.Matches == nil {
 		t.Fatalf("stale result = %#v", result)
+	}
+}
+
+func TestRankedSearchReusesUnchangedPersistentSession(t *testing.T) {
+	fixture := rankedFixture("the durable index avoids reparsing giant transcripts")
+	fixture.sessions[0].SourceFingerprint = "unchanged-source"
+	indexPath := filepath.Join(t.TempDir(), "search-index.db")
+
+	if result := runRankedFixture(t, fixture, "giant", indexPath); result.Total != 1 {
+		t.Fatalf("initial result = %#v", result)
+	}
+	if result := runRankedFixture(t, fixture, "durable", indexPath); result.Total != 1 {
+		t.Fatalf("reused result = %#v", result)
+	}
+	if len(fixture.limits) != 1 {
+		t.Fatalf("transcript parsed %d times, want once", len(fixture.limits))
+	}
+}
+
+func TestRankedSearchPurgesUnavailableSessionText(t *testing.T) {
+	fixture := rankedFixture("private transcript marker")
+	fixture.sessions[0].SourceFingerprint = "available-source"
+	indexPath := filepath.Join(t.TempDir(), "search-index.db")
+	if result := runRankedFixture(t, fixture, "private", indexPath); result.Total != 1 {
+		t.Fatalf("initial result = %#v", result)
+	}
+	fixture.sessions[0].ConversationAvailable = false
+	if result := runRankedFixture(t, fixture, "private", indexPath); result.Total != 0 {
+		t.Fatalf("removed result = %#v", result)
+	}
+	fixture.sessions[0].ConversationAvailable = true
+	if result := runRankedFixture(t, fixture, "private", indexPath); result.Total != 1 {
+		t.Fatalf("restored result = %#v", result)
+	}
+	if len(fixture.limits) != 2 {
+		t.Fatalf("transcript parsed %d times, want reparse after purge", len(fixture.limits))
 	}
 }
 

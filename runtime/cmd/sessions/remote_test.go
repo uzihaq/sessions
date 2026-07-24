@@ -35,10 +35,10 @@ func TestRemoteDiagnosticsHelpers(t *testing.T) {
 	if !isMagicDNSResolutionError(&net.DNSError{Err: "no such host", Name: "sessions.example.ts.net", IsNotFound: true}) {
 		t.Fatal("DNS not-found was not classified")
 	}
+	if isMagicDNSResolutionError(&net.DNSError{Err: "temporary failure", Name: "sessions.example.ts.net", IsTemporary: true}) {
+		t.Fatal("temporary DNS failure must not bypass remote verification")
+	}
 	if isMagicDNSResolutionError(errors.New("TLS certificate expired")) {
 		t.Fatal("TLS error misclassified as MagicDNS")
-	}
-	if got := walkthroughURL("https://sessions.example.ts.net"); got != "https://sessions.somewhere.tech/#endpoint=https%3A%2F%2Fsessions.example.ts.net" {
-		t.Fatalf("walkthrough URL=%q", got)
 	}
 }

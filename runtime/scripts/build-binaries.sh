@@ -58,7 +58,11 @@ fi
 
 mkdir -p "$out_dir"
 
-version="$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf 'dev')"
+version="${SESSIONS_BUILD_VERSION:-$(git -C "$repo_root" describe --tags --always --dirty 2>/dev/null || printf 'dev')}"
+if [[ ! "$version" =~ ^[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+  echo "build-binaries: invalid SESSIONS_BUILD_VERSION: $version" >&2
+  exit 2
+fi
 ldflags="-s -w -X main.version=$version"
 
 build_binary() {

@@ -22,6 +22,7 @@ Daily workflows:
   run                      run a command in a headless lane
   tags                     view or edit session tags
   worktrees                list or safely clean Sessions-created worktrees
+  gc                       archive old closed records safely
   ls                       list sessions
   list                     list agent sessions and headless lanes
   lanes                    list headless lanes
@@ -54,7 +55,7 @@ Admin/operational:
   install                  install and start the development daemon
   uninstall                stop and remove the development daemon
   deploy                   explain the retired Node deploy path
-  pair                     pair a device with one QR scan
+  pair                     pair a device on the same LAN
   devices                  list or revoke paired devices
   lan                      manage same-network access
   notify                   configure session push notifications
@@ -162,6 +163,25 @@ Examples:
   sessions --json worktrees
   sessions worktrees clean --dry-run
   sessions worktrees clean
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `sessions gc`
+
+```text
+Usage:
+  sessions gc [--older-than DURATION] [--apply]
+
+archive old closed records safely
+
+Preview or archive sessions and lanes that have been closed longer than the retention age (30d by default). The default is a dry run; --apply records an append-only archive fact. Live runners and ancestors with retained descendants are never archived. Recovery history, transcripts, and worktrees are preserved.
+
+Examples:
+  sessions gc
+  sessions gc --older-than 7d
+  sessions gc --older-than 30d --apply
+  sessions --json gc
 
 Global flags --json, --host, and --port must appear before the command.
 ```
@@ -295,17 +315,17 @@ Global flags --json, --host, and --port must appear before the command.
 
 ```text
 Usage:
-  sessions search <query> [--session ID] [--role user|assistant] [--tool claude|codex|shell] [-n N] [--regex | --ranked] [--json]
+  sessions search <query> [--session ID[,ID...]] [--role user|assistant|tool] [--tool claude|codex|shell] [--name GLOB] [--cwd PATH] [--since DATE] [--until DATE] [--context N] [--timeline] [-n N] [--exact | --regex | --ranked] [--json]
 
 search normalized session chat history
 
-Search chat history across every live and persisted session known to the daemon. Matching is a case-insensitive substring by default; --regex uses a Go regular expression. --ranked opts into BM25-ranked, stemmed search with quoted phrases and AND/OR/NOT boolean operators, and cannot be combined with --regex. Filters are evaluated by the daemon, so --host can search a remote Sessions instance.
+Search chat history across every live and persisted session known to the daemon. Ranked token recall is the default: bare words are alternatives, quoted phrases stay exact, boolean AND/OR/NOT and near(a,b,N) are supported, and results include a stable content-derived message bookmark plus optional surrounding turns. --exact uses a case-insensitive contiguous substring; --regex uses a Go regular expression. Filter to real user requests, agent replies, or typed delegation/handoff/automation/status operations with --role; scope by sessions, lane-name glob, workspace, provider, and date. --timeline merges matching moments chronologically. Filters are evaluated by the daemon, so --host can search a remote Sessions instance.
 
 Examples:
-  sessions search 'migration plan'
-  sessions search 'failed|timed out' --regex --role assistant
-  sessions search '"migration plan" OR rollback' --ranked
-  sessions search needle --session 0123abcd --json
+  sessions search 'drafts rollout' --role user --since 2026-07-23
+  sessions search 'hello world' --role user --context 3
+  sessions search 'near(draft,egress,8) OR "stable session"' --timeline
+  sessions search '{{first_name}}' --exact --session 0123abcd --json
 
 Global flags --json, --host, and --port must appear before the command.
 ```
@@ -656,9 +676,9 @@ Global flags --json, --host, and --port must appear before the command.
 Usage:
   sessions pair [--name NAME]
 
-pair a device with one QR scan
+pair a device on the same LAN
 
-Mint a five-minute, single-use pairing ticket and print one QR code for the best verified endpoint: Tailscale remote access first, then same-network LAN access. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.
+Mint a five-minute, single-use pairing ticket for the explicit same-network LAN listener. This is the fallback for devices without Tailscale: Sessions apps on the same tailnet discover each other and use Request access instead. The claiming device receives its own revocable token; the master daemon token is never embedded in the link.
 
 Examples:
   sessions pair
@@ -731,7 +751,7 @@ Usage:
 
 manage tailnet-only remote access
 
-Enable, disable, or inspect the Tailscale Serve HTTPS endpoint used for Sessions remote access.
+Enable, disable, or inspect the Tailscale Serve HTTPS endpoint used for Sessions remote access. Once enabled, other Sessions apps in the same tailnet can discover this Mac and request access; the host must accept before a revocable device credential is issued.
 
 Examples:
   sessions remote enable

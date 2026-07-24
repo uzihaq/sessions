@@ -32,17 +32,20 @@ later, joint Node-to-Go cutover after the app itself has shipped.
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
 contract.
 
-## Now: Mac 0.2 polish, then Android
+## Now: Mac 0.2.1 patch, then Android
 
-The next Mac release is implemented in source and awaits the user's local app test. It adds a polished Today journal
+Sessions 0.2.0 is public. The 0.2.1 patch is implemented in source and closes
+the search, Mini-feedback, and tailnet-approval issues found during cutover
+dogfood. The 0.2 line adds a polished Today journal
 with local usage and session/lane evidence plus an opt-in, cached Codex-or-Claude daily recap; a native Connections
 center for loopback port, same-Wi-Fi LAN, Tailscale Serve, and one-time device pairing; and automatic signed-update
 discovery with an in-app badge and once-per-version native notification. Connections also promotes the optional
 Somewhere platform and reports whether its CLI is absent, current, or updateable without mutating the user's global
 install. Search now adds explicit query-only AI planning through the selected pre-authenticated Codex or Claude CLI,
-Claude/Codex and User/Agent filters, provider-colored results, persistent query state, and a read-only history viewer
-that does not accidentally resume a session. Planning allows one active model call, caches identical requests, and
-the viewer renders a bounded tail preview. Tabs and Grid are grouped beneath Sessions, and the Somewhere card uses
+Claude/Codex and user/agent/operations filters, provider-colored results, persistent query state, and a read-only,
+message-anchored history viewer that does not accidentally resume a session. Planning allows one active model call,
+caches identical requests, and transcript views page at 500 original message positions. Tabs and Grid are grouped
+beneath Sessions, and the Somewhere card uses
 the product logo as a direct link. Model calls remain explicit, Codex is recommended, the CLI chooses its default model, recap effort is
 set to the lowest supported provider setting, provider input is hard-capped at 32 KiB and excludes transcripts and
 durable session IDs; AI search input is capped at 4 KiB and contains only the user's query. Update install remains
@@ -109,6 +112,12 @@ thin Kotlin client rather than changing the runtime boundary.
   specialized Sessions worker; no public ingress
   ```
 - **Inline child lifecycle cards:** the navigator and Details already show trusted hierarchy and child health. A later normalized event will project child-start and child-completion ledger facts into the conversation timeline without guessing from provider text.
+- **Support-ticket attachment and temporary access (coming soon):** start with
+  `sessions support` creating a locally previewable, redacted diagnostic bundle
+  that the user explicitly attaches to one Somewhere support ticket. Any later
+  live view must be ticket-scoped, short-lived, read-only by default, revocable,
+  and audited; it must never become a general reverse tunnel or reuse a master
+  daemon token. See [`docs/NETWORK_SECURITY.md`](docs/NETWORK_SECURITY.md).
 - Local semantic search only if FTS5 proves insufficient in real use.
 
 ## Explicitly not planned

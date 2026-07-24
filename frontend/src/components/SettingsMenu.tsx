@@ -25,7 +25,7 @@ import {
 } from '../lib/newSessionDefaults';
 import { ServerSelector } from './ServerSelector';
 import { TagEditor } from './TagEditor';
-import { claimCurrentOriginPairing } from '../lib/hostedBootstrap';
+import { claimCurrentOriginPairing, claimNativeMachinePairing } from '../lib/hostedBootstrap';
 import {
   checkForNativeUpdate,
   installNativeUpdate,
@@ -328,6 +328,12 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
     setPairBusy(true);
     setPairMessage(null);
     try {
+      if (isTauri()) {
+        const { claim, server } = await claimNativeMachinePairing(pairTicket);
+        setPairTicket('');
+        setPairMessage(`Paired with ${server.name} as ${claim.name}`);
+        return;
+      }
       const claimed = await claimCurrentOriginPairing(pairTicket);
       setPairTicket('');
       setPairMessage(`Paired as ${claimed.name}`);
@@ -604,10 +610,15 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
               between machines. */}
           <div className="settings-menu-divider" />
           <div className="settings-menu-section" aria-label="Pair">
-            <div className="settings-menu-section-title">Pair this browser</div>
+            <div className="settings-menu-section-title">{isTauri() ? 'LAN pairing fallback' : 'Pair this browser'}</div>
+            <div className="settings-menu-status">
+              {isTauri()
+                ? 'Normally use Connections → Find Sessions Macs. Paste a one-time link here only when both devices share a LAN without Tailscale.'
+                : 'Paste the one-time ticket created by `sessions pair` on this machine.'}
+            </div>
             <div className="settings-menu-field-row">
               <label className="settings-menu-field">
-                <span>Ticket</span>
+                <span>{isTauri() ? 'Pairing link' : 'Ticket'}</span>
                 <input
                   className="settings-menu-input"
                   type="text"
@@ -616,7 +627,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void claimPairTicket();
                   }}
-                  placeholder="From sessions pair"
+                  placeholder={isTauri() ? 'http://192.168.…/#pair=…' : 'From sessions pair'}
                   autoComplete="off"
                   spellCheck={false}
                 />
@@ -627,7 +638,7 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
                 disabled={pairBusy || !pairTicket.trim()}
                 onClick={() => void claimPairTicket()}
               >
-                {pairBusy ? 'Pairing…' : 'Pair'}
+                {pairBusy ? 'Pairing…' : isTauri() ? 'Add' : 'Pair'}
               </button>
             </div>
             {pairMessage ? (

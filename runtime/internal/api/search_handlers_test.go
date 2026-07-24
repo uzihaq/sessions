@@ -74,7 +74,7 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 	}
 	ranked := serve(t, daemon.handler, http.MethodGet, "/api/search?q=email&ranked=1", nil, "127.0.0.1:4321", nil)
 	decodeBody(t, ranked, &result)
-	if ranked.Code != http.StatusOK || result.Total != 1 || result.Matches[0].Text != "Find the Aurora emails phrase" ||
+	if ranked.Code != http.StatusOK || result.Total != 1 ||
 		!strings.Contains(result.Matches[0].Snippet, "[[emails]]") {
 		t.Fatalf("ranked status=%d result=%#v", ranked.Code, result)
 	}
@@ -88,13 +88,14 @@ func TestSearchRouteUsesNormalizedKnownSessionHistory(t *testing.T) {
 	}
 	filtered := serve(t, daemon.handler, http.MethodGet, "/api/search?"+parameters.Encode(), nil, "127.0.0.1:4321", nil)
 	decodeBody(t, filtered, &result)
-	if filtered.Code != http.StatusOK || result.Total != 1 || result.Matches[0].Text != "Codex answer number 73" ||
+	if filtered.Code != http.StatusOK || result.Total != 1 ||
+		!strings.Contains(result.Matches[0].Snippet, "[[number 73]]") ||
 		result.Matches[0].Timestamp == nil || *result.Matches[0].Timestamp != "2026-07-17T18:01:02Z" {
 		t.Fatalf("filtered status=%d result=%#v", filtered.Code, result)
 	}
 
 	for _, target := range []string{
-		"/api/search", "/api/search?q=(&regex=true", "/api/search?q=x&role=tool", "/api/search?q=x&limit=0",
+		"/api/search", "/api/search?q=(&regex=true", "/api/search?q=x&role=system", "/api/search?q=x&limit=0",
 		"/api/search?q=x&ranked=maybe", "/api/search?q=x&ranked=true&regex=true",
 	} {
 		invalid := serve(t, daemon.handler, http.MethodGet, target, nil, "127.0.0.1:4321", nil)

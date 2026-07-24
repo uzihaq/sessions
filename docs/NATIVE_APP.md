@@ -32,7 +32,14 @@ loopback port in `src-tauri/src/lib.rs`. The release build
 also embeds signed Go binaries and runs the lifecycle boundary in
 `src-tauri/src/lifecycle.rs`: exact bundled bytes are copied into an immutable,
 versioned directory under `~/Library/Application Support/Sessions/runtime/`,
-then launchd owns the selected `sessionsd` version.
+then launchd owns the selected `sessionsd` version. After a healthy install or
+update it also exposes the versioned `sessions` binary through a standard
+command directory (`/opt/homebrew/bin`, `/usr/local/bin`, then
+`~/.local/bin`). If Sessions already owns links in more than one of those
+locations, every managed link is updated together so PATH ordering cannot
+select an older runtime. An unrelated executable or symlink is never
+overwritten, and PATH integration failure never rolls back a healthy daemon or
+endangers live sessions.
 
 ## macOS v2 release gate
 
@@ -64,6 +71,9 @@ A distributable build is complete only when all of these are true:
 
 The app must never call a broad cleanup command during install or update.
 Recovery remains an explicit user action through `sessions recover`.
+Closed-record retention is likewise explicit: `sessions gc` previews by
+default and `--apply` appends archive facts without deleting transcripts,
+worktrees, or recovery history.
 
 The implementation pins the updater public key and reads
 `https://sessions.somewhere.tech/releases/latest.json`. Somewhere hosts only
@@ -88,13 +98,21 @@ The shared React client now has native-oriented product surfaces:
   aliases, omits full transcripts, and caches the Markdown under daemon state by
   date/input/provider (`runtime/internal/recap/service.go`).
 - **Connections** exposes loopback, same-Wi-Fi LAN, Tailscale Serve, and
-  one-time device pairing in one ladder. It uses the bundled CLI for the same
-  verified LAN/remote/pairing behavior as terminal users. Changing the
-  installed daemon port is native-only: the lifecycle manager checks the new
-  port, captures live runner IDs, moves the launchd daemon, verifies complete
-  re-adoption, persists the preference, and restores the prior port and plist
-  on failure. A process which races onto the requested new port cannot prevent
-  that restoration.
+  device approval in one ladder. The normal Tailscale path is discovery:
+  Sessions reads the signed-in client's tailnet peers, displays only machines
+  whose HTTPS health route identifies as `sessionsd`, sends a request carrying
+  the source device name, and waits for the host app's explicit Accept/Deny.
+  Tailscale Serve supplies the account identity; Sessions issues the normal
+  revocable per-device credential only after acceptance. No QR, SSH, manual
+  endpoint, or master-token copying is part of that path. A five-minute
+  single-use link remains the fallback for a private LAN without Tailscale,
+  and browser claims remain same-origin. Both paths key the saved entry by a
+  daemon-persisted identity, so alternate endpoints update one machine rather
+  than duplicating it. Changing the installed daemon port is
+  native-only: the lifecycle manager checks the new port, captures live runner
+  IDs, moves the launchd daemon, verifies complete re-adoption, persists the
+  preference, and restores the prior port and plist on failure. A process which
+  races onto the requested new port cannot prevent that restoration.
 - **Somewhere** is an optional card within Connections, not a Sessions account
   requirement. The native command reports whether the CLI is installed, its
   version, and whether the npm registry advertises a newer release. The card
@@ -121,8 +139,9 @@ operation; there is intentionally no automated production cutover script.
 
 ## Mobile sequence
 
-Android follows the shipped macOS app. The Tauri mobile client pairs with and
-connects to a Mac-hosted daemon; it does not run `sessionsd` or session runners.
+Android follows the shipped macOS app. The Tauri mobile client discovers and
+requests access from a Mac-hosted daemon when both devices share a tailnet, with
+the one-time LAN QR as fallback; it does not run `sessionsd` or session runners.
 Reuse the existing per-device credential and encrypted push contracts. Keep
 native additions narrow: secure credential storage, FCM, widgets, and Quick
 Settings. iOS follows later when APNs, widgets, and Live Activities justify a

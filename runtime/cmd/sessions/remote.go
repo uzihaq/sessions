@@ -20,7 +20,6 @@ import (
 const (
 	tailscaleDownloadURL = "https://tailscale.com/download"
 	tailscaleDNSAdminURL = "https://login.tailscale.com/admin/dns"
-	walkthroughBaseURL   = "https://sessions.somewhere.tech/"
 )
 
 type tailscaleStatus struct {
@@ -225,11 +224,13 @@ func formatDaemonTarget(host string, port any) (string, error) {
 
 func isMagicDNSResolutionError(err error) bool {
 	var dnsError *net.DNSError
-	if errors.As(err, &dnsError) && (dnsError.IsNotFound || dnsError.IsTemporary) {
+	if errors.As(err, &dnsError) && dnsError.IsNotFound {
 		return true
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such host") || strings.Contains(message, "name or service not known") || strings.Contains(message, "nodename nor servname") || strings.Contains(message, "getaddrinfo")
+	return strings.Contains(message, "no such host") ||
+		strings.Contains(message, "name or service not known") ||
+		strings.Contains(message, "nodename nor servname provided")
 }
 
 func verifyEndpoint(endpoint string) error {
@@ -257,10 +258,6 @@ func verifyEndpoint(endpoint string) error {
 		return fmt.Errorf("%s returned HTTP %d", healthURL.String(), response.StatusCode)
 	}
 	return nil
-}
-
-func walkthroughURL(endpoint string) string {
-	return walkthroughBaseURL + "#endpoint=" + url.QueryEscape(endpoint)
 }
 
 func printQR(output io.Writer, connectURL string) error {
@@ -291,7 +288,6 @@ func printQR(output io.Writer, connectURL string) error {
 }
 
 func (a *app) printConnection(endpoint string, target *string) error {
-	connectURL := walkthroughURL(endpoint)
 	if a.wantJSON {
 		return writeJSON(a.stdout, struct {
 			Enabled    bool    `json:"enabled"`
@@ -299,12 +295,12 @@ func (a *app) printConnection(endpoint string, target *string) error {
 			Endpoint   string  `json:"endpoint"`
 			Target     *string `json:"target"`
 			ConnectURL string  `json:"connectUrl"`
-		}{true, true, endpoint, target, connectURL}, false)
+		}{true, true, endpoint, target, endpoint}, false)
 	}
 	io.WriteString(a.stdout, "\nRemote access verified (HTTP 200).\n")
 	fmt.Fprintf(a.stdout, "  Endpoint: %s\n", endpoint)
-	fmt.Fprintf(a.stdout, "  Phone:    %s\n", connectURL)
-	return printQR(a.stdout, connectURL)
+	_, err := io.WriteString(a.stdout, "Sessions apps on this tailnet can now discover this Mac and request access.\n")
+	return err
 }
 
 func failRemoteVerification(err error, endpoint string) error {
@@ -451,6 +447,19 @@ func (a *app) remoteStatus() error {
 		return err
 	}
 	if err := verifyEndpoint(serve.Endpoint); err != nil {
+		// A machine may deliberately keep Tailscale DNS disabled while its
+		// peers still resolve and reach the Serve hostname. Native clients
+		// need the configured state so they can pair from those peers; retain
+		// the stricter non-JSON CLI diagnostic below.
+		if a.wantJSON && isMagicDNSResolutionError(err) {
+			return writeJSON(a.stdout, struct {
+				Enabled           bool   `json:"enabled"`
+				Verified          bool   `json:"verified"`
+				Endpoint          string `json:"endpoint"`
+				ConnectURL        string `json:"connectUrl"`
+				VerificationError string `json:"verificationError"`
+			}{true, false, serve.Endpoint, serve.Endpoint, "This Mac does not use Tailscale DNS; verify discovery from another tailnet device."}, false)
+		}
 		return failRemoteVerification(err, serve.Endpoint)
 	}
 	return a.printConnection(serve.Endpoint, nil)

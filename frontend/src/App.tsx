@@ -18,6 +18,7 @@ import { SettingsView } from './components/SettingsView';
 import { useSessions } from './store/sessions';
 import { useServers, configureNativeLocalPort, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
+import { TailnetAccessInbox } from './components/TailnetAccessInbox';
 import { useIsMobile } from './hooks/useMediaQuery';
 import { ParserIcon } from './components/ParserIcon';
 import { ConnectScreen } from './components/ConnectScreen';
@@ -388,6 +389,7 @@ function ConnectedApp(): JSX.Element {
       <div className="operations-frame">
         {sessionWorkspace && !isMobile ? <SessionNavigator sessions={sessions} activeId={activeId} machine={machine} onOpen={openSession} onNew={() => setDialogOpen('new')} /> : null}
         <section className="operations-content">
+          <TailnetAccessInbox />
           {sessionWorkspace ? (
             <header className="app-header operations-tabs-header">
               <SessionTabs

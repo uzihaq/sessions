@@ -1,4 +1,4 @@
-# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-22)
+# Sessions — STATE / ORCHESTRATOR HANDOFF (2026-07-23)
 
 > **New orchestrator (Codex or returning Claude): start here, then read `AGENTS.md`.**
 > This file + `AGENTS.md` + `docs/WHY.md` + the somewhere board = everything the previous
@@ -33,16 +33,20 @@ transfer needed — the durable record IS the handoff.
   plist and historical state were preserved, so the stop is recoverable. The signed source Sessions.app has now been
   installed and exercised across that MacBook boundary: its managed daemon owns localhost:8787, a real Claude session
   created its runner socket successfully, and the same session survived a second immutable runtime/app update before
-  the smoke lane was deliberately stopped and removed. Mac mini
-  (100.86.76.84) = prod, still OLD node daemon, **UNTOUCHED** — its cutover is a separate JOINT step, now
-  planned as the mini's first Sessions.app install (see below).
+  the smoke lane was deliberately stopped and removed. The Mini then entered
+  its joint cutover and its 19 important lanes were preserved/resumed under
+  Sessions. **USER PAUSE 2026-07-23:** make no further Mini changes until the
+  next signed release is public; the search investigation used only a read-only
+  local copy of the PM transcript.
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/sessions/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
-- **Sessions 0.1.0 is public and shipped under `Somewhere-Tech/sessions`.** Tag `v0.1.0` points to `b297052`; the repository and 13-asset
-  GitHub release are public, Sessions.app is notarized/stapled/Gatekeeper-accepted, the signed updater manifest
-  is live at `https://sessions.somewhere.tech/releases/latest.json`, and `somewhere-tech/homebrew-tap` serves both the
-  `sessions` runtime formula and `sessions-app` cask.
+- **Sessions 0.2.0 is public under `Somewhere-Tech/sessions`; 0.2.1 is the next
+  patch release.** The public app artifacts are notarized/stapled/
+  Gatekeeper-accepted, the signed updater manifest is live at
+  `https://sessions.somewhere.tech/releases/latest.json`, and
+  `somewhere-tech/homebrew-tap` serves both the `sessions` runtime formula and
+  `sessions-app` cask.
 - Cron is OFF. soak-d2 is the sacred durable session (survives every reload; verify it lives after any
   daemon restart).
 
@@ -73,8 +77,8 @@ The app IS the product package. v2 makes "one update updates everything, nothing
 mini yet. Its later first Sessions.app install remains the joint Node-to-Go cutover (interop-proven by
 `TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
 
-## NEXT: exercise the Mac 0.2 source build, then Android (see board + WHY.md)
-**Immediate:** test and release the Mac 0.2 product pass below, then build the Android app
+## NEXT: ship the Mac 0.2.1 patch, then Android (see board + WHY.md)
+**Immediate:** notarize and publish the Mac 0.2.1 search/operations/security patch below, then build the Android app
 (Tauri2 paired client + FCM; push machinery ready). Later:
 semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
@@ -124,15 +128,30 @@ mediated by the native client; source history remains preserved. Full contract: 
   requested port. An optional Somewhere card links to `somewhere.tech`, detects the local Somewhere CLI version,
   checks for an available npm release, and offers copyable install/update/docs commands without auto-installing or
   changing the global CLI (`src-tauri/src/lib.rs`, `frontend/src/components/SomewhereCard.tsx`).
-- **Search polish and explicit AI planning** adds Claude/Codex plus User/Agent filters, provider-colored badges,
-  navigation-persistent query state, and a read-only session history viewer. AI mode makes one query-only call through
-  the user's selected pre-authenticated CLI (Codex default, Claude optional), then applies the generated FTS5 query to
-  the local index; transcripts, snippets, session IDs, and index contents are not sent. Ranked, exact, and regex modes
-  remain model-free (`runtime/internal/smartsearch/service.go`, `frontend/src/components/SearchView.tsx`). The frontend
-  also converts missing Today, Usage, AI-search, and history routes into an explicit old-runtime/update message instead
-  of exposing a raw `sessionsd 404` response. Model planning is serialized, identical requests are cached, and the
-  read-only viewer renders only a bounded tail preview so neither repeated clicks nor giant transcripts can create an
-  unbounded cost or memory path.
+- **Transcript-aware retrieval and explicit AI planning** was dogfooded against the 387 MB PM Claude lane rather than
+  a toy transcript. The persistent FTS5 index now reads the complete source once, treats ordinary multi-word input as
+  recall-oriented token alternatives unless the user asks for Boolean, phrase, or proximity syntax, and returns
+  best-first message anchors with relevance, context, session/workspace/machine metadata, and user/assistant/handoff
+  roles. Filters cover provider, session/lane name, workspace, date, speaker, and relevance-versus-timeline ordering.
+  The Search reader opens the exact clicked message and can page through an anchored context window, everything after
+  it, user requests only, a selected request-to-request range, or the complete transcript without losing the query.
+  Every response spans at most 500 original message positions, verifies the content-derived bookmark on first open,
+  and omits full result bodies until opened. Index refreshes are serialized/cancelable, use actual source-file
+  fingerprints, and purge unavailable history. Claude `Agent`, Codex `spawn_agent`, and session-control relays are
+  searchable as typed delegation/handoff/status operations; automation ticks remain distinct from founder requests.
+  Smart mode makes one query-only call through the user's
+  selected pre-authenticated CLI (Codex default, Claude optional), then applies the generated FTS5 expression locally;
+  transcripts, snippets, session IDs, and index contents are not sent. Exact and regex modes remain model-free
+  (`runtime/internal/search`, `runtime/internal/integrations/history.go`,
+  `runtime/internal/smartsearch/service.go`, `frontend/src/components/SearchView.tsx`).
+- Sessions-owned outbound traffic is now an explicit security boundary:
+  local operation sends no telemetry or session data to Somewhere; every
+  data-bearing outbound feature must name its destination/payload/trigger,
+  require visible opt-in, remain bounded and revocable, and never silently
+  create a general tunnel. A future `sessions support` starts with a
+  user-previewed redacted bundle for one ticket; live support access remains
+  unimplemented and requires a separate narrow grant
+  (`docs/NETWORK_SECURITY.md`).
 - **Interactive browser control is deprecated by product decision.** Sessions.app is the Mac control and terminal
   surface; Android will be the first remote native client. The currently served SPA remains a compatibility artifact
   until it is reduced or removed, and must not be promoted as a browser terminal. A future browser surface, if any,
@@ -183,6 +202,17 @@ mediated by the native client; source history remains preserved. Full contract: 
   `sessionsd`, so GUI, CLI, and mini launches share one contract; per-session Advanced choices take precedence. Sessions
   does not rewrite Claude settings or copy Somewhere credentials. `ensure` adopts the canonical existing Somewhere MCP
   or injects `somewhere mcp`, and a same-name conflict fails closed.
+- **Mini migration feedback is folded into the next 0.2 candidate, without touching the Mini.** The canonical Somewhere
+  task is `tsk_c315cf9ed402416d8c6ba5f16072bef8` on the **Sessions** project (the original report was filed against the
+  legacy `pretty-pty-preview` deployment). `sessions doctor` no longer closes its PTY before the probe exits and
+  recognizes native plus adopted legacy runners; CLI, daemon health, and standalone archive names receive the same
+  build version; lane `files_changed` compares repo-root start/end Git-visible state and commit trees instead of
+  reporting pre-existing dirt; and `sessions gc` previews old closed-record archival before an explicit `--apply`.
+  Archival is an append-only visibility fact—live/discoverable runner artifacts, retained ancestry, transcripts,
+  artifacts, worktrees, and recovery evidence are not deleted. Sessions.app also updates every existing managed CLI
+  link through the standard command directories without replacing an unrelated executable
+  (`runtime/cmd/sessions/doctor.go`, `runtime/cmd/sessions-runner/main.go`,
+  `runtime/internal/session/retention.go`, `src-tauri/src/lifecycle.rs`).
 
 ## OPEN USER DECISIONS (blockers only)
 None for the observed mini cutover. The product default preserves the existing bypass-permissions behavior, but it is

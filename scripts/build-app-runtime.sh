@@ -67,7 +67,7 @@ mkdir -p "$embedded_assets"
 find "$embedded_assets" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 cp -R "$frontend_dist"/. "$embedded_assets"/
 
-ldflags="-s -w -buildid=sessions/$runtime_build_version"
+ldflags="-s -w -X main.version=$runtime_build_version -buildid=sessions/$runtime_build_version"
 build_one() {
   local binary_name="$1"
   local build_tags="$2"

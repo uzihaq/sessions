@@ -98,6 +98,33 @@ func TestHistoryRoutesExposeStableListTranscriptTextAndRawShapes(t *testing.T) {
 	if previewResponse.Code != http.StatusOK || transcript.Truncated || len(transcript.Messages) != 2 {
 		t.Fatalf("preview status=%d transcript=%#v", previewResponse.Code, transcript)
 	}
+	windowResponse := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"/window?format=json&start=1&end=2", nil, "127.0.0.1:4321", nil)
+	decodeBody(t, windowResponse, &transcript)
+	if windowResponse.Code != http.StatusOK || !transcript.Truncated || transcript.Session.MessageCount != 2 ||
+		len(transcript.Messages) != 1 || transcript.Messages[0].Index != 1 ||
+		transcript.Messages[0].Text != "Fixture remembered." {
+		t.Fatalf("window status=%d transcript=%#v", windowResponse.Code, transcript)
+	}
+	verifiedWindow := serve(t, daemon.handler, http.MethodGet,
+		"/api/history/"+id+"/window?start=0&end=2&anchor=0&message_id="+transcriptResponseMessageID(t, transcriptResponse.Body.Bytes(), 0),
+		nil, "127.0.0.1:4321", nil)
+	if verifiedWindow.Code != http.StatusOK {
+		t.Fatalf("verified window status=%d body=%s", verifiedWindow.Code, verifiedWindow.Body.String())
+	}
+	staleWindow := serve(t, daemon.handler, http.MethodGet,
+		"/api/history/"+id+"/window?start=0&end=2&anchor=0&message_id=stale-bookmark",
+		nil, "127.0.0.1:4321", nil)
+	if staleWindow.Code != http.StatusConflict {
+		t.Fatalf("stale window status=%d body=%s", staleWindow.Code, staleWindow.Body.String())
+	}
+	invalidWindow := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"/window?start=2&end=1", nil, "127.0.0.1:4321", nil)
+	if invalidWindow.Code != http.StatusBadRequest {
+		t.Fatalf("invalid window status=%d body=%s", invalidWindow.Code, invalidWindow.Body.String())
+	}
+	overlargeWindow := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"/window?start=0&end=501", nil, "127.0.0.1:4321", nil)
+	if overlargeWindow.Code != http.StatusBadRequest {
+		t.Fatalf("overlarge window status=%d body=%s", overlargeWindow.Code, overlargeWindow.Body.String())
+	}
 	invalidView := serve(t, daemon.handler, http.MethodGet, "/api/history/"+id+"/everything", nil, "127.0.0.1:4321", nil)
 	if invalidView.Code != http.StatusNotFound {
 		t.Fatalf("invalid view status=%d body=%s", invalidView.Code, invalidView.Body.String())
@@ -115,6 +142,18 @@ func TestHistoryRoutesExposeStableListTranscriptTextAndRawShapes(t *testing.T) {
 		!bytes.Equal(rawResponse.Body.Bytes(), conversation) {
 		t.Fatalf("raw status=%d type=%q body=%q", rawResponse.Code, rawResponse.Header().Get("Content-Type"), rawResponse.Body.Bytes())
 	}
+}
+
+func transcriptResponseMessageID(t *testing.T, encoded []byte, index int) string {
+	t.Helper()
+	var transcript integrations.TranscriptResponse
+	if err := json.Unmarshal(encoded, &transcript); err != nil {
+		t.Fatal(err)
+	}
+	if index >= len(transcript.Messages) || transcript.Messages[index].ID == "" {
+		t.Fatalf("transcript message id missing: %#v", transcript.Messages)
+	}
+	return transcript.Messages[index].ID
 }
 
 func TestErrorsRouteReturnsDurablePagingFeed(t *testing.T) {

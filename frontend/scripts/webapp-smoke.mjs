@@ -16,6 +16,7 @@ const outputDir = process.env.SESSIONS_SMOKE_DIR
 fs.mkdirSync(outputDir, { recursive: true });
 
 const endpoint = new URL(daemonEndpoint);
+const daemonOrigin = endpoint.origin;
 const scheme = endpoint.protocol === 'https:' ? 'https' : 'http';
 const port = endpoint.port ? Number(endpoint.port) : (scheme === 'https' ? 443 : 80);
 const server = {
@@ -26,6 +27,11 @@ const server = {
   isDefault: false,
   scheme
 };
+
+function isSessionsListResponse(response) {
+  const candidate = new URL(response.url());
+  return candidate.origin === daemonOrigin && candidate.pathname === '/api/sessions' && response.status() === 200;
+}
 
 const browser = await puppeteer.launch({
   headless: true,
@@ -58,7 +64,7 @@ try {
   }, server);
 
   const sessionsResponse = page.waitForResponse(
-    (response) => response.url() === `${daemonEndpoint}/api/sessions` && response.status() === 200,
+    isSessionsListResponse,
     { timeout: 15_000 }
   );
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 15_000 });
@@ -73,7 +79,7 @@ try {
   await fragmentPage.evaluateOnNewDocument(() => window.localStorage.clear());
   const fragmentUrl = `${appUrl}/#endpoint=${encodeURIComponent(daemonEndpoint)}&token=fragment-scratch-token`;
   const fragmentSessionsResponse = fragmentPage.waitForResponse(
-    (candidate) => candidate.url() === `${daemonEndpoint}/api/sessions` && candidate.status() === 200,
+    isSessionsListResponse,
     { timeout: 15_000 }
   );
   await fragmentPage.goto(fragmentUrl, { waitUntil: 'domcontentloaded', timeout: 15_000 });

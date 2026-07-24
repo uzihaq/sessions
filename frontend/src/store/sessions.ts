@@ -161,8 +161,9 @@ function readCache(): { sessions: SessionInfo[]; activeId: string | null } {
   try {
     const raw = window.localStorage.getItem(CACHE_KEY);
     const sessions: SessionInfo[] = filterSessionsForWindow(raw
-      ? (JSON.parse(raw) as CachedSession[]).map((c) => ({
+        ? (JSON.parse(raw) as CachedSession[]).map((c) => ({
           ...c,
+          args: Array.isArray(c.args) ? c.args : [],
           // Fill the live fields with neutral defaults — they'll be
           // overwritten by refresh() within ~1s of boot. We don't
           // pretend to know whether the cached session is still

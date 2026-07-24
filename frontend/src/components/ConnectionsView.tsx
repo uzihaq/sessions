@@ -1,14 +1,32 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { fetchLANState, setLANEnabled, type LANState } from '../api/sessionsd';
 import {
+  claimNativeTailnetAccess,
+  discoverNativeTailnetPeers,
   getNativeConnectionSettings,
   isTauri,
+  requestNativeTailnetAccess,
   runNativeConnectionAction,
   setNativeRuntimePort,
-  type NativeConnectionSettings
+  type NativeConnectionSettings,
+  type NativeTailnetPeer,
+  type NativeTailnetRequest
 } from '../lib/tauriBridge';
 import { configureNativeLocalPort } from '../lib/servers';
+import { claimNativeMachinePairing, rememberNativeMachineClaim } from '../lib/hostedBootstrap';
 import { SomewhereCard } from './SomewhereCard';
+
+const TAILNET_CLIENT_ID_KEY = 'sessions:tailnet-client-id';
+
+function tailnetClientID(): string {
+  const existing = window.localStorage.getItem(TAILNET_CLIENT_ID_KEY)?.trim();
+  if (existing && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(existing)) {
+    return existing;
+  }
+  const created = crypto.randomUUID().toLowerCase();
+  window.localStorage.setItem(TAILNET_CLIENT_ID_KEY, created);
+  return created;
+}
 
 interface RemoteState {
   enabled: boolean;
@@ -16,6 +34,7 @@ interface RemoteState {
   endpoint?: string;
   target?: string | null;
   connectUrl?: string;
+  verificationError?: string;
 }
 
 interface PairState {
@@ -32,7 +51,12 @@ export function ConnectionsView(): JSX.Element {
   const [remote, setRemote] = useState<RemoteState | null>(null);
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [pair, setPair] = useState<PairState | null>(null);
-  const [pairName, setPairName] = useState('My phone');
+  const [pairName, setPairName] = useState('My other device');
+  const [incomingPairLink, setIncomingPairLink] = useState('');
+  const [incomingPairMessage, setIncomingPairMessage] = useState<string | null>(null);
+  const [tailnetPeers, setTailnetPeers] = useState<NativeTailnetPeer[] | null>(null);
+  const [tailnetRequest, setTailnetRequest] = useState<NativeTailnetRequest | null>(null);
+  const [tailnetMessage, setTailnetMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -60,6 +84,44 @@ export function ConnectionsView(): JSX.Element {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!tailnetRequest) return;
+    let cancelled = false;
+    let checking = false;
+    const check = async (): Promise<void> => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await claimNativeTailnetAccess(tailnetRequest);
+        if (cancelled || result.status === 'pending') return;
+        if (result.status === 'accepted' && result.claim) {
+          const server = await rememberNativeMachineClaim(result.claim);
+          if (!cancelled) {
+            setTailnetRequest(null);
+            setTailnetMessage(`Connected to ${server.name}. Sessions is switching to it now.`);
+          }
+          return;
+        }
+        if (!cancelled) {
+          setTailnetRequest(null);
+          setTailnetMessage(result.status === 'denied'
+            ? 'The other Mac denied this request.'
+            : 'The request expired. Send a new one when someone is at the other Mac.');
+        }
+      } catch (reason) {
+        if (!cancelled) setTailnetMessage(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const interval = window.setInterval(() => { void check(); }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [tailnetRequest]);
 
   const changeLAN = async (enabled: boolean): Promise<void> => {
     if (busy) return;
@@ -102,6 +164,47 @@ export function ConnectionsView(): JSX.Element {
       setPair(result.data);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addMachine = async (): Promise<void> => {
+    if (busy || !isTauri() || !incomingPairLink.trim()) return;
+    setBusy('incoming-pair'); setIncomingPairMessage(null);
+    try {
+      const { claim, server } = await claimNativeMachinePairing(incomingPairLink);
+      setIncomingPairLink('');
+      setIncomingPairMessage(`Paired with ${server.name} as ${claim.name}. Sessions is switching to it now.`);
+    } catch (reason) {
+      setIncomingPairMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const discoverTailnet = async (): Promise<void> => {
+    if (busy || !isTauri()) return;
+    setBusy('discover'); setTailnetMessage(null);
+    try {
+      setTailnetPeers(await discoverNativeTailnetPeers());
+    } catch (reason) {
+      setTailnetPeers([]);
+      setTailnetMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const requestAccess = async (peer: NativeTailnetPeer): Promise<void> => {
+    if (busy || tailnetRequest || !isTauri()) return;
+    setBusy(`request:${peer.endpoint}`); setTailnetMessage(null);
+    try {
+      const requested = await requestNativeTailnetAccess(peer.endpoint, tailnetClientID(), '');
+      setTailnetRequest(requested);
+      setTailnetMessage(`Request sent to ${peer.hostname}. Accept it in Sessions on that Mac.`);
+    } catch (reason) {
+      setTailnetMessage(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(null);
     }
@@ -161,9 +264,11 @@ export function ConnectionsView(): JSX.Element {
             <button type="button" className={`btn${lan?.enabled ? ' btn-ghost' : ''}`} disabled={busy !== null} onClick={() => void changeLAN(!lan?.enabled)}>{busy === 'lan' ? 'Checking…' : lan?.enabled ? 'Turn off LAN' : 'Enable LAN access'}</button>
           </ConnectionCard>
 
-          <ConnectionCard step="03" title="Anywhere" state={remote?.enabled && remote.verified ? 'Tailscale HTTPS on' : 'Off'} active={remote?.enabled === true && remote.verified === true}>
+          <ConnectionCard step="03" title="Anywhere" state={remote?.enabled ? 'Tailscale HTTPS on' : 'Off'} active={remote?.enabled === true}>
             <p>Tailscale Serve keeps the connection inside your tailnet with HTTPS terminating on this Mac. Sessions operates no relay.</p>
             {remote?.endpoint ? <div className="connection-endpoint">{remote.endpoint}</div> : null}
+            {remote?.enabled ? <div className="connection-privacy-note"><strong>Ready for requests</strong><span>Other Sessions apps in this tailnet can discover this Mac. You still approve every new device.</span></div> : null}
+            {remote?.verificationError ? <div className="connection-privacy-note"><strong>Configured on this Mac</strong><span>{remote.verificationError}</span></div> : null}
             {remoteError ? <div className="connection-error">{remoteError}</div> : null}
             {!remote?.enabled ? <div className="connection-privacy-note"><strong>Before enabling</strong><span>Tailscale issues a public certificate, so the machine’s <code>.ts.net</code> name appears in Certificate Transparency logs.</span></div> : null}
             <div className="connection-actions">
@@ -174,21 +279,55 @@ export function ConnectionsView(): JSX.Element {
         </section>
 
         <section className="pair-device-card">
-          <div><span className="connections-section-kicker">Five minutes · single use</span><h2>Pair another device</h2><p>The future mobile or native client receives its own revocable credential. Your master daemon token never appears in the link.</p></div>
+          <div><span className="connections-section-kicker">Same tailnet · no codes</span><h2>Connect to another Sessions Mac</h2><p>Find machines securely through your existing Tailscale network, then ask the person at that Mac to approve this device.</p></div>
+          <div className="connection-actions">
+            <button type="button" className="btn" disabled={!isTauri() || busy !== null} onClick={() => void discoverTailnet()}>{busy === 'discover' ? 'Looking…' : tailnetPeers === null ? 'Find Sessions Macs' : 'Scan again'}</button>
+          </div>
+          {tailnetPeers !== null ? (
+            tailnetPeers.length > 0 ? (
+              <div className="tailnet-peer-list">
+                {tailnetPeers.map((peer) => {
+                  const waiting = tailnetRequest?.endpoint === peer.endpoint;
+                  return (
+                    <article key={peer.endpoint} className="tailnet-peer">
+                      <div className="tailnet-peer-icon" aria-hidden="true">{peer.os.toLowerCase().includes('mac') ? '⌘' : '▣'}</div>
+                      <div><strong>{peer.hostname}</strong><span>{peer.os || 'Tailscale device'} · {peer.endpoint.replace('https://', '')}</span></div>
+                      <button type="button" className={waiting ? 'btn btn-ghost' : 'btn'} disabled={busy !== null || tailnetRequest !== null} onClick={() => void requestAccess(peer)}>
+                        {waiting ? 'Waiting for approval…' : busy === `request:${peer.endpoint}` ? 'Sending…' : 'Request access'}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : <div className="connection-empty">No other Sessions Macs answered. Make sure remote access is enabled on the host Mac and both Macs are signed into Tailscale.</div>
+          ) : null}
+          {tailnetMessage ? <div className="connections-message" role="status">{tailnetMessage}</div> : null}
+        </section>
+
+        <section className="pair-device-card">
+          <div><span className="connections-section-kicker">Local fallback · five minutes</span><h2>Pair without Tailscale</h2><p>For a device on the same Wi-Fi, create a single-use link. The other device gets its own revocable credential; your master daemon token is never shared.</p></div>
           <div className="pair-device-controls">
             <input value={pairName} maxLength={80} onChange={(event) => setPairName(event.currentTarget.value)} placeholder="Device name" />
-            <button type="button" className="btn" disabled={!isTauri() || busy !== null || (!lan?.enabled && !remote?.enabled)} onClick={() => void createPair()}>{busy === 'pair' ? 'Creating…' : 'Create pairing link'}</button>
+            <button type="button" className="btn" disabled={!isTauri() || busy !== null || !lan?.enabled} onClick={() => void createPair()}>{busy === 'pair' ? 'Creating…' : 'Create LAN pairing link'}</button>
           </div>
+          {!lan?.enabled ? <small>Enable Same Wi-Fi above before creating a LAN pairing link.</small> : null}
           {pair ? (
             <div className="pair-result">
-              <div><strong>Pairing link ready</strong><span>Expires {new Date(pair.expires_at).toLocaleTimeString()}</span></div>
+              <div><strong>LAN pairing link ready</strong><span>Expires {new Date(pair.expires_at).toLocaleTimeString()}</span></div>
               <code>{pair.url}</code>
               <div className="connection-actions">
                 <button type="button" className="btn" onClick={() => void navigator.clipboard.writeText(pair.url).then(() => setMessage('Pairing link copied.'))}>Copy link</button>
-                <a className="btn btn-ghost" href={pair.url} target="_blank" rel="noreferrer">Open link</a>
               </div>
             </div>
           ) : null}
+          <details className="connection-advanced">
+            <summary>Enter a LAN pairing link from another Mac</summary>
+            <div className="pair-device-controls">
+              <input value={incomingPairLink} onChange={(event) => setIncomingPairLink(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter') void addMachine(); }} placeholder="http://192.168.…/#pair=…" autoComplete="off" spellCheck={false} />
+              <button type="button" className="btn" disabled={!isTauri() || busy !== null || !incomingPairLink.trim()} onClick={() => void addMachine()}>{busy === 'incoming-pair' ? 'Adding…' : 'Pair over LAN'}</button>
+            </div>
+            {incomingPairMessage ? <div className="connections-message" role="status">{incomingPairMessage}</div> : null}
+          </details>
         </section>
 
         <SomewhereCard />

@@ -15,8 +15,6 @@ type pairTicketResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-var discoverPairRemoteEndpoint = verifiedPairRemoteEndpoint
-
 func (a *app) cmdPair(args []string) error {
 	name, hasName := pluck(&args, "--name")
 	if hasName && strings.TrimSpace(name) == "" {
@@ -26,25 +24,17 @@ func (a *app) cmdPair(args []string) error {
 		return fail(1, "usage: sessions pair [--name NAME]")
 	}
 
+	endpoint, err := a.verifiedPairLANEndpoint()
+	if err != nil {
+		return fail(2, "LAN pairing is unavailable: %s. Enable it with `sessions lan enable`, then retry. Tailscale devices request access directly in Sessions.app and do not use a QR code.", err)
+	}
+
 	var ticket pairTicketResponse
 	if err := a.postJSON("/api/pair/ticket", map[string]string{"name": strings.TrimSpace(name)}, &ticket, 2); err != nil {
 		return err
 	}
 	if ticket.Ticket == "" || ticket.ExpiresAt.IsZero() {
 		return fail(2, "sessionsd returned an invalid pairing ticket; retry `sessions pair`, and check the daemon log if it still fails")
-	}
-
-	endpoint := ""
-	if remote, err := discoverPairRemoteEndpoint(); err == nil {
-		endpoint = remote
-	}
-	if endpoint == "" {
-		if lan, err := a.verifiedPairLANEndpoint(); err == nil {
-			endpoint = lan
-		}
-	}
-	if endpoint == "" {
-		return fail(2, "no verified phone-reachable endpoint is enabled. Enable one first: `sessions lan enable` (same WiFi) or `sessions remote enable` (anywhere), then retry `sessions pair`.")
 	}
 
 	pairURL, err := pairingURL(endpoint, ticket.Ticket)
@@ -74,23 +64,6 @@ func (a *app) cmdPair(args []string) error {
 	}
 	_, err = io.WriteString(a.stdout, "already have the page open? Paste the ticket in Settings → Pair.\n")
 	return err
-}
-
-func verifiedPairRemoteEndpoint() (string, error) {
-	if _, err := preflightTailscale(); err != nil {
-		return "", err
-	}
-	serve, err := readServeStatus("")
-	if err != nil {
-		return "", err
-	}
-	if serve.Endpoint == "" {
-		return "", errors.New("Tailscale Serve is disabled")
-	}
-	if err := verifyEndpoint(serve.Endpoint); err != nil {
-		return "", err
-	}
-	return serve.Endpoint, nil
 }
 
 func (a *app) verifiedPairLANEndpoint() (string, error) {

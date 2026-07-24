@@ -66,7 +66,7 @@ func TestLANCLILifecycle(t *testing.T) {
 				t.Fatalf("stdout=%q, want %q", stdout.String(), test.want)
 			}
 			if test.name == "enable" {
-				for _, want := range []string{"When asked for a token, run: sessions token", "LAN access works only on this network. From anywhere: sessions remote enable"} {
+				for _, want := range []string{"run `sessions pair` and scan its one-time QR", "LAN access works only on this network. From anywhere: sessions remote enable"} {
 					if !strings.Contains(stdout.String(), want) {
 						t.Fatalf("enable output missing %q: %q", want, stdout.String())
 					}

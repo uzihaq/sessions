@@ -95,11 +95,31 @@ func (s *Server) handleIntegrationsRoute(response http.ResponseWriter, request *
 		transcript, err = s.integrationEndpoints.TranscriptPreview(
 			s.registry.List(true), id, transcriptPreviewMaxBytes, transcriptPreviewMaxMessages,
 		)
+	case "window":
+		var options integrations.TranscriptWindowOptions
+		options, err = transcriptWindowOptions(request)
+		if err == nil {
+			transcript, err = s.integrationEndpoints.TranscriptWindow(s.registry.List(true), id, options)
+		}
 	default:
 		transcript, err = s.integrationEndpoints.Transcript(s.registry.List(true), id)
 	}
+	if err != nil && variant == "window" {
+		var queryError *historyQueryError
+		if errors.As(err, &queryError) {
+			s.sendJSON(response, http.StatusBadRequest, map[string]any{"error": err.Error()}, corsOrigin)
+			return true
+		}
+	}
 	if errors.Is(err, integrations.ErrHistoryNotFound) {
 		s.sendJSON(response, http.StatusNotFound, map[string]any{"error": "history session not found", "id": id}, corsOrigin)
+		return true
+	}
+	if errors.Is(err, integrations.ErrHistoryChanged) {
+		s.sendJSON(response, http.StatusConflict, map[string]any{
+			"error": "This conversation changed after the search result was created. Run the search again to refresh its bookmark.",
+			"id":    id,
+		}, corsOrigin)
 		return true
 	}
 	if err != nil {
@@ -121,7 +141,7 @@ func historyPath(path string) (id, variant string, ok bool) {
 		return "", "", false
 	}
 	rest := strings.TrimPrefix(path, prefix)
-	for _, candidate := range []string{"raw", "preview"} {
+	for _, candidate := range []string{"raw", "preview", "window"} {
 		if strings.HasSuffix(rest, "/"+candidate) {
 			rest = strings.TrimSuffix(rest, "/"+candidate)
 			variant = candidate
@@ -132,6 +152,50 @@ func historyPath(path string) (id, variant string, ok bool) {
 		return "", "", false
 	}
 	return rest, variant, true
+}
+
+type historyQueryError struct{ message string }
+
+func (e *historyQueryError) Error() string { return e.message }
+
+func transcriptWindowOptions(request *http.Request) (integrations.TranscriptWindowOptions, error) {
+	query := request.URL.Query()
+	options := integrations.TranscriptWindowOptions{End: -1}
+	if raw := query.Get("start"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			return integrations.TranscriptWindowOptions{}, &historyQueryError{message: "start must be a non-negative message index"}
+		}
+		options.Start = value
+	}
+	if raw := query.Get("end"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			return integrations.TranscriptWindowOptions{}, &historyQueryError{message: "end must be a non-negative message index"}
+		}
+		options.End = value
+	}
+	if options.End >= 0 && options.End < options.Start {
+		return integrations.TranscriptWindowOptions{}, &historyQueryError{message: "end must be greater than or equal to start"}
+	}
+	if options.End >= 0 && options.End-options.Start > integrations.MaxTranscriptWindowSpan {
+		return integrations.TranscriptWindowOptions{}, &historyQueryError{
+			message: "a transcript window can contain at most " + strconv.Itoa(integrations.MaxTranscriptWindowSpan) + " message positions",
+		}
+	}
+	options.Role = strings.ToLower(strings.TrimSpace(query.Get("role")))
+	if options.Role != "" && options.Role != "user" && options.Role != "assistant" && options.Role != "tool" {
+		return integrations.TranscriptWindowOptions{}, &historyQueryError{message: "role must be user, assistant, or tool"}
+	}
+	options.ExpectedMessage = strings.TrimSpace(query.Get("message_id"))
+	if options.ExpectedMessage != "" {
+		value, err := strconv.Atoi(query.Get("anchor"))
+		if err != nil || value < 0 {
+			return integrations.TranscriptWindowOptions{}, &historyQueryError{message: "anchor must be a non-negative message index when message_id is set"}
+		}
+		options.ExpectedIndex = value
+	}
+	return options, nil
 }
 
 func errorsSince(request *http.Request) (uint64, error) {

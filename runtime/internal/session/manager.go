@@ -72,6 +72,7 @@ type ManagerOptions struct {
 	ProcessCommand     func(int) string
 	Boundaries         ledger.BoundaryWriter
 	Observations       ledger.ObservationWriter
+	Retention          ledger.RetentionWriter
 	LedgerReader       LedgerReader
 	UsageRecorder      UsageRecorder
 	Notify             func(PushPayload)
@@ -122,6 +123,7 @@ type Manager struct {
 
 	boundaries   ledger.BoundaryWriter
 	observations ledger.ObservationWriter
+	retention    ledger.RetentionWriter
 	ledgerReader LedgerReader
 	usage        UsageRecorder
 	notify       func(PushPayload)
@@ -211,7 +213,8 @@ func NewManager(config state.Config, launcher proto.RunnerLauncher, options ...M
 		config: config, launcher: launcher, registry: state.NewRegistry(config, launcher),
 		push: NewPushService(root), guard: MassKillGuard{Limit: selected.MassKillLimit},
 		options: selected, started: time.Now(), ctx: ctx, cancel: cancel,
-		boundaries: selected.Boundaries, observations: selected.Observations, ledgerReader: selected.LedgerReader,
+		boundaries: selected.Boundaries, observations: selected.Observations,
+		retention: selected.Retention, ledgerReader: selected.LedgerReader,
 		usage:    selected.UsageRecorder,
 		runtimes: make(map[string]*runtimeSession), hooks: loadGlobalHooks(config.GlobalHooksPath),
 		laneDeaths: make(map[string]laneDeathBurst), notifications: make(map[string]*sessionNotificationState),
@@ -304,6 +307,9 @@ func (m *Manager) resolveCreator(ctx context.Context, request state.CreateSessio
 	}
 	for _, candidate := range ledger.Fold(events) {
 		if candidate.LaneID == request.CreatorSessionID && candidate.Created {
+			if candidate.Archived {
+				return "", "", fmt.Errorf("creator session %s has been archived", request.CreatorSessionID)
+			}
 			return ledger.CreatorSession, request.CreatorSessionID, nil
 		}
 	}
@@ -480,12 +486,25 @@ func (m *Manager) withDurableClosed(ctx context.Context, infos []state.SessionIn
 		log.Printf("[ledger] read durable closed sessions: %v", err)
 		return infos
 	}
+	archived := make(map[string]struct{})
+	for _, lane := range states {
+		if lane.Archived {
+			archived[lane.LaneID] = struct{}{}
+		}
+	}
+	filtered := make([]state.SessionInfo, 0, len(infos))
+	for _, info := range infos {
+		if _, hidden := archived[info.ID]; !hidden {
+			filtered = append(filtered, info)
+		}
+	}
+	infos = filtered
 	seen := make(map[string]struct{}, len(infos))
 	for _, info := range infos {
 		seen[info.ID] = struct{}{}
 	}
 	for _, lane := range states {
-		if !lane.Created || !durablyClosed(lane) {
+		if !lane.Created || !durablyClosed(lane) || lane.Archived {
 			continue
 		}
 		if _, exists := seen[lane.LaneID]; exists {
@@ -1457,13 +1476,25 @@ func (m *Manager) orphanPlistCandidates() (map[string]struct{}, map[string]struc
 	if err != nil {
 		return candidates, deadArtifacts
 	}
-	const prefix = "tech.somewhere.sessions.runner."
+	prefixes := []string{
+		"tech.somewhere.sessions.runner.",
+		"tech.pretty-pty.runner.",
+	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".plist") {
+		if !strings.HasSuffix(name, ".plist") {
 			continue
 		}
-		id := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".plist")
+		id := ""
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				id = strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".plist")
+				break
+			}
+		}
+		if id == "" {
+			continue
+		}
 		if _, err := os.Stat(filepath.Join(m.config.RunnerStateDir, id+".events")); err == nil {
 			continue
 		}
@@ -1513,11 +1544,16 @@ func (m *Manager) reap(id string) error {
 	if reaper, ok := m.launcher.(interface{ Reap(string) error }); ok {
 		return reaper.Reap(id)
 	}
-	path := state.RunnerPlistPath(m.config.LaunchAgentsDir, id)
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	var reapErrors []error
+	for _, path := range []string{
+		state.RunnerPlistPath(m.config.LaunchAgentsDir, id),
+		state.LegacyRunnerPlistPath(m.config.LaunchAgentsDir, id),
+	} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			reapErrors = append(reapErrors, err)
+		}
 	}
-	return nil
+	return errors.Join(reapErrors...)
 }
 
 func processAlive(pid int) bool {

@@ -72,15 +72,20 @@ func TestAddedRouteShapeTable(t *testing.T) {
 					got[candidate["path"].(string)] = candidate
 				}
 				for path, want := range map[string][2]string{
-					home:                               {"~", "home"},
-					filepath.Join(home, "Code"):        {"~/Code", "common"},
-					filepath.Join(home, "top-project"): {"~/top-project", "project"},
+					home:                        {"~", "home"},
+					filepath.Join(home, "Code"): {"~/Code", "common"},
 					filepath.Join(home, "Code", "nested-project"): {"~/Code/nested-project", "project"},
 				} {
 					candidate, ok := got[path]
 					if !ok || candidate["label"] != want[0] || candidate["kind"] != want[1] {
 						t.Errorf("candidate %q = %#v, want label=%q kind=%q", path, candidate, want[0], want[1])
 					}
+				}
+				if candidate := got[filepath.Join(home, "top-project")]; candidate != nil {
+					t.Errorf("broad home scan unexpectedly returned %#v", candidate)
+				}
+				if len(directories) == 0 || valueMap(t, directories[0])["kind"] != "project" {
+					t.Errorf("projects should be offered before broad folders: %#v", directories)
 				}
 			},
 		},
@@ -173,20 +178,6 @@ func TestAddedRouteShapeTable(t *testing.T) {
 			decodeBody(t, response, &body)
 			test.validate(t, body)
 		})
-	}
-}
-
-func TestHomeProjectScanSkipsCloudBackedCommonFolders(t *testing.T) {
-	home := t.TempDir()
-	mustMkdirAll(t, filepath.Join(home, "Desktop", ".git"))
-	mustMkdirAll(t, filepath.Join(home, "Documents"))
-	mustWriteFile(t, filepath.Join(home, "Documents", "package.json"), []byte("{}\n"))
-	mustMkdirAll(t, filepath.Join(home, "actual-project"))
-	mustWriteFile(t, filepath.Join(home, "actual-project", "go.mod"), []byte("module example.test/actual\n"))
-
-	projects := listProjectChildrenExcept(home, 20, homeProjectScanSkip)
-	if len(projects) != 1 || projects[0] != filepath.Join(home, "actual-project") {
-		t.Fatalf("home projects = %#v, want only actual-project", projects)
 	}
 }
 
