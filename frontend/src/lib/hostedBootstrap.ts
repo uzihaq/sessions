@@ -135,7 +135,8 @@ export async function claimNativeMachinePairing(
 }
 
 export async function rememberNativeMachineClaim(
-  claim: NativePairingClaim
+  claim: NativePairingClaim,
+  options: { select?: boolean } = {}
 ): Promise<ServerConfig> {
   const previous = captureServerSelection();
   const server = rememberServerEndpoint(claim.endpoint, {
@@ -145,6 +146,7 @@ export async function rememberNativeMachineClaim(
   });
   try {
     assertServerPersisted(server);
+    if (options.select === false) useServers.getState().setActive(previous.activeId);
   } catch {
     restoreServerSelection(previous);
     // Tailnet credentials remain non-authorizing until their first successful

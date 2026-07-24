@@ -206,6 +206,17 @@ mediated by the native client; source history remains preserved. Full contract: 
   temporarily uses the existing Somewhere mark as its macOS/Windows icon
   (`runtime/internal/api/server.go`, `frontend/src/components/FleetView.tsx`,
   `src-tauri/icons/`).
+- **SOURCE-ONLY AFTER 0.2.3:** Fleet is also the consumer-facing place to add a
+  machine. Its `Find machines` action reuses the native tailnet discovery and
+  explicit host approval flow instead of sending users into Settings. The
+  current computer is visually primary; an unreachable machine fades as one
+  unit, while the unprovisioned Somewhere VM is a deliberately muted
+  placeholder. Health versions are compared to the current computer and
+  older/newer/different builds receive an advisory without being blocked:
+  compatibility is a protocol range, not lockstep application versions.
+  Nearby-Wi-Fi Bonjour discovery is visible as **Coming soon** until the
+  service advertisement, verification, and macOS Local Network permission
+  behavior are implemented deliberately.
 - The native React shell is now organized as an **agent operations inbox** (`frontend/src/components/ProductSidebar.tsx`,
   `SessionNavigator.tsx`, `HomeView.tsx`, `SessionDetails.tsx`, `SettingsView.tsx`). The Sessions navigator consumes
   daemon ledger provenance rather than inferring parentage, supports five local manager pins, nests real children,

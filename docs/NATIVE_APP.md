@@ -141,6 +141,16 @@ The shared React client now has native-oriented product surfaces:
   IDs, moves the launchd daemon, verifies complete re-adoption, persists the
   preference, and restores the prior port and plist on failure. A process which
   races onto the requested new port cannot prevent that restoration.
+- **Fleet** is the consumer-facing machine picker as well as the live
+  multi-daemon view. `Find machines` invokes the same verified tailnet
+  discovery and explicit host-approval flow as Connections; saved daemon
+  identity prevents duplicate entries when the endpoint changes. Fleet shows
+  each daemon's reported version and advises about older, newer, or
+  non-comparable builds without requiring version equality. The compatibility
+  boundary remains the daemon protocol, not the marketing release number.
+  Nearby-Wi-Fi Bonjour/mDNS discovery is deliberately labeled Coming soon
+  until Sessions can advertise the service and handle macOS Local Network
+  permission without surprising the user.
 - **Somewhere** is an optional card within Connections, not a Sessions account
   requirement. The native command reports whether the CLI is installed, its
   version, and whether the npm registry advertises a newer release. The card

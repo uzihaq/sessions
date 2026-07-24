@@ -58,10 +58,17 @@ owns the permanent Home/Sessions/Today/Search/Fleet/Usage/Settings rail;
 `HomeView.tsx` summarizes the operational inbox; and `SessionNavigator.tsx`
 builds the manager/child tree from normalized `SessionInfo` provenance fields.
 `FleetView.tsx` independently polls every configured daemon, uses the optional
-`system.os`/`system.arch` health metadata to choose a platform mark, and keeps
-older daemons compatible with a conservative client-side fallback. The
-Somewhere VM remains a clearly disabled coming-soon machine card rather than a
-fake live endpoint.
+`system.os`/`system.arch` health metadata to choose a platform mark, reports
+each daemon version, and keeps older daemons compatible with a conservative
+client-side fallback. It compares release versions only to render advisory
+older/newer/different-build notices; a different version is not itself an API
+failure. Its native `Find machines` panel calls the same verified tailnet
+discovery and host-approved claim commands used by Connections, sharing the
+durable requester ID through `frontend/src/lib/tailnetClient.ts`. The current
+computer is visually primary, an unreachable machine fades as a complete
+card, and the Somewhere VM remains a clearly disabled coming-soon machine card
+rather than a fake live endpoint. Nearby-Wi-Fi Bonjour discovery is labeled
+Coming soon rather than silently adding a macOS Local Network permission.
 The navigator never derives parentage from cwd or timestamps. Manager pins and
 open-tab IDs are bounded local UI preferences; the main list explicitly requests
 exited sessions so completed children and ended parents remain visible. Creator kind, parent ID,

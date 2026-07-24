@@ -14,19 +14,8 @@ import {
 } from '../lib/tauriBridge';
 import { configureNativeLocalPort } from '../lib/servers';
 import { claimNativeMachinePairing, rememberNativeMachineClaim } from '../lib/hostedBootstrap';
+import { tailnetClientID } from '../lib/tailnetClient';
 import { SomewhereCard } from './SomewhereCard';
-
-const TAILNET_CLIENT_ID_KEY = 'sessions:tailnet-client-id';
-
-function tailnetClientID(): string {
-  const existing = window.localStorage.getItem(TAILNET_CLIENT_ID_KEY)?.trim();
-  if (existing && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(existing)) {
-    return existing;
-  }
-  const created = crypto.randomUUID().toLowerCase();
-  window.localStorage.setItem(TAILNET_CLIENT_ID_KEY, created);
-  return created;
-}
 
 interface RemoteState {
   enabled: boolean;

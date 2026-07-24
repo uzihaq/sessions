@@ -1,7 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { fetchServerHealth, listServerProfiles, listServerSessions, type AccountProfile, type ServerHealth } from '../api/sessionsd';
+import { rememberNativeMachineClaim } from '../lib/hostedBootstrap';
 import { formatServerEndpoint } from '../lib/serverEndpoint';
 import { useServers, type ServerConfig } from '../lib/servers';
+import { tailnetClientID } from '../lib/tailnetClient';
+import {
+  claimNativeTailnetAccess,
+  discoverNativeTailnetPeers,
+  isTauri,
+  requestNativeTailnetAccess,
+  type NativeTailnetPeer,
+  type NativeTailnetRequest
+} from '../lib/tauriBridge';
 import type { SessionInfo, SessionTool } from '../types';
 import { ParserIcon } from './ParserIcon';
 import { shortLabel } from './SessionTabs';
@@ -43,6 +53,89 @@ interface FleetViewProps {
 export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
   const servers = useServers((state) => state.servers);
   const [includeExited, setIncludeExited] = useState(false);
+  const [machineVersions, setMachineVersions] = useState<Record<string, string>>({});
+  const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [discoveredPeers, setDiscoveredPeers] = useState<NativeTailnetPeer[] | null>(null);
+  const [accessRequest, setAccessRequest] = useState<NativeTailnetRequest | null>(null);
+  const [discoveryMessage, setDiscoveryMessage] = useState<string | null>(null);
+  const localServer = servers.find((server) => server.isDefault) ?? servers[0];
+  const localVersion = localServer ? machineVersions[localServer.id] : undefined;
+
+  const rememberVersion = useCallback((serverId: string, version: string): void => {
+    if (!version) return;
+    setMachineVersions((current) => current[serverId] === version
+      ? current
+      : { ...current, [serverId]: version });
+  }, []);
+
+  const findMachines = async (): Promise<void> => {
+    if (!isTauri() || discoveryBusy || accessRequest) return;
+    setDiscoveryOpen(true);
+    setDiscoveryBusy(true);
+    setDiscoveryMessage(null);
+    try {
+      setDiscoveredPeers(await discoverNativeTailnetPeers());
+    } catch (reason) {
+      setDiscoveredPeers([]);
+      setDiscoveryMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDiscoveryBusy(false);
+    }
+  };
+
+  const requestAccess = async (peer: NativeTailnetPeer): Promise<void> => {
+    if (!isTauri() || discoveryBusy || accessRequest) return;
+    setDiscoveryBusy(true);
+    setDiscoveryMessage(null);
+    try {
+      const request = await requestNativeTailnetAccess(peer.endpoint, tailnetClientID(), '');
+      setAccessRequest(request);
+      setDiscoveryMessage(`Request sent to ${peer.hostname}. Accept it in Sessions on that machine.`);
+    } catch (reason) {
+      setDiscoveryMessage(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDiscoveryBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!accessRequest) return;
+    let cancelled = false;
+    let checking = false;
+    const check = async (): Promise<void> => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await claimNativeTailnetAccess(accessRequest);
+        if (cancelled || result.status === 'pending') return;
+        if (result.status === 'accepted' && result.claim) {
+          const server = await rememberNativeMachineClaim(result.claim, { select: false });
+          if (!cancelled) {
+            setAccessRequest(null);
+            setDiscoveryMessage(`${server.name} is now in Fleet.`);
+          }
+          return;
+        }
+        if (!cancelled) {
+          setAccessRequest(null);
+          setDiscoveryMessage(result.status === 'denied'
+            ? 'The other machine denied this request.'
+            : 'The request expired. Search again when someone is at the other machine.');
+        }
+      } catch (reason) {
+        if (!cancelled) setDiscoveryMessage(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const interval = window.setInterval(() => { void check(); }, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [accessRequest]);
 
   return (
     <div className="fleet-view" aria-label="Fleet sessions">
@@ -51,11 +144,63 @@ export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
           <h1>Fleet</h1>
           <p>Live sessions across {servers.length} {servers.length === 1 ? 'machine' : 'machines'}</p>
         </div>
-        <label className="fleet-history-toggle">
-          <input type="checkbox" checked={includeExited} onChange={(event) => setIncludeExited(event.target.checked)} />
-          Show history
-        </label>
+        <div className="fleet-heading-actions">
+          <label className="fleet-history-toggle">
+            <input type="checkbox" checked={includeExited} onChange={(event) => setIncludeExited(event.target.checked)} />
+            Show history
+          </label>
+          <button
+            type="button"
+            className="btn fleet-find-machines"
+            disabled={!isTauri() || discoveryBusy || accessRequest !== null}
+            onClick={() => void findMachines()}
+          >
+            <span aria-hidden>＋</span>{discoveryBusy ? 'Searching…' : 'Find machines'}
+          </button>
+        </div>
       </div>
+      {discoveryOpen ? (
+        <section className="fleet-discovery" aria-live="polite">
+          <header>
+            <div>
+              <span>Private device discovery</span>
+              <h2>Machines you can connect to</h2>
+              <p>Sessions checks the devices already visible in your tailnet and shows only verified Sessions runtimes.</p>
+            </div>
+            <div className="fleet-discovery-actions">
+              <button type="button" className="btn btn-ghost" disabled={discoveryBusy || accessRequest !== null} onClick={() => void findMachines()}>Search again</button>
+              <button type="button" className="fleet-discovery-close" aria-label="Close machine discovery" onClick={() => setDiscoveryOpen(false)}>×</button>
+            </div>
+          </header>
+          <div className="fleet-discovery-scopes">
+            <span><strong>Tailnet</strong> Available now</span>
+            <span><strong>Nearby Wi-Fi</strong> Bonjour discovery · coming soon</span>
+          </div>
+          {discoveredPeers !== null ? (
+            discoveredPeers.length > 0 ? (
+              <div className="fleet-discovery-results">
+                {discoveredPeers.map((peer) => {
+                  const configured = servers.some((server) => serverMatchesPeer(server, peer.endpoint));
+                  const waiting = accessRequest?.endpoint === peer.endpoint;
+                  const peerPlatform = platformFromReportedOS(peer.os) ?? 'server';
+                  return (
+                    <article key={peer.endpoint}>
+                      <span className={`fleet-platform-mark is-${peerPlatform}`} aria-hidden><PlatformIcon platform={peerPlatform} /></span>
+                      <div><strong>{peer.hostname}</strong><small>{peer.endpoint.replace('https://', '')}</small></div>
+                      <button type="button" className={configured || waiting ? 'btn btn-ghost' : 'btn'} disabled={configured || discoveryBusy || accessRequest !== null} onClick={() => void requestAccess(peer)}>
+                        {configured ? 'Already in Fleet' : waiting ? 'Waiting for approval…' : 'Request access'}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : !discoveryBusy ? (
+              <div className="fleet-discovery-empty">No other Sessions machines answered. Enable Tailscale HTTPS on the host, then search again.</div>
+            ) : null
+          ) : null}
+          {discoveryMessage ? <div className="fleet-discovery-message">{discoveryMessage}</div> : null}
+        </section>
+      ) : null}
       <div className="fleet-section-label"><span>Your machines</span><strong>{servers.length} configured</strong></div>
       <div className="fleet-machine-grid">
         {servers.map((server) => (
@@ -63,6 +208,8 @@ export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
             key={server.id}
             server={server}
             includeExited={includeExited}
+            localVersion={localVersion}
+            onVersion={rememberVersion}
             onOpenSession={(sessionId) => onOpenSession(server.id, sessionId)}
           />
         ))}
@@ -72,9 +219,17 @@ export function FleetView({ onOpenSession }: FleetViewProps): JSX.Element {
   );
 }
 
+function serverMatchesPeer(server: ServerConfig, endpoint: string): boolean {
+  try {
+    return new URL(endpoint).hostname.toLowerCase() === server.host.replace(/^\[|\]$/g, '').toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 function CloudFleetCard(): JSX.Element {
   return (
-    <section className="fleet-server-group fleet-cloud-machine" aria-label="Somewhere cloud workspace coming soon">
+    <section className="fleet-server-group fleet-cloud-machine is-placeholder" aria-label="Somewhere cloud workspace coming soon">
       <header className="fleet-machine-header">
         <span className="fleet-platform-mark is-cloud" aria-hidden><PlatformIcon platform="cloud" /></span>
         <div className="fleet-server-identity">
@@ -95,10 +250,14 @@ function CloudFleetCard(): JSX.Element {
 function FleetServerGroup({
   server,
   includeExited,
+  localVersion,
+  onVersion,
   onOpenSession
 }: {
   server: ServerConfig;
   includeExited: boolean;
+  localVersion?: string;
+  onVersion: (serverId: string, version: string) => void;
   onOpenSession: (sessionId: string) => void;
 }): JSX.Element {
   const [snapshot, setSnapshot] = useState<ServerSnapshot>(INITIAL_SNAPSHOT);
@@ -117,6 +276,7 @@ function FleetServerGroup({
       try {
         const health = await fetchServerHealth(server, controller.signal);
         if (!stopped) {
+          onVersion(server.id, health.version);
           setSnapshot((current) => ({ ...current, health }));
         }
       } catch {
@@ -168,7 +328,7 @@ function FleetServerGroup({
       controller?.abort();
       window.clearTimeout(pollTimer);
     };
-  }, [server]);
+  }, [onVersion, server]);
 
   const unavailable = snapshot.reachability === 'unreachable';
   const visibleSessions = includeExited ? snapshot.sessions : snapshot.sessions.filter((session) => !session.exited);
@@ -191,9 +351,15 @@ function FleetServerGroup({
   ].filter(Boolean);
   const platform = platformFor(server, snapshot.health);
   const platformText = platformLabel(platform, snapshot.health?.system?.arch);
+  const versionState = machineVersionState(snapshot.health?.version, localVersion, server.isDefault);
+  const cardClasses = [
+    'fleet-server-group',
+    server.isDefault ? 'is-local' : '',
+    unavailable ? 'is-unreachable' : ''
+  ].filter(Boolean).join(' ');
 
   return (
-    <section className={`fleet-server-group${unavailable ? ' is-unreachable' : ''}`}>
+    <section className={cardClasses}>
       <header className="fleet-machine-header">
         <span className={`fleet-platform-mark is-${platform}`} aria-hidden><PlatformIcon platform={platform} /></span>
         <div className="fleet-server-identity">
@@ -202,7 +368,17 @@ function FleetServerGroup({
         </div>
         <span className="fleet-machine-count"><strong>{activeCount}</strong> active<span>{snapshot.sessions.length} total</span></span>
       </header>
-      <div className="fleet-machine-meta"><span>{platformText}</span><span>{formatServerEndpoint(server)}</span></div>
+      <div className="fleet-machine-meta">
+        <span>{platformText}</span>
+        <span>{snapshot.health?.version ? `Sessions ${snapshot.health.version}` : 'Version unavailable'}</span>
+        <span>{formatServerEndpoint(server)}</span>
+      </div>
+      {versionState ? (
+        <div className={`fleet-version-notice is-${versionState.tone}`}>
+          <strong>{versionState.title}</strong>
+          <span>{versionState.detail}</span>
+        </div>
+      ) : null}
       {profileLabels.length > 0 ? <div className="fleet-machine-profiles">Accounts · {profileLabels.join(' · ')}</div> : null}
 
       <div className="fleet-session-list">
@@ -235,13 +411,62 @@ function FleetServerGroup({
   );
 }
 
+function machineVersionState(
+  machineVersion: string | undefined,
+  localVersion: string | undefined,
+  isLocal: boolean
+): { tone: 'older' | 'newer' | 'different'; title: string; detail: string } | null {
+  if (isLocal || !machineVersion || !localVersion || machineVersion === localVersion) return null;
+  const comparison = compareReleaseVersions(machineVersion, localVersion);
+  if (comparison === -1) {
+    return {
+      tone: 'older',
+      title: 'Update recommended',
+      detail: `This machine runs ${machineVersion}; this Mac runs ${localVersion}.`
+    };
+  }
+  if (comparison === 1) {
+    return {
+      tone: 'newer',
+      title: 'Newer than this Mac',
+      detail: `This machine runs ${machineVersion}; this Mac runs ${localVersion}.`
+    };
+  }
+  return {
+    tone: 'different',
+    title: 'Different Sessions build',
+    detail: `This machine runs ${machineVersion}; this Mac runs ${localVersion}.`
+  };
+}
+
+function compareReleaseVersions(left: string, right: string): -1 | 0 | 1 | null {
+  const parse = (value: string): [number, number, number] | null => {
+    const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)/);
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return null;
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] < b[index]) return -1;
+    if (a[index] > b[index]) return 1;
+  }
+  return 0;
+}
+
 type Platform = 'macos' | 'windows' | 'linux' | 'cloud' | 'server';
 
+function platformFromReportedOS(value: string | undefined): Platform | null {
+  const reported = value?.toLowerCase() ?? '';
+  if (reported === 'darwin' || reported.includes('mac')) return 'macos';
+  if (reported.includes('windows') || reported === 'win32') return 'windows';
+  if (reported.includes('linux')) return 'linux';
+  return null;
+}
+
 function platformFor(server: ServerConfig, health: ServerHealth | null): Platform {
-  const reported = health?.system?.os.toLowerCase();
-  if (reported === 'darwin') return 'macos';
-  if (reported === 'windows') return 'windows';
-  if (reported === 'linux') return 'linux';
+  const reported = platformFromReportedOS(health?.system?.os);
+  if (reported) return reported;
 
   const hint = `${server.name} ${server.host}`.toLowerCase();
   if (server.isDefault && /mac|darwin/.test(navigator.userAgent.toLowerCase())) return 'macos';

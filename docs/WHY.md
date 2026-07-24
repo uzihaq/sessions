@@ -202,3 +202,26 @@ credentials, private source, logs, or crash files. Public intake records
 whether the report originated with an agent, direct use, or both. Agent-native
 reporting changes discoverability and structure, not consent: Sessions still
 performs no automatic upload or submission.
+
+# 2026-07-23 — Make Fleet a device picker, not an infrastructure diagram
+
+People should not need identical Sessions releases on every computer. Fleet
+compares the daemon versions it already receives from health and explains when
+another machine is older, newer, or simply different, but version skew alone
+does not disable it. A future hard compatibility decision must come from an
+explicit daemon protocol range, not an inferred semantic-version comparison.
+
+Adding a machine belongs in Fleet, where users expect to find devices.
+`Find machines` therefore reuses the shipped tailnet candidate scan, Sessions
+health verification, and named host approval flow. This follows the useful
+part of consumer device discovery: find candidates automatically, then verify
+the expected service before showing or trusting them. Nearby-Wi-Fi
+Bonjour/mDNS is a separate coming-soon transport because adding a service
+advertisement and macOS Local Network permission deserves an explicit product
+decision rather than an incidental prompt.
+
+Visual hierarchy communicates state before labels do. The current computer is
+the bright, primary card; an unreachable machine fades as a whole card; and
+the Somewhere VM is muted because it is an unprovisioned placeholder, not an
+offline machine the user can repair. Readable operational text uses normal
+foreground contrast instead of making every secondary fact look disabled.

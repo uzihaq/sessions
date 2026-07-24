@@ -104,6 +104,17 @@ Both dark and light themes follow the supplied native mockups. Richer inline
 child result cards and explicit per-feature model selection remain **Coming
 soon** rather than being presented as shipped.
 
+Fleet now owns the visible add-machine path. `Find machines` searches the
+signed-in tailnet, verifies that each candidate is actually a Sessions daemon,
+and starts the existing named request/host approval flow. The current computer
+is visually primary; unreachable machines and the unprovisioned Somewhere VM
+recede clearly. Each machine reports its Sessions version, and Fleet warns
+when another machine is older, newer, or non-comparable without requiring
+identical releases. A later daemon contract should advertise an explicit
+minimum/maximum compatible API range before Fleet ever hard-blocks a version.
+Nearby-Wi-Fi Bonjour/mDNS discovery remains **Coming soon** and will retain the
+same candidate-then-health-verification rule.
+
 The macOS release and Mini update gates are complete. Reuse the Tauri 2 client
 and React UI for Android.
 The next Mac source also adds Settings → Help & feedback plus
