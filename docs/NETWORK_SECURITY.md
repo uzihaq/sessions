@@ -67,7 +67,11 @@ The source implementation provides two user-controlled entry points:
   submits the form.
 - `sessions support` prints the same public-ticket and private-security-report
   destinations. `sessions support --diagnostics` previews the small diagnostic
-  object locally and never uploads it.
+  object locally and never uploads it. Agents use
+  `sessions --json support --diagnostics`; the returned contract tells them to
+  capture only the sanitized shape of the failing Sessions command/action, exit
+  code, sanitized exact error, expected/actual behavior, and repeatability, then require user approval
+  before opening or submitting a report.
 
 The diagnostic schema contains only generation time, Sessions CLI/daemon
 versions, OS/architecture, daemon reachable/ready/discovery state, and a
@@ -80,7 +84,9 @@ when the daemon is down, so support never depends on the broken component.
 The native shell accepts only the compiled-in GitHub feedback, bug, chooser,
 and private security-advisory destinations; the webview cannot supply an
 arbitrary URL. Public ticket forms repeat the privacy warning and require the
-reporter to confirm review before submission.
+reporter to confirm review before submission. They also identify whether the
+failure or feedback came from an agent workflow, direct use, or both; agent
+origin does not weaken the approval or privacy boundary.
 
 Temporary live support access remains unimplemented. If it is ever justified,
 the user must authenticate through the Somewhere CLI and select an exact

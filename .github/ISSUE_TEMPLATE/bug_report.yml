@@ -10,6 +10,31 @@ body:
         Thanks for helping improve Sessions.
 
         This ticket is public. Do not paste transcripts, prompts, terminal output, session IDs, filesystem paths, tokens, credentials, environment variables, or private source code. `sessions support --diagnostics` produces a small preview that excludes those fields, but you should still review it before pasting.
+  - type: dropdown
+    id: origin
+    attributes:
+      label: Who encountered this?
+      description: Sessions is agent-native, so agent-reported failures are first-class product reports.
+      options:
+        - An agent encountered it
+        - I encountered it directly
+        - Both / not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where did it happen?
+      options:
+        - Sessions CLI or runtime
+        - Sessions desktop app
+        - Codex session
+        - Claude Code session
+        - Shell session
+        - Fleet or another machine
+        - Other / not sure
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -35,6 +60,15 @@ body:
         3. See…
     validations:
       required: true
+  - type: textarea
+    id: command_error
+    attributes:
+      label: Sanitized command and error
+      description: Especially for agent reports, include a sanitized command shape or app action, exit code, and exact error after removing private arguments, IDs, paths, and content.
+      placeholder: |
+        Command/action:
+        Exit code:
+        Error:
   - type: input
     id: version
     attributes:

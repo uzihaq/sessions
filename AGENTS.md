@@ -53,6 +53,7 @@ relevant source path; if prose and code disagree, the code wins.
 8. **Keep protocol changes compatible.** Read `runtime/CONTRACT/` before changing frames, HELLO/replay behavior, state files, or Node-runner adoption.
 9. **Keep the native shell above the service.** Sessions.app may install, update, and inspect `sessionsd`; quitting or updating the app must never terminate the daemon or a runner (`docs/NATIVE_APP.md`).
 10. **Do not use the retired Node deploy path.** `sessions deploy` is intentionally non-mutating on the Go product. Mac app release and Mini completion work follows `docs/RELEASE.md`.
+11. **Report product failures as an agent, not as a log dumper.** Run `sessions --json support --diagnostics`, add the sanitized failing command shape/action, exit code, expected result, and sanitized exact error, then ask the user before opening or submitting a ticket. Never attach transcripts, terminal output, paths, identifiers, credentials, environment, private source, raw logs, or crash files (`runtime/cmd/sessions/support.go`).
 
 ## Build, test, and gate commands
 

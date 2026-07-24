@@ -9,6 +9,16 @@ body:
       value: |
         Thank you. This feedback is public, so please leave out session content, private source code, filesystem paths, IDs, and credentials.
   - type: dropdown
+    id: origin
+    attributes:
+      label: Where did this feedback come from?
+      options:
+        - An agent workflow
+        - My direct use
+        - Both
+    validations:
+      required: true
+  - type: dropdown
     id: area
     attributes:
       label: Area

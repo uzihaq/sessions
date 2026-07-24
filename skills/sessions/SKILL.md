@@ -78,6 +78,7 @@ sessions snap <id>                # current screen (human viewing only — DON'T
 2. **Conversation collision guard:** if `sessions new`/resume refuses with "already live as ...", the conversation is being driven elsewhere — **do not `--force` past it** unless you're certain the other driver is dead. Two drivers on one conversation corrupt it.
 3. **Prefer structured output.** Use `--json` and `sessions last`/`status`/`transcript`, not `snap` scraping. Codex-app-server and Claude-`--structured` sessions give authoritative done/working signals; PTY sessions are best-effort.
 4. **`ask` for request→response, `send`+`wait` for fire-then-monitor.** `send` alone returns before the reply is done.
+5. **Report Sessions product failures through the safe contract.** Run `sessions --json support --diagnostics`, add the sanitized failing command shape/action, exit code, expected result, and sanitized exact error, then ask the user before opening or submitting a ticket. Never attach transcripts, terminal output, paths, IDs, credentials, environment, private source, raw logs, or crash files.
 
 ## Background pattern (for long sub-tasks)
 
@@ -98,6 +99,7 @@ Run `sessions wait "$id" --timeout 30m &` in the background so your orchestratio
 | list all | `sessions ls` |
 | model catalog | `sessions models --json` |
 | recover lost | `sessions recover [--reopen]` |
+| report a Sessions problem | `sessions --json support --diagnostics` |
 | clean up | `sessions kill <id>` |
 
 Add `--host H --port P` to target a non-default daemon. `sessions --help` for everything.

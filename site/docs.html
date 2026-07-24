@@ -176,7 +176,7 @@
         <div class="command-row"><code>sessions model &lt;id&gt; &lt;model&gt;</code><p>Switch the model, and optionally effort, for an idle supported session.</p></div>
         <div class="command-row"><code>sessions kill &lt;id&gt; […]</code><p>Terminate one or more sessions and remove their supervised runners.</p></div>
         <div class="command-row"><code>sessions doctor</code><p>Check the daemon and per-session health; flag runners that need attention.</p></div>
-        <div class="command-row"><code>sessions support [--diagnostics]</code><p>Open the official feedback, bug-ticket, and private security-report channels. The optional local preview excludes session content, IDs, paths, credentials, environment, logs, and crash files; nothing is uploaded automatically.</p></div>
+        <div class="command-row"><code>sessions support [--diagnostics]</code><p>Open the official feedback, bug-ticket, and private security-report channels. Agents use <code>sessions --json support --diagnostics</code>, add the sanitized failing action/error, and ask the user before submission. The local preview excludes session content, IDs, paths, credentials, environment, logs, and crash files; nothing is uploaded automatically.</p></div>
         <div class="command-row"><code>sessions install</code><p>Register <code>sessionsd</code> as the macOS LaunchAgent, start it, and check its health.</p></div>
         <div class="command-row"><code>sessions uninstall</code><p>Stop the daemon and remove its launchd registration without deleting session or recovery data.</p></div>
       </div>

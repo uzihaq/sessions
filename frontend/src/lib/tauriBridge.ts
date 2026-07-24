@@ -236,6 +236,12 @@ export interface SupportPreview {
   feedback_url: string;
   bug_url: string;
   security_url: string;
+  agent: {
+    machine_readable_command: string;
+    user_approval_required: true;
+    automatic_submission: false;
+    capture: string[];
+  };
   diagnostics?: SupportDiagnostics;
   excluded: string[];
   uploaded: false;

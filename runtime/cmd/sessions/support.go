@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -32,15 +33,23 @@ type supportDiagnostics struct {
 	Daemon      supportDaemonPreview `json:"daemon"`
 }
 
+type supportAgentContract struct {
+	MachineReadableCommand string   `json:"machine_readable_command"`
+	UserApprovalRequired   bool     `json:"user_approval_required"`
+	AutomaticSubmission    bool     `json:"automatic_submission"`
+	Capture                []string `json:"capture"`
+}
+
 type supportPreview struct {
-	SchemaVersion int                 `json:"schema_version"`
-	TicketURL     string              `json:"ticket_url"`
-	FeedbackURL   string              `json:"feedback_url"`
-	BugURL        string              `json:"bug_url"`
-	SecurityURL   string              `json:"security_url"`
-	Diagnostics   *supportDiagnostics `json:"diagnostics,omitempty"`
-	Excluded      []string            `json:"excluded"`
-	Uploaded      bool                `json:"uploaded"`
+	SchemaVersion int                  `json:"schema_version"`
+	TicketURL     string               `json:"ticket_url"`
+	FeedbackURL   string               `json:"feedback_url"`
+	BugURL        string               `json:"bug_url"`
+	SecurityURL   string               `json:"security_url"`
+	Agent         supportAgentContract `json:"agent"`
+	Diagnostics   *supportDiagnostics  `json:"diagnostics,omitempty"`
+	Excluded      []string             `json:"excluded"`
+	Uploaded      bool                 `json:"uploaded"`
 }
 
 func (a *app) cmdSupport(args []string) error {
@@ -55,9 +64,20 @@ func (a *app) cmdSupport(args []string) error {
 		FeedbackURL:   supportFeedbackURL,
 		BugURL:        supportBugURL,
 		SecurityURL:   supportSecurityURL,
+		Agent: supportAgentContract{
+			MachineReadableCommand: "sessions --json support --diagnostics",
+			UserApprovalRequired:   true,
+			AutomaticSubmission:    false,
+			Capture: []string{
+				"the sanitized failing Sessions command shape or app action",
+				"the exit code and exact error after removing private data",
+				"expected behavior and actual behavior",
+				"whether a safe reproduction is repeatable",
+			},
+		},
 		Excluded: []string{
 			"transcripts and terminal output",
-			"prompts, responses, titles, tags, and commands",
+			"prompts, responses, titles, tags, and session command content",
 			"session IDs, process IDs, usernames, hostnames, and filesystem paths",
 			"tokens, credentials, environment variables, and provider configuration",
 			"logs and crash files",
@@ -117,7 +137,11 @@ func writeSupportPreview(writer io.Writer, preview supportPreview) error {
 		return err
 	}
 	if preview.Diagnostics == nil {
-		_, err := io.WriteString(writer, "\nRun `sessions support --diagnostics` to preview a small local diagnostic summary. Nothing is uploaded automatically.\n")
+		_, err := fmt.Fprintf(
+			writer,
+			"\nAgents: run `%s`, describe the sanitized failing command shape, exit code, expected behavior, and sanitized error, then ask the user before opening or submitting a ticket.\n\nRun `sessions support --diagnostics` to preview the same small local diagnostic summary. Nothing is uploaded automatically.\n",
+			preview.Agent.MachineReadableCommand,
+		)
 		return err
 	}
 	daemon := "unreachable"
@@ -146,6 +170,10 @@ func writeSupportPreview(writer io.Writer, preview supportPreview) error {
 			return err
 		}
 	}
-	_, err := io.WriteString(writer, "\nReview this preview, then copy only what you want into the ticket.\n")
+	_, err := fmt.Fprintf(
+		writer,
+		"\nAgent report fields:\n- %s\n\nReview this preview, then copy only what you want into the ticket. Agents must ask the user before opening or submitting one.\n",
+		strings.Join(preview.Agent.Capture, "\n- "),
+	)
 	return err
 }

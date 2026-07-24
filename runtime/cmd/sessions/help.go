@@ -290,7 +290,7 @@ var commandTable = []commandSpec{
 	{
 		name: "support", usage: "support [--diagnostics]",
 		summary: "leave feedback or open a support ticket", group: adminCommandGroup, localJSON: true,
-		longHelp: "Print the official feedback, bug-ticket, and private security-report links. --diagnostics adds a deliberately small local preview containing only versions, platform, daemon readiness, and a session count. It excludes transcripts, terminal output, prompts, responses, titles, tags, commands, IDs, process details, usernames, hostnames, paths, credentials, environment, logs, and crash files. Nothing is uploaded; review and copy only what you choose into a ticket.",
+		longHelp: "Print the official feedback, bug-ticket, and private security-report links. Agents use `sessions --json support --diagnostics` for a stable machine-readable support contract and local diagnostic preview, add the sanitized failing command shape/action and error, then ask the user before opening or submitting a ticket. The preview contains only versions, platform, daemon readiness, and a session count. It excludes transcripts, terminal output, prompts, responses, titles, tags, session command content, IDs, process details, usernames, hostnames, paths, credentials, environment, logs, and crash files. Nothing is uploaded automatically.",
 		examples: []string{"sessions support", "sessions support --diagnostics", "sessions --json support --diagnostics"}, run: (*app).cmdSupport,
 	},
 	{

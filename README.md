@@ -113,7 +113,10 @@ private security-report links. `sessions support --diagnostics` adds a small
 local preview with only versions, platform, daemon readiness, and a session
 count. It uploads nothing and excludes session content, IDs, paths,
 credentials, environment, logs, and crash files. Review and paste only what
-you choose.
+you choose. Agents should use `sessions --json support --diagnostics`, add the
+sanitized failing command shape/action, exit code, expected behavior, and exact error,
+then ask the user before opening or submitting a ticket. Bug and feedback forms
+record whether the report came from an agent, direct use, or both.
 
 ## Documentation
 

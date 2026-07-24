@@ -57,6 +57,12 @@ func TestSupportPreviewIsLocalRedactedAndExplicit(t *testing.T) {
 	if preview.Uploaded || preview.Diagnostics == nil {
 		t.Fatalf("preview = %+v, want local diagnostics and uploaded=false", preview)
 	}
+	if preview.Agent.MachineReadableCommand != "sessions --json support --diagnostics" ||
+		!preview.Agent.UserApprovalRequired ||
+		preview.Agent.AutomaticSubmission ||
+		len(preview.Agent.Capture) != 4 {
+		t.Fatalf("agent contract = %+v", preview.Agent)
+	}
 	if !preview.Diagnostics.Daemon.Reachable || preview.Diagnostics.Daemon.SessionsLoaded != 3 {
 		t.Fatalf("daemon preview = %+v", preview.Diagnostics.Daemon)
 	}
@@ -114,7 +120,9 @@ func TestSupportDefaultDoesNotProbeDiagnostics(t *testing.T) {
 		t.Fatalf("exit=%d requests=%d stdout=%q stderr=%q", code, requests, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), supportTicketURL) ||
-		!strings.Contains(stdout.String(), "Nothing is uploaded automatically") {
+		!strings.Contains(stdout.String(), "Nothing is uploaded automatically") ||
+		!strings.Contains(stdout.String(), "Agents: run `sessions --json support --diagnostics`") ||
+		!strings.Contains(stdout.String(), "ask the user before opening or submitting a ticket") {
 		t.Fatalf("support output = %q", stdout.String())
 	}
 }

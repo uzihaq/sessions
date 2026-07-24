@@ -184,3 +184,21 @@ Somewhere CLI credential itself. Sessions recognizes the canonical HTTP form
 and stdio adapter under any name, does not add a duplicate, and refuses to
 overwrite a different server named `somewhere`. Token bytes never enter a
 prompt, runner environment, temporary MCP file, or Sessions settings.
+
+# 2026-07-23 — Treat agents as first-class support reporters
+
+Sessions is agent-native: a substantial share of failures and product feedback
+will be encountered by Codex, Claude, or shell automation before a person sees
+them. A Settings-only intake would therefore hide the support contract from the
+product's primary operators.
+
+The CLI JSON support envelope is the agent surface. It names the stable
+machine-readable command, the small safe set of report fields, and the
+requirement to ask the user before opening or submitting a ticket. Agents report
+the sanitized shape of the failing Sessions command or app action, exit code,
+sanitized exact error, expected/actual behavior, and repeatability; they do not
+dump transcripts, terminal output, paths, identifiers, environment,
+credentials, private source, logs, or crash files. Public intake records
+whether the report originated with an agent, direct use, or both. Agent-native
+reporting changes discoverability and structure, not consent: Sessions still
+performs no automatic upload or submission.

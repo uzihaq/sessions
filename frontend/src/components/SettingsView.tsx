@@ -502,9 +502,9 @@ function SupportSettings({ native }: { native: boolean }): JSX.Element {
 
   return (
     <section className="settings-page support-page">
-      <span className="settings-kicker">User-controlled support</span>
+      <span className="settings-kicker">Agent-native · user-approved</span>
       <h1>Help & feedback</h1>
-      <p>Open a public feedback or problem ticket. Sessions never uploads diagnostics, transcripts, terminal output, or credentials in the background.</p>
+      <p>You or an agent can prepare a public feedback or problem ticket. Sessions never uploads diagnostics, transcripts, terminal output, or credentials in the background.</p>
       <div className="settings-card">
         <h2>Tell us what happened</h2>
         <label className="support-draft">
@@ -522,6 +522,12 @@ function SupportSettings({ native }: { native: boolean }): JSX.Element {
           <button type="button" className="btn btn-ghost" onClick={() => void copyAndOpen('feedback')}>Share feedback</button>
         </div>
         <p className="support-privacy">Tickets are public GitHub issues. Sessions copies your draft to the clipboard and opens the form; it does not submit for you.</p>
+      </div>
+      <div className="settings-card">
+        <h2>Reporting from an agent</h2>
+        <div className="settings-static-row">
+          <span><strong>Machine-readable and local</strong><small>Agents can run <code>sessions --json support --diagnostics</code>, add the sanitized failing command shape and error, then ask you before opening or submitting a ticket.</small></span>
+        </div>
       </div>
       <div className="settings-card">
         <h2>Optional diagnostic preview</h2>

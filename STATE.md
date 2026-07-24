@@ -166,6 +166,10 @@ mediated by the native client; source history remains preserved. Full contract: 
   bug or private security destinations and can copy a user-reviewed diagnostic
   preview. Nothing is submitted or uploaded automatically; the preview
   excludes session content, IDs, paths, credentials, environment, and logs.
+  Because Sessions is agent-native, the JSON form includes a stable agent
+  contract: what safe fields to capture, the machine-readable command, and an
+  explicit user-approval requirement. Intake forms distinguish agent-originated
+  reports from direct user reports.
   Live support access remains unimplemented and requires a separate narrow
   grant (`runtime/cmd/sessions/support.go`,
   `frontend/src/components/SettingsView.tsx`, `docs/NETWORK_SECURITY.md`).

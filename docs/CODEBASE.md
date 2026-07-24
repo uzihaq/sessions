@@ -348,13 +348,16 @@ explicit, unambiguous provider artifact (`runtime/internal/recovery/adopt.go`).
 
 `runtime/cmd/sessions/support.go` owns the local diagnostic schema and official
 ticket destinations. It extracts only allowlisted health fields rather than
-redacting an arbitrary log after collection. The native app invokes that
+redacting an arbitrary log after collection. Its JSON envelope also publishes
+the stable agent-reporting contract: the machine-readable command, safe fields
+to capture, and the requirement for user approval before submission. The native app invokes that
 bundled command through `src-tauri/src/lib.rs`, whose support command accepts a
 small destination enum instead of an arbitrary URL.
 `frontend/src/components/SettingsView.tsx` keeps the user draft in memory,
 shows the diagnostic preview, copies the reviewed text, and opens but never
 submits the public ticket form. GitHub issue forms under
-`.github/ISSUE_TEMPLATE/` repeat the privacy boundary at submission time.
+`.github/ISSUE_TEMPLATE/` repeat the privacy boundary at submission time and
+record whether an agent, the user, or both encountered the problem.
 
 ### `search`
 
