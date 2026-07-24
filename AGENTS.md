@@ -40,8 +40,9 @@ relevant source path; if prose and code disagree, the code wins.
 
 1. **Sessions are sacred.** Never kill, replace, mass-clean, or adopt a session you do not own. The ledger's provenance and mass-kill guard live in `runtime/internal/ledger/` and `runtime/internal/session/manager.go`.
 2. **Preserve the Mac Mini runners.** Its initial cutover has occurred and the
-   user authorized completion through the public 0.2.2 signed update only after
-   that path passes on the runner-free MacBook (`STATE.md`). The app/daemon may
+   user authorized completion through the corrected public 0.2.3 signed update
+   after 0.2.2 passed on the MacBook and safely exposed the Mini replay-budget
+   gap (`STATE.md`). The app/daemon may
    be updated and verified; important runner processes must not be stopped,
    replaced, or recreated.
 3. **Isolate development.** Use a worktree and branch. For a scratch daemon, set both `SESSIONS_STATE_DIR` and `SESSIONS_PORT` so it cannot collide with daily-driver state (`docs/DEV.md`).

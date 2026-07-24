@@ -127,7 +127,7 @@ No auth. Returns 200:
 {
   "ok": true,
   "name": "sessionsd",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "listen": { "host": "127.0.0.1", "port": 8787 },
   "system": { "os": "darwin", "arch": "arm64" },
   "discovering": false,
@@ -148,7 +148,7 @@ No auth. Returns 200:
 {
   "ok": true,
   "name": "sessionsd",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "discovering": false,
   "sessionsLoaded": 1,
   "uptimeSec": 12,

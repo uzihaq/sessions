@@ -37,15 +37,19 @@ transfer needed — the durable record IS the handoff.
   its joint cutover and its 19 important lanes were preserved/resumed under
   Sessions. The first 0.2.1 launch on the Mini correctly rolled its daemon back
   to 0.2.0 after the old 20-second lifecycle deadline expired while runner
-  discovery was still active; the app bundle remained 0.2.1 and the runners
-  remained alive. **USER GREEN LIGHT 2026-07-23:** finish and exercise the
-  signed 0.2.2 updater patch on the runner-free MacBook, then complete the Mini
-  update through that public channel.
+  discovery was still active. **USER GREEN LIGHT 2026-07-23:** the signed 0.2.2
+  updater then passed the runner-free MacBook and went public. The Mini cask
+  upgraded to the 0.2.2 app; its new daemon ran for the full 102-second
+  readiness budget while all nine exact runner PIDs stayed alive, then safely
+  rolled only the daemon back to 0.2.0. That observation exposed the missing
+  successful-attach replay cost: each runner may add a ten-second initial
+  replay after HELLO. Finish through the corrected signed 0.2.3 patch without
+  stopping those runners.
 - Binaries are **signed** with the user's Developer ID (identity hash in `~/.config/sessions/sign-identity`;
   build script signs all 3 darwin binaries every `make binaries`). Stable TCC identity → file dialogs
   asked once, not per build.
-- **Sessions 0.2.1 is public under `Somewhere-Tech/sessions`; 0.2.2 is the next
-  updater-safety patch.** The public app artifacts are notarized/stapled/
+- **Sessions 0.2.2 is public under `Somewhere-Tech/sessions`; 0.2.3 is the
+  replay-budget correction.** The public app artifacts are notarized/stapled/
   Gatekeeper-accepted, the signed updater manifest is live at
   `https://sessions.somewhere.tech/releases/latest.json`, and
   `somewhere-tech/homebrew-tap` serves both the `sessions` runtime formula and
@@ -80,8 +84,8 @@ The app IS the product package. v2 makes "one update updates everything, nothing
 mini yet. Its later first Sessions.app install remains the joint Node-to-Go cutover (interop-proven by
 `TestNodeRunnerUnderGoDaemonCutover`) after the app has shipped and been exercised.
 
-## NEXT: ship the Mac 0.2.2 updater patch, finish the Mini upgrade, then Android
-**Immediate:** notarize and publish the Mac 0.2.2 updater-safety patch, exercise
+## NEXT: ship the Mac 0.2.3 replay-budget patch, finish the Mini upgrade, then Android
+**Immediate:** notarize and publish the Mac 0.2.3 replay-budget patch, exercise
 `sessions update` through the public channel on the MacBook, then use that
 signed path to complete the Mini's daemon upgrade without touching its runners.
 Afterward build the Android app
@@ -175,10 +179,10 @@ mediated by the native client; source history remains preserved. Full contract: 
   Gatekeeper before an atomic same-disk app swap. The temporary rollback app is
   removed after post-install verification. Only an exact installed Sessions UI
   process is stopped/reopened; `sessionsd` and runners are never signaled.
-  Native lifecycle readiness now starts at 30 seconds and adds eight seconds
-  per baseline runner (capped at five minutes), matching serial re-adoption's
-  three two-second HELLO attempts plus retry delays; the live-ID baseline and
-  rollback requirements remain unchanged.
+  Native lifecycle readiness now starts at 30 seconds and adds 15 seconds per
+  baseline runner (capped at five minutes), covering a successful attach's
+  two-second HELLO wait plus ten-second initial replay window and normal
+  overhead. The live-ID baseline and rollback requirements remain unchanged.
 - The native Connections surface now operates the already-shipped direct Somewhere backup flow: it detects the CLI,
   accepts an existing Somewhere project, enables local XChaCha encryption, presents the recovery phrase, reports
   backup status, and can push immediately. Fleet also previews the coming one-user private Fly worker shape. Account
@@ -236,7 +240,7 @@ mediated by the native client; source history remains preserved. Full contract: 
 
 ## OPEN USER DECISIONS (blockers only)
 None for the observed Mini completion. The user explicitly authorized Mini
-work after the public 0.2.2 MacBook update gate passes. The product default
+work through the public 0.2.3 correction. The product default
 preserves the existing bypass-permissions behavior, but it is now visible and
 changeable globally or per session.
 

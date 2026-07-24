@@ -277,12 +277,13 @@ impl RuntimeConfig {
             verify_signatures: true,
             daemon_arguments: Vec::new(),
             environment: Vec::new(),
-            // Existing runners are re-adopted serially. Each may consume three
-            // two-second HELLO attempts plus two 800ms retry delays, so the
-            // update budget scales with the baseline instead of imposing the
-            // old fixed 20-second deadline on every fleet size.
+            // Existing runners are re-adopted serially. A successful attach
+            // may consume a two-second HELLO wait plus the initial ten-second
+            // replay window; failed probes also retry. Budget that observed
+            // startup work instead of imposing one fixed deadline on every
+            // fleet size.
             health_timeout: Duration::from_secs(30),
-            health_timeout_per_session: Duration::from_secs(8),
+            health_timeout_per_session: Duration::from_secs(15),
             health_timeout_cap: Duration::from_secs(5 * 60),
             poll_interval: Duration::from_millis(200),
         })
@@ -1316,11 +1317,12 @@ mod tests {
         let root = env::temp_dir().join("sessions-readiness-budget-test");
         let mut config = fixture_config(&root, "tech.somewhere.sessions.readiness", 47_869);
         config.health_timeout = Duration::from_secs(30);
-        config.health_timeout_per_session = Duration::from_secs(8);
+        config.health_timeout_per_session = Duration::from_secs(15);
         config.health_timeout_cap = Duration::from_secs(5 * 60);
         assert_eq!(readiness_timeout(&config, 0), Duration::from_secs(30));
-        assert_eq!(readiness_timeout(&config, 7), Duration::from_secs(86));
-        assert_eq!(readiness_timeout(&config, 19), Duration::from_secs(182));
+        assert_eq!(readiness_timeout(&config, 7), Duration::from_secs(135));
+        assert_eq!(readiness_timeout(&config, 9), Duration::from_secs(165));
+        assert_eq!(readiness_timeout(&config, 19), Duration::from_secs(300));
         assert_eq!(readiness_timeout(&config, 10_000), Duration::from_secs(300));
     }
 

@@ -104,9 +104,10 @@ same pinned trust contract, not a second release channel:
   app, and reopens the UI.
 
 Neither CLI path signals `sessionsd` or a runner. The reopened app performs the
-normal managed-runtime handoff. Existing runners are re-adopted serially with
-up to three two-second HELLO attempts and two retry delays each, so readiness
-starts at 30 seconds and adds eight seconds per baseline runner, capped at five
+normal managed-runtime handoff. Existing runners are re-adopted serially. A
+successful attachment may consume a two-second HELLO wait plus the
+ten-second initial replay window; failed probes can retry. Readiness therefore
+starts at 30 seconds and adds 15 seconds per baseline runner, capped at five
 minutes. The handoff still requires discovery completion and every pre-update
 session ID before accepting the new daemon; otherwise it restores and
 re-verifies the previous runtime.
@@ -156,7 +157,7 @@ sessionsd remains launchd-owned, and every active session remains runner-owned.
 2. Ship the signed, notarized macOS app through its real update channel.
 3. Build the Android paired client after the macOS app has shipped.
 4. Complete the already-authorized production Mini handoff through the public
-   signed 0.2.2 channel after its MacBook gate passes.
+   signed 0.2.3 channel after its MacBook gate passes.
 
 The Mini authorization is narrow: the app/daemon may update and verify
 re-adoption, while the important runner processes remain untouched.
