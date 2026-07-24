@@ -20,7 +20,7 @@
 .text-dim { color: var(--fg-dim); }
 .text-faint { color: var(--fg-faint); }
 .text-sm { font-size: 13px; }
-.text-xs { font-size: 11px; }
+.text-xs { font-size: 12px; }
 
 .truncate {
   white-space: nowrap;
