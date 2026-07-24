@@ -31,7 +31,7 @@ async function withTimeout(promise, label, milliseconds = 10_000) {
 
 try {
   await build({
-    entryPoints: [new URL('./structured-view-fixture.tsx', import.meta.url).pathname],
+    entryPoints: [fileURLToPath(new URL('./structured-view-fixture.tsx', import.meta.url))],
     outdir: work,
     bundle: true,
     platform: 'browser',

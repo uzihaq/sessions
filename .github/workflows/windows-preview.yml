@@ -48,6 +48,7 @@ jobs:
           npm --prefix frontend ci
 
       - name: Verify shared client
+        shell: bash
         run: |
           npm --prefix frontend run typecheck
           npm --prefix frontend run build

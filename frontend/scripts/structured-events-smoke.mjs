@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 
 const work = await mkdtemp(join(tmpdir(), 'sessions-structured-events-'));
@@ -10,7 +10,7 @@ const output = join(work, 'events.mjs');
 
 try {
   await build({
-    entryPoints: [new URL('../src/lib/claudeEvents.ts', import.meta.url).pathname],
+    entryPoints: [fileURLToPath(new URL('../src/lib/claudeEvents.ts', import.meta.url))],
     outfile: output,
     bundle: true,
     platform: 'node',

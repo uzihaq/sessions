@@ -1398,6 +1398,7 @@ mod tests {
         fs::remove_dir_all(&root).unwrap();
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn plist_escapes_paths_and_keeps_daemon_and_runner_separate() {
         let config = fixture_config(
