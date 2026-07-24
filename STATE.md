@@ -92,7 +92,8 @@ runner baseline). Android is next.
 
 ## NOW: build Windows and Android paired clients
 **Immediate:** Windows is now in source as a client-only Tauri target with a
-native `Find machines` first-run flow and a Windows-hosted NSIS preview build.
+native `Find machines` first-run flow and Windows-hosted NSIS plus portable
+preview builds.
 It connects directly to approved Mac daemons over Tailscale/LAN and does not
 host a daemon or runner. Android remains active next work
 (Tauri2 paired client + FCM; push machinery ready). Later:

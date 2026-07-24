@@ -63,10 +63,12 @@ jobs:
       - name: Build unsigned Windows preview
         run: npm run tauri:build -- --bundles nsis
 
-      - name: Upload Windows installer
+      - name: Upload Windows installer and portable client
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Sessions-Windows-preview
-          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/sessions-app.exe
           if-no-files-found: error
           retention-days: 14

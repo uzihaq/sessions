@@ -241,10 +241,12 @@ turning the deprecated browser into the remote-control product.
 
 Windows installers are built on a real Windows CI runner because packaging and
 WebView behavior should be exercised on the target OS. CI may provide an
-unsigned, short-retention NSIS preview for private testing, but a public
-download requires Authenticode plus the existing signed-updater discipline.
-SmartScreen reputation is a distribution concern to solve, not a warning to
-teach users to ignore.
+unsigned, short-retention NSIS preview and standalone client executable for
+private testing; the portable binary expects the normally installed WebView2
+runtime, while the installer can bootstrap it. A public download requires
+Authenticode plus the existing signed-updater discipline. SmartScreen
+reputation is a distribution concern to solve, not a warning to teach users to
+ignore.
 
 # 2026-07-23 — Version compatibility is a protocol fact, not release-number equality
 

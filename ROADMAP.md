@@ -140,8 +140,10 @@ reuses the Tauri 2 shell and React UI, discovers verified Sessions machines
 through the signed-in Tailscale client, requests explicit approval at the host,
 and stores the resulting revocable device credential. It does not synthesize a
 localhost daemon, install the Go runtime, or host runners. Windows CI produces
-an NSIS current-user preview installer; a public Windows channel still requires
-Authenticode and updater signing.
+an NSIS current-user preview installer plus the standalone client executable.
+The portable executable expects the WebView2 runtime normally present on
+current Windows; the installer can bootstrap it when absent. A public Windows
+channel still requires Authenticode and updater signing.
 
 Reuse the same protocol and product surfaces for Android.
 The next Mac source also adds Settings → Help & feedback plus

@@ -181,11 +181,13 @@ native code reads the signed-in Tailscale peer list, verifies each candidate's
 Sessions health endpoint, sends the normal named access request, and waits for
 explicit approval on the host. Manual endpoint/token entry remains a fallback.
 
-GitHub Actions builds an NSIS current-user installer on Windows itself. That
-artifact is an explicitly unsigned preview until the public release process has
-a Windows code-signing identity and Tauri updater signing secret. A Windows
-preview may trigger SmartScreen and is not represented as a public stable
-release.
+GitHub Actions builds an NSIS current-user installer and retains the standalone
+client executable from the same Windows build. The portable executable assumes
+the WebView2 runtime normally present on current Windows; the installer uses
+Tauri's bootstrapper mode when WebView2 is absent. Both are explicitly unsigned
+previews until the public release process has a Windows code-signing identity
+and Tauri updater signing secret. A Windows preview may trigger SmartScreen and
+is not represented as a public stable release.
 
 Cross-machine software update is deliberately not part of the first paired
 client. A later action may send an authenticated update request, but the host
