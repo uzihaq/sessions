@@ -1,4 +1,11 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import {
+  checkForNativeUpdate,
+  installNativeUpdate,
+  isTauri,
+  notifyNativeUpdate,
+  type NativeUpdateInfo
+} from '../lib/tauriBridge';
 
 export type ProductView = 'home' | 'tabs' | 'today' | 'search' | 'fleet' | 'usage' | 'settings';
 export type ThemeMode = 'dark' | 'light';
@@ -14,14 +21,63 @@ interface Props {
 const ITEMS: Array<{ id: ProductView; label: string; icon: ReactNode }> = [
   { id: 'home', label: 'Home', icon: <HomeIcon /> },
   { id: 'tabs', label: 'Sessions', icon: <SessionsIcon /> },
-  { id: 'today', label: 'Today', icon: <TodayIcon /> },
+  { id: 'today', label: 'Daily', icon: <TodayIcon /> },
   { id: 'search', label: 'Search', icon: <SearchIcon /> },
   { id: 'fleet', label: 'Fleet', icon: <FleetIcon /> },
   { id: 'usage', label: 'Usage', icon: <UsageIcon /> },
   { id: 'settings', label: 'Settings', icon: <SettingsIcon /> }
 ];
 
+const UPDATE_CHECK_KEY = 'sessions:native-update-check-at';
+const UPDATE_NOTIFIED_KEY = 'sessions:native-update-notified-version';
+const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+
 export function ProductSidebar({ active, theme, onNavigate, onNewSession, onToggleTheme }: Props): JSX.Element {
+  const [updateInfo, setUpdateInfo] = useState<NativeUpdateInfo | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const automaticCheck = async (): Promise<void> => {
+      let last = 0;
+      try { last = Number(window.localStorage.getItem(UPDATE_CHECK_KEY) ?? 0); } catch { /* ignore */ }
+      if (Date.now() - last < UPDATE_CHECK_INTERVAL) return;
+      try {
+        const available = await checkForNativeUpdate();
+        if (cancelled) return;
+        try { window.localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now())); } catch { /* ignore */ }
+        setUpdateInfo(available);
+        if (!available) return;
+        let notified = '';
+        try { notified = window.localStorage.getItem(UPDATE_NOTIFIED_KEY) ?? ''; } catch { /* ignore */ }
+        if (notified !== available.version) {
+          await notifyNativeUpdate(available).catch(() => { /* sidebar remains authoritative */ });
+          try { window.localStorage.setItem(UPDATE_NOTIFIED_KEY, available.version); } catch { /* ignore */ }
+        }
+      } catch {
+        // Automatic checks stay silent. Manual checks remain available in
+        // Settings → Notifications & updates.
+      }
+    };
+    const startup = window.setTimeout(() => void automaticCheck(), 1_500);
+    const interval = window.setInterval(() => void automaticCheck(), UPDATE_CHECK_INTERVAL);
+    return () => { cancelled = true; window.clearTimeout(startup); window.clearInterval(interval); };
+  }, []);
+
+  const installUpdate = async (): Promise<void> => {
+    if (!updateInfo || updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateError(null);
+    try {
+      await installNativeUpdate();
+    } catch (error) {
+      setUpdateError(error instanceof Error ? error.message : 'Could not install the update');
+      setUpdateBusy(false);
+    }
+  };
+
   return (
     <aside className="product-sidebar">
       <button type="button" className="product-brand" onClick={() => onNavigate('home')} aria-label="Sessions home">
@@ -49,6 +105,15 @@ export function ProductSidebar({ active, theme, onNavigate, onNewSession, onTogg
       </nav>
 
       <div className="product-sidebar-footer">
+        {updateInfo ? (
+          <div className="product-update-card">
+            <div><span>Sessions {updateInfo.version}</span><strong>Update available</strong></div>
+            <button type="button" disabled={updateBusy} onClick={() => void installUpdate()}>
+              {updateBusy ? 'Updating…' : 'Update app'}
+            </button>
+            {updateError ? <small role="alert">{updateError}</small> : null}
+          </div>
+        ) : null}
         <a href="https://somewhere.tech" target="_blank" rel="noreferrer" className="somewhere-sidebar-link">
           <img src="/somewhere-logo.svg" alt="" />
           <span>somewhere.tech</span>

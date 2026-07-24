@@ -30,7 +30,6 @@ import {
   checkForNativeUpdate,
   installNativeUpdate,
   isTauri,
-  notifyNativeUpdate,
   type NativeUpdateInfo,
   type NativeUpdateProgress
 } from '../lib/tauriBridge';
@@ -44,10 +43,6 @@ interface Props {
 }
 
 const PUSH_ENABLED_KEY = 'sessions:push-enabled';
-const UPDATE_CHECK_KEY = 'sessions:native-update-check-at';
-const UPDATE_NOTIFIED_KEY = 'sessions:native-update-notified-version';
-const UPDATE_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
-
 const NEW_SESSION_TOOL_OPTIONS: { id: NewSessionTool; label: string }[] = [
   { id: 'claude-code', label: 'Claude Code' },
   { id: 'codex', label: 'Codex' },
@@ -166,34 +161,6 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
       });
     return () => controller.abort();
   }, [activeServerId]);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let cancelled = false;
-    const automaticCheck = async (): Promise<void> => {
-      let last = 0;
-      try { last = Number(window.localStorage.getItem(UPDATE_CHECK_KEY) ?? 0); } catch { /* ignore */ }
-      if (Date.now() - last < UPDATE_CHECK_INTERVAL) return;
-      try {
-        const available = await checkForNativeUpdate();
-        if (cancelled) return;
-        try { window.localStorage.setItem(UPDATE_CHECK_KEY, String(Date.now())); } catch { /* ignore */ }
-        if (!available) return;
-        setUpdateInfo(available);
-        let notified = '';
-        try { notified = window.localStorage.getItem(UPDATE_NOTIFIED_KEY) ?? ''; } catch { /* ignore */ }
-        if (notified !== available.version) {
-          await notifyNativeUpdate(available).catch(() => { /* in-app badge remains authoritative */ });
-          try { window.localStorage.setItem(UPDATE_NOTIFIED_KEY, available.version); } catch { /* ignore */ }
-        }
-      } catch {
-        // Automatic checks stay silent. Manual checks retain actionable errors.
-      }
-    };
-    const startup = window.setTimeout(() => void automaticCheck(), 1_500);
-    const interval = window.setInterval(() => void automaticCheck(), UPDATE_CHECK_INTERVAL);
-    return () => { cancelled = true; window.clearTimeout(startup); window.clearInterval(interval); };
-  }, []);
 
   const cycleSize = (): void => {
     const next = nextSize(textSize);

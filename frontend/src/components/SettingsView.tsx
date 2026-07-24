@@ -165,7 +165,7 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
       const saved = await updateRecapSettings({ provider });
       if (recapGeneration.current !== generation) return;
       setRecapProvider(saved.provider);
-      setRecapMessage(saved.provider === 'off' ? 'Daily model calls are off.' : 'Today recap provider saved.');
+      setRecapMessage(saved.provider === 'off' ? 'Daily model calls are off.' : 'Daily recap provider saved.');
     } catch (error) {
       if (recapGeneration.current === generation) {
         setRecapProvider(previous);
@@ -378,7 +378,7 @@ function AgentSettings(props: AgentSettingsProps): JSX.Element {
         {props.aiMessage ? <div className="settings-message">{props.aiMessage}</div> : null}
       </div>
       <div className="settings-card">
-        <h2>Today recap</h2>
+        <h2>Daily recap</h2>
         <label className="settings-select-row">
           <span><strong>Summary provider</strong><small>Opt in. A call happens only when you request a recap.</small></span>
           <select

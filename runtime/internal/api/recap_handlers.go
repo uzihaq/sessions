@@ -17,18 +17,31 @@ import (
 )
 
 type recapDayResponse struct {
-	Date       string                         `json:"date"`
-	Timezone   string                         `json:"timezone"`
-	Settings   state.RecapSettings            `json:"settings"`
-	Activities []sessionruntime.DailyActivity `json:"activities"`
-	Usage      usage.ReportRow                `json:"usage"`
-	Document   *recap.Document                `json:"document"`
+	Date          string                         `json:"date"`
+	Timezone      string                         `json:"timezone"`
+	Settings      state.RecapSettings            `json:"settings"`
+	Activities    []sessionruntime.DailyActivity `json:"activities"`
+	Usage         usage.ReportRow                `json:"usage"`
+	Document      *recap.Document                `json:"document"`
+	DocumentStale bool                           `json:"documentStale"`
 }
 
 func (s *Server) handleRecapRoute(response http.ResponseWriter, request *http.Request, corsOrigin string) bool {
 	switch request.URL.Path {
 	case "/api/recap/settings":
 		s.handleRecapSettings(response, request, corsOrigin)
+		return true
+	case "/api/recap/dates":
+		if request.Method != http.MethodGet {
+			s.sendJSON(response, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"}, corsOrigin)
+			return true
+		}
+		dates, err := s.recaps.Dates()
+		if err != nil {
+			s.sendRecapError(response, err, corsOrigin)
+			return true
+		}
+		s.sendJSON(response, http.StatusOK, map[string]any{"dates": dates}, corsOrigin)
 		return true
 	case "/api/recap":
 		if request.Method != http.MethodGet {
@@ -68,6 +81,7 @@ func (s *Server) handleRecapRoute(response http.ResponseWriter, request *http.Re
 			return true
 		}
 		day.Document = &document
+		day.DocumentStale = false
 		s.sendJSON(response, http.StatusOK, day, corsOrigin)
 		return true
 	default:
@@ -139,12 +153,10 @@ func (s *Server) recapDay(ctx context.Context, rawDate string) (recapDayResponse
 	}
 	timezone := time.Local.String()
 	input := recap.DayInput{Date: date, Timezone: timezone, Activities: activities, Usage: report.Totals}
-	if !s.recaps.Current(document, input, settings.Provider) {
-		document = nil
-	}
+	documentStale := document != nil && !s.recaps.Current(document, input, settings.Provider)
 	return recapDayResponse{
 		Date: date, Timezone: timezone, Settings: settings,
-		Activities: activities, Usage: report.Totals, Document: document,
+		Activities: activities, Usage: report.Totals, Document: document, DocumentStale: documentStale,
 	}, input, nil
 }
 

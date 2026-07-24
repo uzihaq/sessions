@@ -111,6 +111,31 @@ func (s *Service) Load(date string) (*Document, error) {
 	return &document, nil
 }
 
+// Dates returns the locally saved recap dates newest-first. Recaps are durable
+// journal entries, so callers can browse them independently of whether the
+// underlying usage index has changed since a document was generated.
+func (s *Service) Dates() ([]string, error) {
+	entries, err := os.ReadDir(s.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list daily recaps: %w", err)
+	}
+	dates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		date := strings.TrimSuffix(entry.Name(), ".json")
+		if validateDate(date) == nil {
+			dates = append(dates, date)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
+	return dates, nil
+}
+
 // Current reports whether a cached narrative was generated from the exact
 // local facts now being shown and with the currently selected provider. A
 // stale document stays on disk for auditability but must not masquerade as the

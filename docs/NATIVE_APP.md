@@ -83,7 +83,8 @@ The implementation pins the updater public key and reads
 `https://sessions.somewhere.tech/releases/latest.json`. Somewhere hosts only
 that small mutable metadata file; every signed app archive is immutable and
 versioned on GitHub Releases. The app checks that manifest quietly on launch
-and every six hours, shows an in-app badge, and sends at most one native
+and every six hours, shows an **Update app** action in the permanent product
+sidebar when a release is available, and sends at most one native
 notification per available version. Download and installation remain explicit.
 The settings menu tells the user that only the UI restarts—the launchd daemon
 and its runners continue independently. It also reports how many agents are
@@ -124,15 +125,17 @@ re-verifies the previous runtime.
 
 The shared React client now has native-oriented product surfaces:
 
-- **Today** renders local day totals plus factual session/lane activity without
+- **Daily** renders local day totals plus factual session/lane activity without
   requiring a model. Written recap generation is opt-in and off by default. It
   uses one pre-authenticated Codex or Claude CLI call and never overrides the
   CLI's default model. Codex runs ephemeral and read-only with user configuration
   and rules ignored; Claude runs without tools or session persistence. Both use
   the lowest supported reasoning effort. The service passes the prompt on stdin,
   hard-caps provider-safe input at 32 KiB, replaces durable IDs with per-call
-  aliases, omits full transcripts, and caches the Markdown under daemon state by
-  date/input/provider (`runtime/internal/recap/service.go`).
+  aliases and omits full transcripts. Saved Markdown remains durable under
+  daemon state as browsable per-day history; changed local facts mark an entry
+  stale rather than hiding it (`runtime/internal/recap/service.go`,
+  `frontend/src/components/DailyView.tsx`).
 - **Connections** exposes loopback, same-Wi-Fi LAN, Tailscale Serve, and
   device approval in one ladder. The normal Tailscale path is discovery:
   Sessions reads the signed-in client's tailnet peers, displays only machines

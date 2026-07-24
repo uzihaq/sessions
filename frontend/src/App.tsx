@@ -9,7 +9,7 @@ import { ConnectionStatus, fromTerminalStatus } from './components/ConnectionSta
 import { GridView } from './components/GridView';
 import { FleetView } from './components/FleetView';
 import { UsageDashboard } from './components/UsageDashboard';
-import { TodayView } from './components/TodayView';
+import { DailyView } from './components/DailyView';
 import { SearchView } from './components/SearchView';
 import { ProductSidebar, type ProductView, type ThemeMode } from './components/ProductSidebar';
 import { SessionNavigator } from './components/SessionNavigator';
@@ -28,6 +28,7 @@ import { useTabLabel } from './lib/tabLabels';
 import { getNativeConnectionSettings, getNativeRuntimeStatus, isTauri, notify, syncTrayServers } from './lib/tauriBridge';
 import { readTextSize } from './lib/textSize';
 import { preloadUsage } from './lib/usageCache';
+import { preloadDaily } from './lib/dailyCache';
 import type { SessionTool } from './types';
 
 const TOOL_ICONS: Record<SessionTool, string> = {
@@ -316,6 +317,17 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
     return () => window.clearTimeout(id);
   }, [activeServerId]);
 
+  // Daily is part of startup hydration rather than a cold, on-navigation
+  // request. The view adopts this cached result immediately and still renders
+  // its complete skeleton if the local index has not finished yet.
+  useEffect(() => {
+    if (!activeServerId) return;
+    const id = window.setTimeout(() => {
+      void preloadDaily(activeServerId);
+    }, 450);
+    return () => window.clearTimeout(id);
+  }, [activeServerId]);
+
   // Build per-session status/icon maps. Inactive tabs use the daemon's
   // activity-derived `working` flag (computed from PTY byte rate) and
   // its `tool` field (classified from the cmd at session create) for
@@ -443,7 +455,7 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
         ) : effectiveLayout === 'fleet' ? (
           <FleetView onOpenSession={openFleetSession} />
         ) : effectiveLayout === 'today' ? (
-          <TodayView />
+          <DailyView />
         ) : effectiveLayout === 'search' ? (
           <SearchView />
         ) : effectiveLayout === 'usage' ? (

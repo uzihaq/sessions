@@ -25,8 +25,11 @@ Sessions-managed runtime and leaving unrelated executables untouched.
 The signed app-bundle updater is configured in `src-tauri/tauri.conf.json` and
 exposed through the native-only settings flow in
 `frontend/src/lib/tauriBridge.ts`; the bridge serializes update discovery and
-delivers once-per-version native notifications. `frontend/src/components/TodayView.tsx`
-renders the local work journal and opt-in recap, while
+delivers once-per-version native notifications. `frontend/src/components/DailyView.tsx`
+renders the preloaded local work journal, saved-day history, and opt-in recap,
+while `frontend/src/lib/dailyCache.ts` warms the current day and adopts it
+without a blank navigation state. `frontend/src/components/ProductSidebar.tsx`
+owns the always-visible signed-update action, while
 `frontend/src/components/ConnectionsView.tsx` presents loopback, LAN, Tailscale,
 tailnet machine discovery/request state, the LAN pairing fallback, and safe
 port migration. `frontend/src/components/TailnetAccessInbox.tsx` polls the
@@ -54,7 +57,7 @@ Gatekeeper assessment, and renders the static Tauri manifest. Its release
 contract lives in [`NATIVE_APP.md`](NATIVE_APP.md).
 
 The desktop workspace begins in `frontend/src/App.tsx`. `ProductSidebar.tsx`
-owns the permanent Home/Sessions/Today/Search/Fleet/Usage/Settings rail;
+owns the permanent Home/Sessions/Daily/Search/Fleet/Usage/Settings rail;
 `HomeView.tsx` summarizes the operational inbox; and `SessionNavigator.tsx`
 builds the manager/child tree from normalized `SessionInfo` provenance fields.
 `FleetView.tsx` independently polls every configured daemon, uses the optional

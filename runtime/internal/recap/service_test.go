@@ -3,6 +3,9 @@ package recap
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -48,6 +51,30 @@ func TestGenerateCachesByInputAndProvider(t *testing.T) {
 	}
 	if _, err := service.Generate(context.Background(), state.DefaultRecapSettings(), input, false); err == nil {
 		t.Fatal("off recap unexpectedly generated")
+	}
+}
+
+func TestDatesListsOnlySavedRecapsNewestFirst(t *testing.T) {
+	root := t.TempDir()
+	service := NewServiceWithRunner(root, func(_ context.Context, _ state.RecapSettings, _ string) (string, error) {
+		return "# Daily recap", nil
+	})
+	settings := state.RecapSettings{Provider: state.RecapProviderCodex}
+	for _, date := range []string{"2026-07-21", "2026-07-23", "2026-07-22"} {
+		if _, err := service.Generate(context.Background(), settings, DayInput{Date: date}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "recaps", "notes.txt"), []byte("ignore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dates, err := service.Dates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"2026-07-23", "2026-07-22", "2026-07-21"}
+	if !reflect.DeepEqual(dates, want) {
+		t.Fatalf("dates = %#v, want %#v", dates, want)
 	}
 }
 

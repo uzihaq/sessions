@@ -36,7 +36,7 @@ export function HomeView({ sessions, machine, onOpen, onNew, onNavigate }: Props
         <button type="button" onClick={() => onNavigate('usage')}><span>Live sessions</span><strong>{live.length}</strong><small>Usage and cost details</small></button>
       </section>
       <section className="home-recent">
-        <header><div><span>Inbox</span><h2>Recent sessions</h2></div><button type="button" onClick={() => onNavigate('today')}>Open Today →</button></header>
+        <header><div><span>Inbox</span><h2>Recent sessions</h2></div><button type="button" onClick={() => onNavigate('today')}>Open Daily →</button></header>
         <div className="home-session-list">
           {recent.map((session) => {
             const provider = normalizeProvider(session.tool);

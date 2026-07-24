@@ -51,9 +51,38 @@ func TestRecapSettingsAndGeneration(t *testing.T) {
 	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), `"provider":"codex"`) {
 		t.Fatalf("loaded: status=%d body=%s", loaded.Code, loaded.Body.String())
 	}
+	dates := serve(t, daemon.handler, http.MethodGet, "/api/recap/dates", nil, "127.0.0.1:1", nil)
+	if dates.Code != http.StatusOK || !strings.Contains(dates.Body.String(), `"dates":["2026-07-22"]`) {
+		t.Fatalf("dates: status=%d body=%s", dates.Code, dates.Body.String())
+	}
 	badDate := serve(t, daemon.handler, http.MethodGet, "/api/recap?date=yesterday", nil, "127.0.0.1:1", nil)
 	if badDate.Code != http.StatusBadRequest {
 		t.Fatalf("bad date: status=%d body=%s", badDate.Code, badDate.Body.String())
+	}
+}
+
+func TestRecapKeepsSavedDocumentWhenFactsChange(t *testing.T) {
+	daemon := newTestDaemon(t)
+	if err := state.SaveSettings(daemon.handler.lan.settingsPath, state.Settings{Recap: &state.RecapSettings{Provider: state.RecapProviderCodex}}); err != nil {
+		t.Fatal(err)
+	}
+	daemon.handler.recaps = recap.NewServiceWithRunner(daemon.config.StateRoot, func(_ context.Context, _ state.RecapSettings, _ string) (string, error) {
+		return "# Saved daily recap", nil
+	})
+	generated := serve(t, daemon.handler, http.MethodPost, "/api/recap/generate", strings.NewReader(`{"date":"2026-07-22"}`), "127.0.0.1:1", nil)
+	if generated.Code != http.StatusOK {
+		t.Fatalf("generate: status=%d body=%s", generated.Code, generated.Body.String())
+	}
+	if err := state.UpdateSettings(daemon.handler.lan.settingsPath, func(settings *state.Settings) error {
+		settings.Recap = &state.RecapSettings{Provider: state.RecapProviderClaude}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	loaded := serve(t, daemon.handler, http.MethodGet, "/api/recap?date=2026-07-22", nil, "127.0.0.1:1", nil)
+	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), `"documentStale":true`) ||
+		!strings.Contains(loaded.Body.String(), "Saved daily recap") {
+		t.Fatalf("stale saved recap: status=%d body=%s", loaded.Code, loaded.Body.String())
 	}
 }
 

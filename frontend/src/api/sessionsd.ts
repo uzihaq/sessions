@@ -630,11 +630,12 @@ export interface RecapDay {
   activities: RecapActivity[];
   usage: UsageRow;
   document: RecapDocument | null;
+  documentStale: boolean;
 }
 
 export async function fetchRecapSettings(signal?: AbortSignal): Promise<RecapSettings> {
   const r = await apiFetch(`${httpBase()}/api/recap/settings`, { signal });
-  return featureJSON<RecapSettings>(r, 'Today');
+  return featureJSON<RecapSettings>(r, 'Daily');
 }
 
 export async function updateRecapSettings(settings: RecapSettings): Promise<RecapSettings> {
@@ -643,13 +644,21 @@ export async function updateRecapSettings(settings: RecapSettings): Promise<Reca
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(settings)
   });
-  return featureJSON<RecapSettings>(r, 'Today');
+  return featureJSON<RecapSettings>(r, 'Daily');
 }
 
 export async function fetchRecap(date: string, signal?: AbortSignal): Promise<RecapDay> {
   const query = new URLSearchParams({ date });
   const r = await apiFetch(`${httpBase()}/api/recap?${query.toString()}`, { signal });
-  return featureJSON<RecapDay>(r, 'Today');
+  return featureJSON<RecapDay>(r, 'Daily');
+}
+
+export async function fetchRecapDates(signal?: AbortSignal): Promise<string[]> {
+  const r = await apiFetch(`${httpBase()}/api/recap/dates`, { signal });
+  const payload = await featureJSON<{ dates?: unknown }>(r, 'Daily');
+  return Array.isArray(payload.dates)
+    ? payload.dates.filter((date): date is string => typeof date === 'string')
+    : [];
 }
 
 export async function generateRecap(date: string, force = false): Promise<RecapDay> {
@@ -658,7 +667,7 @@ export async function generateRecap(date: string, force = false): Promise<RecapD
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ date, force })
   });
-  return featureJSON<RecapDay>(r, 'Today');
+  return featureJSON<RecapDay>(r, 'Daily');
 }
 
 export interface Snapshot {

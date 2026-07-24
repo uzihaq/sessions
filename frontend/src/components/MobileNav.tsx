@@ -139,7 +139,7 @@ export function MobileNav({
           {activeIsWorking ? <span className="mn-status-dot working" aria-hidden /> : null}
           <div className="mn-hero-name">{activeLabel}</div>
         </button>
-        <MobileDestination label="Today" glyph="◉" active={layoutMode === 'today'} onClick={() => onLayoutChange('today')} />
+        <MobileDestination label="Daily" glyph="◉" active={layoutMode === 'today'} onClick={() => onLayoutChange('today')} />
         <MobileDestination label="Fleet" glyph="◫" active={layoutMode === 'fleet'} onClick={() => onLayoutChange('fleet')} />
         <MobileDestination label="Search" glyph="⌕" active={layoutMode === 'search'} onClick={() => onLayoutChange('search')} />
         <MobileDestination label="Usage" glyph="◒" active={layoutMode === 'usage'} onClick={() => onLayoutChange('usage')} />

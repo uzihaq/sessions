@@ -148,15 +148,18 @@ mediated by the native client; source history remains preserved. Full contract: 
   remains one click away and the independent runner still owns the conversation.
 
 ## Implemented in source for the next Mac release (2026-07-22; not public yet)
-- A polished **Today** journal combines authoritative local usage totals with the day's session/lane hierarchy plus
+- A polished **Daily** journal combines authoritative local usage totals with the day's session/lane hierarchy plus
   locally observed Claude/Codex conversations that still live outside Sessions. It streams only provider logs that
   contributed usage that day, excludes copied child-agent fork snapshots, and labels outside work explicitly; no
   transcript is imported. Written synthesis is opt-in (`off` by default), recommends the user's
   already-authenticated Codex CLI, supports Claude, and lets the selected CLI choose its default model. Each manual
   call requests the lowest supported reasoning effort (Codex ephemeral/read-only with user configuration and rules
   ignored; Claude tool-disabled and session-less), sends at most 32 KiB of compact metadata rather than transcripts
-  or durable session IDs, and caches the Markdown locally by day/input/provider
-  (`runtime/internal/recap/service.go`, `frontend/src/components/TodayView.tsx`).
+  or durable session IDs, and saves the Markdown locally as a durable per-day journal entry. Daily preloads during
+  app startup, keeps a complete loading frame visible, exposes saved-day history, and marks a saved recap stale
+  instead of hiding it when local facts later change
+  (`runtime/internal/recap/service.go`, `frontend/src/components/DailyView.tsx`,
+  `frontend/src/lib/dailyCache.ts`).
 - The native resume picker discovers both Claude and Codex provider conversations and binds a selected idle
   conversation through the audited recovery/adopt boundary. It never copies history, hides identities already open
   in Sessions, and requires the user to stop writing from the original app before resuming the same provider
