@@ -99,11 +99,21 @@ command registry.
 | `sessions recover [--reopen]` | Inspect or reopen unexpectedly lost lanes |
 | `sessions remote enable\|status\|disable` | Manage early-access Tailscale HTTPS access |
 | `sessions model <id> <model> [--effort LEVEL]` | Switch an idle supported Claude session model |
+| `sessions support [--diagnostics]` | Open feedback/support channels and preview a redacted local diagnostic summary |
 | `sessions kill <id> [<id>...]` | Explicitly terminate selected sessions |
 
 Also useful: `sessions snap`, `last`, `transcript`, `tail`, `keys`, `attach`,
 `verdict`, `doctor`, `docs`, and `help`. Global flags are `--json`, `--host`, and
 `--port` (or `SESSIONS_HOST` / `SESSIONS_PORT`).
+
+## Feedback and support
+
+Run `sessions support` for the official feedback, public bug-ticket, and
+private security-report links. `sessions support --diagnostics` adds a small
+local preview with only versions, platform, daemon readiness, and a session
+count. It uploads nothing and excludes session content, IDs, paths,
+credentials, environment, logs, and crash files. Review and paste only what
+you choose.
 
 ## Documentation
 

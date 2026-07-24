@@ -57,24 +57,35 @@ the atomic swap. There is no URL, key, proxy credential, or app-path option in
 the command surface. The system HTTPS proxy setting may be honored, but TLS
 validation and the artifact signature remain mandatory.
 
-## Support-ticket access (coming soon)
+## Feedback and support tickets
 
-`sessions support` may eventually let a user attach diagnostics or grant
-temporary support access to a named Somewhere support ticket. It is not a
-generic remote shell and is not implemented yet. The minimum acceptable shape
-is:
+The source implementation provides two user-controlled entry points:
 
-- the user is authenticated through the Somewhere CLI and selects an exact
-  ticket;
-- local diagnostics are redacted and previewable before upload;
-- any live grant is separately confirmed, read-only by default, scoped to
-  named machines/sessions/capabilities, short-lived, revocable, and audited;
-- a grant never exposes unrelated sessions, provider credentials, environment
-  variables, arbitrary filesystem paths, or a master daemon token;
-- there is no unattended inbound listener or permanent reverse tunnel;
-- write/control access, if ever added, requires a second explicit approval and
-  is visually distinct from sharing a diagnostic bundle.
+- Sessions.app Settings → Help & feedback accepts a local draft, can generate
+  an optional diagnostic preview, copies only the reviewed draft to the
+  clipboard, and opens a fixed public GitHub feedback or bug form. It never
+  submits the form.
+- `sessions support` prints the same public-ticket and private-security-report
+  destinations. `sessions support --diagnostics` previews the small diagnostic
+  object locally and never uploads it.
 
-The exact v1 remains an open product decision: a diagnostic-only attachment is
-substantially safer than live read access and should ship first unless a real
-support case proves it insufficient.
+The diagnostic schema contains only generation time, Sessions CLI/daemon
+versions, OS/architecture, daemon reachable/ready/discovery state, and a
+session count. It deliberately excludes transcripts, terminal output, prompts,
+responses, titles, tags, commands, session/process IDs, usernames, hostnames,
+paths, tokens, credentials, environment variables, provider configuration,
+logs, and crash files. The command succeeds with an explicit unreachable state
+when the daemon is down, so support never depends on the broken component.
+
+The native shell accepts only the compiled-in GitHub feedback, bug, chooser,
+and private security-advisory destinations; the webview cannot supply an
+arbitrary URL. Public ticket forms repeat the privacy warning and require the
+reporter to confirm review before submission.
+
+Temporary live support access remains unimplemented. If it is ever justified,
+the user must authenticate through the Somewhere CLI and select an exact
+ticket; the grant must be separately confirmed, read-only by default, scoped
+to named machines/sessions/capabilities, short-lived, revocable, and audited.
+It must never expose unrelated sessions, provider credentials, environment
+variables, arbitrary filesystem paths, or a master daemon token, and it must
+never create an unattended listener or permanent reverse tunnel.

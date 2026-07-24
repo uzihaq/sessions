@@ -64,6 +64,7 @@ Admin/operational:
   token                    print the daemon authentication token
   backup                   configure and run session backups
   doctor                   diagnose daemon and session health
+  support                  leave feedback or open a support ticket
   docs                     print the complete offline CLI reference
   help                     show top-level or command help
   version (--version, -v)  print the CLI version
@@ -828,6 +829,24 @@ Report per-session health, spawn path, QoS state, and sessions which should be r
 Examples:
   sessions doctor
   sessions --json doctor
+
+Global flags --json, --host, and --port must appear before the command.
+```
+
+## `sessions support`
+
+```text
+Usage:
+  sessions support [--diagnostics]
+
+leave feedback or open a support ticket
+
+Print the official feedback, bug-ticket, and private security-report links. --diagnostics adds a deliberately small local preview containing only versions, platform, daemon readiness, and a session count. It excludes transcripts, terminal output, prompts, responses, titles, tags, commands, IDs, process details, usernames, hostnames, paths, credentials, environment, logs, and crash files. Nothing is uploaded; review and copy only what you choose into a ticket.
+
+Examples:
+  sessions support
+  sessions support --diagnostics
+  sessions --json support --diagnostics
 
 Global flags --json, --host, and --port must appear before the command.
 ```

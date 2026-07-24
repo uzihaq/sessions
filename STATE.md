@@ -161,10 +161,14 @@ mediated by the native client; source history remains preserved. Full contract: 
   local operation sends no telemetry or session data to Somewhere; every
   data-bearing outbound feature must name its destination/payload/trigger,
   require visible opt-in, remain bounded and revocable, and never silently
-  create a general tunnel. A future `sessions support` starts with a
-  user-previewed redacted bundle for one ticket; live support access remains
-  unimplemented and requires a separate narrow grant
-  (`docs/NETWORK_SECURITY.md`).
+  create a general tunnel. **SOURCE-ONLY AFTER 0.2.3:** Settings → Help &
+  feedback and `sessions support [--diagnostics]` open fixed public feedback/
+  bug or private security destinations and can copy a user-reviewed diagnostic
+  preview. Nothing is submitted or uploaded automatically; the preview
+  excludes session content, IDs, paths, credentials, environment, and logs.
+  Live support access remains unimplemented and requires a separate narrow
+  grant (`runtime/cmd/sessions/support.go`,
+  `frontend/src/components/SettingsView.tsx`, `docs/NETWORK_SECURITY.md`).
 - **Interactive browser control is deprecated by product decision.** Sessions.app is the Mac control and terminal
   surface; Android will be the first remote native client. The currently served SPA remains a compatibility artifact
   until it is reduced or removed, and must not be promoted as a browser terminal. A future browser surface, if any,

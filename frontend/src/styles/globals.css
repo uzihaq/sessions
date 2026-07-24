@@ -3210,6 +3210,40 @@ button:active:not(:disabled),
 .profile-provider.is-codex { color: #48aa99; }
 .settings-cloud-page { width: min(980px, calc(100% - 48px)); }
 .settings-cloud-page .somewhere-hub { margin-top: 22px; }
+.support-draft { display: grid; gap: 7px; }
+.support-draft > span { font-size: 10px; font-weight: 650; }
+.support-draft textarea {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-base);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.support-draft textarea:focus { border-color: var(--accent); outline: none; }
+.support-draft small,
+.support-privacy { color: var(--fg-faint); font-size: 9px; line-height: 1.55; }
+.support-actions { display: flex; gap: 8px; margin-top: 13px; }
+.support-privacy { margin: 12px 0 0; }
+.support-include { margin-top: 14px; }
+.support-preview {
+  max-height: 280px;
+  margin: 12px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-base);
+  color: var(--fg-dim);
+  font-size: 9px;
+  line-height: 1.55;
+}
 
 .dialog-kicker { display: block; margin-bottom: 4px; color: var(--accent); font-size: 8px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
 .dialog.new-session-launcher { width: min(940px, calc(100vw - 36px)); max-width: 940px; max-height: min(900px, calc(100vh - 32px)); padding: 0; gap: 0; overflow-y: auto; }

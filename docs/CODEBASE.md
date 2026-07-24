@@ -344,6 +344,18 @@ Reopen operations only use validated safe recipes and avoid creating duplicate
 live ownership (`runtime/internal/recovery/mutate.go`). Adoption requires an
 explicit, unambiguous provider artifact (`runtime/internal/recovery/adopt.go`).
 
+### Feedback and support
+
+`runtime/cmd/sessions/support.go` owns the local diagnostic schema and official
+ticket destinations. It extracts only allowlisted health fields rather than
+redacting an arbitrary log after collection. The native app invokes that
+bundled command through `src-tauri/src/lib.rs`, whose support command accepts a
+small destination enum instead of an arbitrary URL.
+`frontend/src/components/SettingsView.tsx` keeps the user draft in memory,
+shows the diagnostic preview, copies the reviewed text, and opens but never
+submits the public ticket form. GitHub issue forms under
+`.github/ISSUE_TEMPLATE/` repeat the privacy boundary at submission time.
+
 ### `search`
 
 `search` offers three local retrieval contracts

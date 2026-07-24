@@ -106,6 +106,11 @@ soon** rather than being presented as shipped.
 
 The macOS release and Mini update gates are complete. Reuse the Tauri 2 client
 and React UI for Android.
+The next Mac source also adds Settings → Help & feedback plus
+`sessions support [--diagnostics]`: fixed public feedback/bug and private
+security-report destinations, an optional locally generated diagnostic preview,
+and no automatic submission or upload. Live support access remains out of
+scope.
 The Android app is a paired client for a user's Mac daemon, not a mobile daemon
 host. Native work includes FCM delivery over Sessions' existing encrypted push
 path, secure credential storage, widgets, and a Quick Settings entry point.

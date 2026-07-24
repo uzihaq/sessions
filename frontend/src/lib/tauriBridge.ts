@@ -216,6 +216,56 @@ export async function getSomewhereCLIStatus(): Promise<SomewhereCLIStatus | null
   return invoke<SomewhereCLIStatus>('somewhere_cli_status');
 }
 
+export interface SupportDiagnostics {
+  generated_at: string;
+  cli_version: string;
+  os: string;
+  arch: string;
+  daemon: {
+    reachable: boolean;
+    ok: boolean;
+    version?: string;
+    discovering?: boolean;
+    sessions_loaded?: number;
+  };
+}
+
+export interface SupportPreview {
+  schema_version: number;
+  ticket_url: string;
+  feedback_url: string;
+  bug_url: string;
+  security_url: string;
+  diagnostics?: SupportDiagnostics;
+  excluded: string[];
+  uploaded: false;
+}
+
+const supportURLs = {
+  choose: 'https://github.com/Somewhere-Tech/sessions/issues/new/choose',
+  feedback: 'https://github.com/Somewhere-Tech/sessions/issues/new?template=feedback.yml',
+  bug: 'https://github.com/Somewhere-Tech/sessions/issues/new?template=bug_report.yml',
+  security: 'https://github.com/Somewhere-Tech/sessions/security/advisories/new'
+} as const;
+
+export type SupportPage = keyof typeof supportURLs;
+
+export async function getNativeSupportPreview(): Promise<SupportPreview> {
+  if (!isTauri()) throw new Error('The diagnostic preview is available in Sessions.app');
+  const result = await invoke<NativeConnectionCommand<SupportPreview>>('native_support_preview');
+  return result.data;
+}
+
+export async function openSupportPage(kind: SupportPage): Promise<void> {
+  if (isTauri()) {
+    await invoke<void>('open_support_page', { kind });
+    return;
+  }
+  const target = supportURLs[kind];
+  const opened = window.open(target, '_blank', 'noopener,noreferrer');
+  if (!opened) window.location.assign(target);
+}
+
 export interface NativeUpdateInfo {
   currentVersion: string;
   version: string;

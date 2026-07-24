@@ -288,6 +288,12 @@ var commandTable = []commandSpec{
 		examples: []string{"sessions doctor", "sessions --json doctor"}, run: func(a *app, _ []string) error { return a.cmdDoctor() },
 	},
 	{
+		name: "support", usage: "support [--diagnostics]",
+		summary: "leave feedback or open a support ticket", group: adminCommandGroup, localJSON: true,
+		longHelp: "Print the official feedback, bug-ticket, and private security-report links. --diagnostics adds a deliberately small local preview containing only versions, platform, daemon readiness, and a session count. It excludes transcripts, terminal output, prompts, responses, titles, tags, commands, IDs, process details, usernames, hostnames, paths, credentials, environment, logs, and crash files. Nothing is uploaded; review and copy only what you choose into a ticket.",
+		examples: []string{"sessions support", "sessions support --diagnostics", "sessions --json support --diagnostics"}, run: (*app).cmdSupport,
+	},
+	{
 		name: "docs", usage: "docs",
 		summary: "print the complete offline CLI reference", group: adminCommandGroup,
 		longHelp: "Print the complete Sessions CLI reference as Markdown. The output is generated directly from the same command registry as sessions help, needs no daemon or network connection, and can be saved or passed to a coding agent.",

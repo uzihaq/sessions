@@ -15,16 +15,21 @@ import type { ClaudeSettings } from '../types';
 import { useServers } from '../lib/servers';
 import {
   checkForNativeUpdate,
+  getNativeSupportPreview,
   installNativeUpdate,
   isTauri,
+  openSupportPage,
   type NativeUpdateInfo,
-  type NativeUpdateProgress
+  type NativeUpdateProgress,
+  type SupportPage,
+  type SupportPreview
 } from '../lib/tauriBridge';
+import { copyText } from '../lib/copyText';
 import { ConnectionsView } from './ConnectionsView';
 import type { ThemeMode } from './ProductSidebar';
 import { SomewhereCard } from './SomewhereCard';
 
-type Section = 'general' | 'agents' | 'accounts' | 'network' | 'cloud' | 'notifications';
+type Section = 'general' | 'agents' | 'accounts' | 'network' | 'cloud' | 'notifications' | 'support';
 
 interface Props {
   theme: ThemeMode;
@@ -228,7 +233,8 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
           ['accounts', 'Accounts & profiles'],
           ['network', 'Access & networking'],
           ['cloud', 'Cloud & backup'],
-          ['notifications', 'Notifications & updates']
+          ['notifications', 'Notifications & updates'],
+          ['support', 'Help & feedback']
         ].map(([id, label]) => (
           <button type="button" key={id} className={section === id ? 'is-active' : ''} onClick={() => setSection(id as Section)}>{label}</button>
         ))}
@@ -267,7 +273,7 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
             <p>Encrypted local-first backup is available now. Hosted library, search, and worker controls are clearly staged below.</p>
             <SomewhereCard />
           </section>
-        ) : (
+        ) : section === 'notifications' ? (
           <NotificationSettings
             native={native}
             updateInfo={updateInfo}
@@ -277,6 +283,8 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
             onCheck={checkForUpdate}
             onInstall={installUpdate}
           />
+        ) : (
+          <SupportSettings native={native} />
         )}
       </main>
     </div>
@@ -426,6 +434,120 @@ function NotificationSettings(props: NotificationSettingsProps): JSX.Element {
         {props.updateInfo?.notes ? <p>{props.updateInfo.notes}</p> : null}
       </div>
       <div className="settings-coming-card"><span>Native session alerts · Coming soon</span><h2>Needs-you and completion alerts</h2><p>The notification center will add per-session approval, question, completion, and lost-session rules without relying on the retired browser control surface.</p></div>
+    </section>
+  );
+}
+
+function formatSupportPreview(preview: SupportPreview): string {
+  const diagnostics = preview.diagnostics;
+  if (!diagnostics) return '';
+  const daemon = diagnostics.daemon.reachable
+    ? `reachable; ok=${diagnostics.daemon.ok}; version=${diagnostics.daemon.version ?? 'unknown'}; discovering=${diagnostics.daemon.discovering ?? false}; sessions=${diagnostics.daemon.sessions_loaded ?? 0}`
+    : 'unreachable';
+  return [
+    'Sessions diagnostic preview',
+    `Generated: ${diagnostics.generated_at}`,
+    `CLI: ${diagnostics.cli_version}`,
+    `Platform: ${diagnostics.os}/${diagnostics.arch}`,
+    `Daemon: ${daemon}`,
+    '',
+    'Never included:',
+    ...preview.excluded.map((item) => `- ${item}`),
+    '',
+    'Nothing was uploaded automatically.'
+  ].join('\n');
+}
+
+function SupportSettings({ native }: { native: boolean }): JSX.Element {
+  const [draft, setDraft] = useState('');
+  const [preview, setPreview] = useState<SupportPreview | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [includePreview, setIncludePreview] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const loadPreview = async (): Promise<void> => {
+    if (!native || previewBusy) return;
+    setPreviewBusy(true);
+    setMessage(null);
+    try {
+      const next = await getNativeSupportPreview();
+      setPreview(next);
+      setIncludePreview(true);
+      setMessage('Diagnostic preview generated locally. Review it before including it.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not generate the diagnostic preview.');
+    } finally {
+      setPreviewBusy(false);
+    }
+  };
+
+  const copyAndOpen = async (kind: Extract<SupportPage, 'feedback' | 'bug'>): Promise<void> => {
+    const sections: string[] = [];
+    if (draft.trim()) sections.push(draft.trim());
+    if (includePreview && preview) sections.push(formatSupportPreview(preview));
+    const copied = sections.length === 0 ? true : await copyText(sections.join('\n\n---\n\n'));
+    try {
+      await openSupportPage(kind);
+      setMessage(
+        sections.length === 0
+          ? 'Ticket form opened. Nothing from Sessions was attached.'
+          : copied
+            ? 'Draft copied and ticket form opened. Review everything before submitting.'
+            : 'Ticket form opened, but Sessions could not copy the draft. Copy it manually before submitting.'
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not open the ticket form.');
+    }
+  };
+
+  return (
+    <section className="settings-page support-page">
+      <span className="settings-kicker">User-controlled support</span>
+      <h1>Help & feedback</h1>
+      <p>Open a public feedback or problem ticket. Sessions never uploads diagnostics, transcripts, terminal output, or credentials in the background.</p>
+      <div className="settings-card">
+        <h2>Tell us what happened</h2>
+        <label className="support-draft">
+          <span>Optional draft</span>
+          <textarea
+            value={draft}
+            maxLength={4_000}
+            placeholder="What were you trying to do? What happened instead?"
+            onChange={(event) => setDraft(event.currentTarget.value)}
+          />
+          <small>{draft.length.toLocaleString()} / 4,000 · This stays in the app until you copy it.</small>
+        </label>
+        <div className="support-actions">
+          <button type="button" className="btn btn-primary" onClick={() => void copyAndOpen('bug')}>Report a problem</button>
+          <button type="button" className="btn btn-ghost" onClick={() => void copyAndOpen('feedback')}>Share feedback</button>
+        </div>
+        <p className="support-privacy">Tickets are public GitHub issues. Sessions copies your draft to the clipboard and opens the form; it does not submit for you.</p>
+      </div>
+      <div className="settings-card">
+        <h2>Optional diagnostic preview</h2>
+        <div className="settings-static-row">
+          <span><strong>Small and deliberately redacted</strong><small>Only versions, OS/architecture, daemon readiness, and a session count. No logs, paths, IDs, titles, commands, or content.</small></span>
+          <button type="button" className="btn btn-ghost" disabled={!native || previewBusy} onClick={() => void loadPreview()}>{previewBusy ? 'Generating…' : preview ? 'Refresh preview' : 'Generate preview'}</button>
+        </div>
+        {!native ? <div className="settings-message">Diagnostic previews are available in the signed Sessions app. You can still open a ticket.</div> : null}
+        {preview ? (
+          <>
+            <label className="settings-toggle support-include">
+              <span><strong>Include after review</strong><small>Add this preview when Sessions copies your ticket draft.</small></span>
+              <input type="checkbox" checked={includePreview} onChange={(event) => setIncludePreview(event.currentTarget.checked)} />
+            </label>
+            <pre className="support-preview">{formatSupportPreview(preview)}</pre>
+          </>
+        ) : null}
+      </div>
+      <div className="settings-card">
+        <h2>Security issue</h2>
+        <div className="settings-static-row">
+          <span><strong>Report privately</strong><small>Use GitHub’s private vulnerability-reporting channel instead of a public support ticket.</small></span>
+          <button type="button" className="btn btn-ghost" onClick={() => void openSupportPage('security')}>Open private report</button>
+        </div>
+      </div>
+      {message ? <div className="settings-message" role="status">{message}</div> : null}
     </section>
   );
 }

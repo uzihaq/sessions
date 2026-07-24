@@ -21,6 +21,13 @@ use tauri::{
 const TRAY_ID: &str = "sessions-status";
 const SOMEWHERE_PACKAGE: &str = "@somewhere-tech/cli";
 const SOMEWHERE_LATEST_URL: &str = "https://registry.npmjs.org/@somewhere-tech%2Fcli/latest";
+const SUPPORT_TICKET_URL: &str = "https://github.com/Somewhere-Tech/sessions/issues/new/choose";
+const SUPPORT_FEEDBACK_URL: &str =
+    "https://github.com/Somewhere-Tech/sessions/issues/new?template=feedback.yml";
+const SUPPORT_BUG_URL: &str =
+    "https://github.com/Somewhere-Tech/sessions/issues/new?template=bug_report.yml";
+const SUPPORT_SECURITY_URL: &str =
+    "https://github.com/Somewhere-Tech/sessions/security/advisories/new";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -556,6 +563,50 @@ async fn native_backup_action(
     })
     .await
     .map_err(|error| format!("backup worker failed: {error}"))?
+}
+
+#[tauri::command]
+async fn native_support_preview(app: AppHandle) -> Result<NativeConnectionCommand, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        run_bundled_sessions_json(
+            &app,
+            &["support".to_string(), "--diagnostics".to_string()],
+            "support",
+        )
+    })
+    .await
+    .map_err(|error| format!("support preview worker failed: {error}"))?
+}
+
+fn support_page_url(kind: &str) -> Result<&'static str, String> {
+    match kind {
+        "choose" => Ok(SUPPORT_TICKET_URL),
+        "feedback" => Ok(SUPPORT_FEEDBACK_URL),
+        "bug" => Ok(SUPPORT_BUG_URL),
+        "security" => Ok(SUPPORT_SECURITY_URL),
+        _ => Err("unsupported support page".to_string()),
+    }
+}
+
+#[tauri::command]
+fn open_support_page(kind: String) -> Result<(), String> {
+    let url = support_page_url(kind.trim())?;
+    #[cfg(target_os = "macos")]
+    {
+        let status = Command::new("/usr/bin/open")
+            .arg(url)
+            .status()
+            .map_err(|error| format!("open support page: {error}"))?;
+        if !status.success() {
+            return Err(format!("open support page failed with {status}"));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err("support links are not wired for this platform yet".to_string())
+    }
 }
 
 #[tauri::command]
@@ -1496,6 +1547,8 @@ pub fn run() {
             native_tailnet_request,
             native_tailnet_claim,
             native_backup_action,
+            native_support_preview,
+            open_support_page,
             somewhere_cli_status
         ])
         .setup(|app| {
@@ -1662,6 +1715,25 @@ mod tests {
         assert!(!version_is_newer("1.9.0", "1.10.0"));
         assert!(!version_is_newer("invalid", "1.0.0"));
         assert_eq!(clean_version("v0.27.3\n"), Some("0.27.3".to_string()));
+    }
+
+    #[test]
+    fn support_pages_are_fixed_https_destinations() {
+        assert_eq!(support_page_url("choose").unwrap(), SUPPORT_TICKET_URL);
+        assert_eq!(support_page_url("feedback").unwrap(), SUPPORT_FEEDBACK_URL);
+        assert_eq!(support_page_url("bug").unwrap(), SUPPORT_BUG_URL);
+        assert_eq!(support_page_url("security").unwrap(), SUPPORT_SECURITY_URL);
+        assert!(support_page_url("https://attacker.example").is_err());
+        for url in [
+            SUPPORT_TICKET_URL,
+            SUPPORT_FEEDBACK_URL,
+            SUPPORT_BUG_URL,
+            SUPPORT_SECURITY_URL,
+        ] {
+            let parsed = url::Url::parse(url).unwrap();
+            assert_eq!(parsed.scheme(), "https");
+            assert_eq!(parsed.host_str(), Some("github.com"));
+        }
     }
 
     #[test]
