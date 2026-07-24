@@ -16,7 +16,7 @@ import { SessionNavigator } from './components/SessionNavigator';
 import { HomeView } from './components/HomeView';
 import { SettingsView } from './components/SettingsView';
 import { useSessions } from './store/sessions';
-import { useServers, configureNativeLocalPort, getActiveServer } from './lib/servers';
+import { useServers, configureNativeClientOnly, configureNativeLocalPort, getActiveServer } from './lib/servers';
 import { SettingsMenu } from './components/SettingsMenu';
 import { TailnetAccessInbox } from './components/TailnetAccessInbox';
 import { useIsMobile } from './hooks/useMediaQuery';
@@ -103,13 +103,20 @@ function isMessageObject(value: unknown): value is Record<string, unknown> {
 
 export function App(): JSX.Element {
   const [nativeHydrated, setNativeHydrated] = useState(!isTauri());
+  const [nativeClientOnly, setNativeClientOnly] = useState(false);
   const activeServerId = useServers((state) => state.activeId);
   const servers = useServers((state) => state.servers);
   useEffect(() => {
     if (!isTauri()) return;
     let active = true;
     void getNativeConnectionSettings()
-      .then((settings) => { if (active && settings) configureNativeLocalPort(settings.port); })
+      .then((settings) => {
+        if (!active || !settings) return;
+        const clientOnly = settings.runtime.state === 'client-only';
+        setNativeClientOnly(clientOnly);
+        if (clientOnly) configureNativeClientOnly();
+        else configureNativeLocalPort(settings.port);
+      })
       .catch(() => { /* runtime status screen will surface an actionable error */ })
       .finally(() => { if (active) setNativeHydrated(true); });
     return () => { active = false; };
@@ -118,10 +125,12 @@ export function App(): JSX.Element {
     void syncTrayServers(servers);
   }, [servers]);
   if (!nativeHydrated) return <div className="native-hydration">Connecting to the Sessions runtime…</div>;
-  return activeServerId ? <ConnectedApp /> : <ConnectScreen />;
+  return activeServerId
+    ? <ConnectedApp nativeClientOnly={nativeClientOnly} />
+    : <ConnectScreen clientOnly={nativeClientOnly} />;
 }
 
-function ConnectedApp(): JSX.Element {
+function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean }): JSX.Element {
   const rawSessions = useSessions((s) => s.sessions);
   const activeId = useSessions((s) => s.activeId);
   const setActive = useSessions((s) => s.setActive);
@@ -365,7 +374,8 @@ function ConnectedApp(): JSX.Element {
   if (isTauri() && sessionsError && !sessionsHydrated) {
     return (
       <ConnectScreen
-        localDaemonUnavailable
+        clientOnly={nativeClientOnly}
+        localDaemonUnavailable={!nativeClientOnly}
         detail={nativeRuntimeError ?? sessionsError}
         onRetry={() => void refresh()}
       />

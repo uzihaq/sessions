@@ -35,7 +35,7 @@ until they exit.
 See [`docs/NATIVE_APP.md`](docs/NATIVE_APP.md) for the package and lifetime
 contract.
 
-## Now: Android paired client
+## Now: Windows and Android paired clients
 
 Sessions 0.2.3 is public. It includes a fail-closed
 `sessions update [--check]` path for the native Mac package and scales the
@@ -115,8 +115,16 @@ minimum/maximum compatible API range before Fleet ever hard-blocks a version.
 Nearby-Wi-Fi Bonjour/mDNS discovery remains **Coming soon** and will retain the
 same candidate-then-health-verification rule.
 
-The macOS release and Mini update gates are complete. Reuse the Tauri 2 client
-and React UI for Android.
+The macOS release and Mini update gates are complete. Windows is now a parallel
+paired-client target rather than waiting behind Android. Its first release
+reuses the Tauri 2 shell and React UI, discovers verified Sessions machines
+through the signed-in Tailscale client, requests explicit approval at the host,
+and stores the resulting revocable device credential. It does not synthesize a
+localhost daemon, install the Go runtime, or host runners. Windows CI produces
+an NSIS current-user preview installer; a public Windows channel still requires
+Authenticode and updater signing.
+
+Reuse the same protocol and product surfaces for Android.
 The next Mac source also adds Settings → Help & feedback plus
 `sessions support [--diagnostics]`: fixed public feedback/bug and private
 security-report destinations, an optional locally generated diagnostic preview,

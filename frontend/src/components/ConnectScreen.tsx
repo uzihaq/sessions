@@ -1,19 +1,29 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { fetchServerHealth } from '../api/sessionsd';
-import { rememberServerEndpoint } from '../lib/hostedBootstrap';
+import { rememberNativeMachineClaim, rememberServerEndpoint } from '../lib/hostedBootstrap';
 import { formatServerEndpoint } from '../lib/serverEndpoint';
 import { useServers, type ServerConfig } from '../lib/servers';
+import { tailnetClientID } from '../lib/tailnetClient';
+import {
+  claimNativeTailnetAccess,
+  discoverNativeTailnetPeers,
+  requestNativeTailnetAccess,
+  type NativeTailnetPeer,
+  type NativeTailnetRequest
+} from '../lib/tauriBridge';
 
 const LOCAL_ENDPOINT = 'http://localhost:8787';
 const HEALTH_TIMEOUT_MS = 8_000;
 
 interface ConnectScreenProps {
+  clientOnly?: boolean;
   localDaemonUnavailable?: boolean;
   detail?: string;
   onRetry?: () => void;
 }
 
 export function ConnectScreen({
+  clientOnly = false,
   localDaemonUnavailable = false,
   detail,
   onRetry
@@ -27,13 +37,90 @@ export function ConnectScreen({
   const [endpoint, setEndpoint] = useState('');
   const [token, setToken] = useState('');
   const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [discoveredPeers, setDiscoveredPeers] = useState<NativeTailnetPeer[] | null>(null);
+  const [accessRequest, setAccessRequest] = useState<NativeTailnetRequest | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const busy = checkingId !== null;
+  const busy = checkingId !== null || discoveryBusy || accessRequest !== null;
   const remembered = useMemo(
     () => servers.filter((server) => !server.isDefault),
     [servers]
   );
+
+  const findMachines = async (): Promise<void> => {
+    if (!clientOnly || busy) return;
+    setDiscoveryBusy(true);
+    setMessage('Looking for Sessions machines on your tailnet…');
+    setError(null);
+    try {
+      const peers = await discoverNativeTailnetPeers();
+      setDiscoveredPeers(peers);
+      setMessage(peers.length > 0
+        ? `Found ${peers.length} ${peers.length === 1 ? 'machine' : 'machines'}.`
+        : 'No Sessions machines answered. Make sure Tailscale and remote access are on at the host.');
+    } catch (reason) {
+      setDiscoveredPeers([]);
+      setMessage(null);
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDiscoveryBusy(false);
+    }
+  };
+
+  const requestAccess = async (peer: NativeTailnetPeer): Promise<void> => {
+    if (!clientOnly || busy) return;
+    setDiscoveryBusy(true);
+    setError(null);
+    try {
+      const request = await requestNativeTailnetAccess(peer.endpoint, tailnetClientID(), '');
+      setAccessRequest(request);
+      setMessage(`Request sent to ${peer.hostname}. Accept it in Sessions on that machine.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setDiscoveryBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!accessRequest) return;
+    let cancelled = false;
+    let checking = false;
+    const check = async (): Promise<void> => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await claimNativeTailnetAccess(accessRequest);
+        if (cancelled || result.status === 'pending') return;
+        if (result.status === 'accepted' && result.claim) {
+          const server = await rememberNativeMachineClaim(result.claim);
+          if (!cancelled) {
+            setAccessRequest(null);
+            setMessage(`${server.name} approved this device. Connecting…`);
+          }
+          return;
+        }
+        if (!cancelled) {
+          setAccessRequest(null);
+          setMessage(null);
+          setError(result.status === 'denied'
+            ? 'The other machine denied this request.'
+            : 'The request expired. Search again when someone is at the other machine.');
+        }
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        checking = false;
+      }
+    };
+    void check();
+    const interval = window.setInterval(() => { void check(); }, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [accessRequest]);
 
   if (localDaemonUnavailable) {
     return (
@@ -74,6 +161,7 @@ export function ConnectScreen({
     try {
       await fetchServerHealth(server, controller.signal);
       setActive(server.id);
+      onRetry?.();
     } catch (probeError) {
       const detail = probeError instanceof Error && probeError.name !== 'AbortError'
         ? probeError.message
@@ -116,12 +204,51 @@ export function ConnectScreen({
     <main className="connect-screen" data-testid="connect-screen">
       <section className="connect-panel" aria-labelledby="connect-title">
         <div className="connect-brand">Sessions</div>
-        <p className="connect-kicker">your browser → your daemon</p>
-        <h1 id="connect-title">Open your sessions from here.</h1>
-        <p className="connect-lede">
-          This is the complete Sessions app. Pick a daemon and this browser talks
-          straight to it — no relay, proxy, hosted terminal data, or analytics.
+        <p className="connect-kicker">
+          {clientOnly ? 'this device → your Sessions machines' : 'native window → your daemon'}
         </p>
+        <h1 id="connect-title">
+          {clientOnly ? 'Find the computers running your sessions.' : 'Open your sessions from here.'}
+        </h1>
+        <p className="connect-lede">
+          {clientOnly
+            ? 'Sessions connects directly over your private network. The computer running each agent stays in control, and approves this device before anything opens.'
+            : 'This is the complete Sessions app. Pick a daemon and this client talks straight to it — no relay, proxy, hosted terminal data, or analytics.'}
+        </p>
+
+        {clientOnly ? (
+          <section className="connect-discovery" aria-labelledby="discovery-title">
+            <div className="connect-discovery-heading">
+              <div>
+                <span>Private machine discovery</span>
+                <h2 id="discovery-title">Find with Tailscale</h2>
+                <p>Sessions checks devices already in your tailnet and shows only verified Sessions runtimes.</p>
+              </div>
+              <button type="button" className="connect-submit connect-find" disabled={busy} onClick={() => void findMachines()}>
+                {discoveryBusy ? 'Searching…' : discoveredPeers === null ? 'Find machines' : 'Search again'}
+              </button>
+            </div>
+            {discoveredPeers !== null && discoveredPeers.length > 0 ? (
+              <div className="connect-peer-list">
+                {discoveredPeers.map((peer) => {
+                  const waiting = accessRequest?.endpoint === peer.endpoint;
+                  return (
+                    <article key={peer.endpoint} className="connect-peer">
+                      <span className="connect-peer-icon" aria-hidden>{peer.os.toLowerCase().includes('windows') ? '⊞' : peer.os.toLowerCase().includes('mac') ? '⌘' : '◇'}</span>
+                      <div>
+                        <strong>{peer.hostname}</strong>
+                        <small>{peer.endpoint.replace('https://', '')}</small>
+                      </div>
+                      <button type="button" className="btn" disabled={busy} onClick={() => void requestAccess(peer)}>
+                        {waiting ? 'Waiting for approval…' : 'Request access'}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         {remembered.length > 0 ? (
           <section className="connect-remembered" aria-labelledby="remembered-title">
@@ -155,21 +282,25 @@ export function ConnectScreen({
         ) : null}
 
         <div className="connect-actions">
-          <button
-            type="button"
-            className="connect-local-button"
-            disabled={busy}
-            onClick={() => void addAndProbe(LOCAL_ENDPOINT, { name: 'This machine' })}
-          >
-            <span className="connect-local-icon" aria-hidden>⌁</span>
-            <span>
-              <strong>Connect on this device</strong>
-              <small>{LOCAL_ENDPOINT}</small>
-            </span>
-            <span aria-hidden>→</span>
-          </button>
+          {!clientOnly ? (
+            <button
+              type="button"
+              className="connect-local-button"
+              disabled={busy}
+              onClick={() => void addAndProbe(LOCAL_ENDPOINT, { name: 'This machine' })}
+            >
+              <span className="connect-local-icon" aria-hidden>⌁</span>
+              <span>
+                <strong>Connect on this device</strong>
+                <small>{LOCAL_ENDPOINT}</small>
+              </span>
+              <span aria-hidden>→</span>
+            </button>
+          ) : null}
 
-          <div className="connect-divider"><span>or add a server</span></div>
+          <div className="connect-divider">
+            <span>{clientOnly ? 'or enter connection details' : 'or add a server'}</span>
+          </div>
 
           <form className="connect-form" onSubmit={submit}>
             <label>
@@ -211,8 +342,8 @@ export function ConnectScreen({
         </div>
 
         {message ? <p className="connect-status" role="status">{message}</p> : null}
-        {error || pairingError ? (
-          <p className="connect-error" role="alert">{error ?? pairingError}</p>
+        {error || pairingError || detail ? (
+          <p className="connect-error" role="alert">{error ?? pairingError ?? detail}</p>
         ) : null}
 
         <section className="connect-setup" aria-labelledby="setup-title">
@@ -227,14 +358,18 @@ export function ConnectScreen({
               <code>sessions remote enable</code>
             </li>
             <li>
-              <span>Scan the printed QR code, or paste its endpoint and token above.</span>
+              <span>
+                {clientOnly
+                  ? 'Click Find machines here, then accept the request in Sessions on the Mac.'
+                  : 'Scan the printed QR code, or paste its endpoint and token above.'}
+              </span>
             </li>
           </ol>
         </section>
 
         <p className="connect-privacy">
-          Endpoint and token stay in this browser’s local storage. URL-fragment
-          connect links are scrubbed before the app starts.
+          Endpoint and revocable device token stay in this app&apos;s local storage.
+          URL-fragment connect links are scrubbed before the app starts.
         </p>
       </section>
     </main>

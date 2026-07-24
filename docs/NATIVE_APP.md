@@ -4,6 +4,10 @@ Sessions.app is the primary product package. It distributes and manages the
 local runtime without collapsing the process lifetimes that make sessions
 durable.
 
+On macOS it is both client and local-runtime manager. Windows, Android, and iOS
+begin as paired native clients: they connect directly to a Mac-hosted daemon
+and never pretend a local daemon exists.
+
 ## Lifetime boundary
 
 ```text
@@ -161,13 +165,30 @@ The shared React client now has native-oriented product surfaces:
 Neither surface changes ownership: Tauri remains a client/management plane,
 sessionsd remains launchd-owned, and every active session remains runner-owned.
 
+## Windows paired client
+
+The Windows v1 package uses the same Tauri 2 application and shared React
+client, with an automatically merged `src-tauri/tauri.windows.conf.json`.
+Windows does not bundle or install `sessionsd` or `sessions-runner`. First
+launch removes the synthetic Mac loopback entry and presents `Find machines`;
+native code reads the signed-in Tailscale peer list, verifies each candidate's
+Sessions health endpoint, sends the normal named access request, and waits for
+explicit approval on the host. Manual endpoint/token entry remains a fallback.
+
+GitHub Actions builds an NSIS current-user installer on Windows itself. That
+artifact is an explicitly unsigned preview until the public release process has
+a Windows code-signing identity and Tauri updater signing secret. A Windows
+preview may trigger SmartScreen and is not represented as a public stable
+release.
+
 ## Release sequence
 
 1. Build and rehearse from source on the MacBook with isolated scratch state.
 2. Ship the signed, notarized macOS app through its real update channel.
 3. Complete the production Mini handoff through the same public signed channel,
    preserving every runner process.
-4. Build the Android paired client.
+4. Build Windows and Android paired clients against the same direct pairing and
+   compatibility contracts.
 
 The first three steps are complete through public 0.2.3. The Mini's app,
 managed CLI, and daemon updated while all nine exact session IDs and runner

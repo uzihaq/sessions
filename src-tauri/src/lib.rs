@@ -602,10 +602,27 @@ fn open_support_page(kind: String) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
-        let _ = url;
-        Err("support links are not wired for this platform yet".to_string())
+        let status = Command::new("rundll32.exe")
+            .args(["url.dll,FileProtocolHandler", url])
+            .status()
+            .map_err(|error| format!("open support page: {error}"))?;
+        if !status.success() {
+            return Err(format!("open support page failed with {status}"));
+        }
+        Ok(())
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        let status = Command::new("xdg-open")
+            .arg(url)
+            .status()
+            .map_err(|error| format!("open support page: {error}"))?;
+        if !status.success() {
+            return Err(format!("open support page failed with {status}"));
+        }
+        Ok(())
     }
 }
 
@@ -671,6 +688,13 @@ fn find_executable(name: &str) -> Option<PathBuf> {
             if candidate.is_file() {
                 return Some(candidate);
             }
+            #[cfg(target_os = "windows")]
+            {
+                let candidate = directory.join(format!("{name}.exe"));
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
         }
     }
     let home = env::var_os("HOME").map(PathBuf::from);
@@ -686,8 +710,24 @@ fn find_executable(name: &str) -> Option<PathBuf> {
 
 fn tailscale_executable() -> Option<PathBuf> {
     find_executable("tailscale").or_else(|| {
+        #[cfg(target_os = "macos")]
+        {
         let app_binary = PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale");
-        app_binary.is_file().then_some(app_binary)
+            return app_binary.is_file().then_some(app_binary);
+        }
+        #[cfg(target_os = "windows")]
+        {
+            return ["ProgramFiles", "LOCALAPPDATA"]
+                .into_iter()
+                .filter_map(env::var_os)
+                .map(PathBuf::from)
+                .map(|directory| directory.join("Tailscale").join("tailscale.exe"))
+                .find(|candidate| candidate.is_file());
+        }
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            None
+        }
     })
 }
 
@@ -877,6 +917,16 @@ fn response_error(body: &[u8], fallback: String) -> String {
 }
 
 fn local_device_name() -> String {
+    #[cfg(target_os = "windows")]
+    if let Some(name) = env::var_os("COMPUTERNAME") {
+        let value = name.to_string_lossy().trim().to_string();
+        if !value.is_empty()
+            && value.chars().count() <= 80
+            && !value.chars().any(char::is_control)
+        {
+            return value;
+        }
+    }
     let candidates = [
         ("/usr/sbin/scutil", &["--get", "ComputerName"][..]),
         ("/bin/hostname", &[][..]),
@@ -1558,6 +1608,7 @@ pub fn run() {
                     lifecycle::default_port()
                 });
             let runtime_status = lifecycle::install_for_app(app.handle());
+            let owns_local_runtime = runtime_status.state != "client-only";
             if runtime_status.state == "error" {
                 log::error!("Sessions background service: {}", runtime_status.detail);
             }
@@ -1584,7 +1635,9 @@ pub fn run() {
                 tray = tray.icon(icon);
             }
             tray.build(app.handle())?;
-            start_tray_poll(app.handle().clone());
+            if owns_local_runtime {
+                start_tray_poll(app.handle().clone());
+            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

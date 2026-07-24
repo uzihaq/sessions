@@ -84,7 +84,7 @@ impl RuntimeStatus {
 }
 
 pub fn install_for_app(app: &AppHandle) -> RuntimeStatus {
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) && cfg!(target_os = "macos") {
         return RuntimeStatus::informational(
             "development",
             "debug builds use the separately managed development daemon",

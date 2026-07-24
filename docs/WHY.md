@@ -225,3 +225,23 @@ the bright, primary card; an unreachable machine fades as a whole card; and
 the Somewhere VM is muted because it is an unprovisioned placeholder, not an
 offline machine the user can repair. Readable operational text uses normal
 foreground contrast instead of making every secondary fact look disabled.
+
+# 2026-07-23 — Ship Windows first as a paired native client
+
+Windows does not need to host agents to be immediately useful. Its first
+release is the same native operations inbox pointed at Mac-hosted Sessions
+machines: discover verified candidates through the user's existing Tailscale
+client, request access, require approval on the host, and store only the normal
+revocable device credential. Manual endpoint entry remains an escape hatch.
+
+The shared frontend must not create `localhost:8787` on a client-only platform.
+Only macOS owns the launchd lifecycle and bundled Go runtime for now; Windows,
+Android, and iOS begin as clients. This keeps the runner boundary small without
+turning the deprecated browser into the remote-control product.
+
+Windows installers are built on a real Windows CI runner because packaging and
+WebView behavior should be exercised on the target OS. CI may provide an
+unsigned, short-retention NSIS preview for private testing, but a public
+download requires Authenticode plus the existing signed-updater discipline.
+SmartScreen reputation is a distribution concern to solve, not a warning to
+teach users to ignore.

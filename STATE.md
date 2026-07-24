@@ -90,8 +90,11 @@ macOS shipped first, then the Mini completed its joint Node-to-Go cutover
 (interop-proven by `TestNodeRunnerUnderGoDaemonCutover` and the preserved live
 runner baseline). Android is next.
 
-## NEXT: build the Android paired client
-**Immediate:** build the Android app
+## NOW: build Windows and Android paired clients
+**Immediate:** Windows is now in source as a client-only Tauri target with a
+native `Find machines` first-run flow and a Windows-hosted NSIS preview build.
+It connects directly to approved Mac daemons over Tailscale/LAN and does not
+host a daemon or runner. Android remains active next work
 (Tauri2 paired client + FCM; push machinery ready). Later:
 semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
@@ -217,6 +220,17 @@ mediated by the native client; source history remains preserved. Full contract: 
   Nearby-Wi-Fi Bonjour discovery is visible as **Coming soon** until the
   service advertisement, verification, and macOS Local Network permission
   behavior are implemented deliberately.
+- **SOURCE-ONLY AFTER 0.2.3:** Windows is a first-class client-only native
+  target. Platform configuration skips the macOS Go-runtime bundler, produces
+  an NSIS current-user installer, and leaves updater artifacts disabled for the
+  unsigned preview channel. The first-run screen removes the synthetic
+  localhost entry, discovers verified Sessions machines through the local
+  Tailscale client, requests host approval, and persists the normal revocable
+  device credential. Windows-aware Tailscale lookup and support links are
+  implemented; public release still requires Windows code signing and a
+  signed-updater channel (`src-tauri/tauri.windows.conf.json`,
+  `.github/workflows/windows-preview.yml`,
+  `frontend/src/components/ConnectScreen.tsx`).
 - The native React shell is now organized as an **agent operations inbox** (`frontend/src/components/ProductSidebar.tsx`,
   `SessionNavigator.tsx`, `HomeView.tsx`, `SessionDetails.tsx`, `SettingsView.tsx`). The Sessions navigator consumes
   daemon ledger provenance rather than inferring parentage, supports five local manager pins, nests real children,

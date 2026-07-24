@@ -1,0 +1,71 @@
+name: Windows preview
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  build:
+    name: Build Windows paired client
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable, 2026-07-21
+        with:
+          toolchain: stable
+
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+
+      - name: Verify shared client
+        run: |
+          npm --prefix frontend run typecheck
+          npm --prefix frontend run build
+          npm --prefix frontend run test:markdown
+          npm --prefix frontend run test:structured-events
+          npm --prefix frontend run test:structured-view
+          npm --prefix frontend run test:window-scope
+
+      - name: Verify native shell
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build unsigned Windows preview
+        run: npm run tauri:build -- --bundles nsis
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: Sessions-Windows-preview
+          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+          retention-days: 14

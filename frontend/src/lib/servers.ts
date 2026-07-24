@@ -281,6 +281,24 @@ export function configureNativeLocalPort(port: number): void {
   useServers.setState({ servers, activeId });
 }
 
+// Windows, Android, iOS, and other client-only native builds do not own a
+// loopback sessionsd. The shared bundle initially synthesizes the Mac's local
+// entry before native lifecycle state is available, so remove only that
+// synthetic/default loopback entry once the shell reports client-only mode.
+// Remembered remote machines and their credentials are left untouched.
+export function configureNativeClientOnly(): void {
+  const store = useServers.getState();
+  const servers = store.servers.filter((server) =>
+    !(server.isDefault && server.id === 'local' && isLocalServer(server))
+  );
+  const activeId = servers.some((server) => server.id === store.activeId)
+    ? store.activeId
+    : servers[0]?.id ?? null;
+  writeServers(servers);
+  writeActiveId(activeId);
+  useServers.setState({ servers, activeId });
+}
+
 function currentOriginServer(): ServerConfig {
   const scheme = window.location.protocol === 'https:' ? 'https' : 'http';
   const port = window.location.port
