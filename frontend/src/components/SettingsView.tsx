@@ -25,6 +25,7 @@ import {
   type SupportPreview
 } from '../lib/tauriBridge';
 import { copyText } from '../lib/copyText';
+import { sizeLabel, type TextSize } from '../lib/textSize';
 import { ConnectionsView } from './ConnectionsView';
 import type { ThemeMode } from './ProductSidebar';
 import { SomewhereCard } from './SomewhereCard';
@@ -35,9 +36,11 @@ type Section = 'general' | 'agents' | 'accounts' | 'network' | 'cloud' | 'notifi
 interface Props {
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
+  textSize: TextSize;
+  onTextSizeChange: (size: TextSize) => void;
 }
 
-export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
+export function SettingsView({ theme, onThemeChange, textSize, onTextSizeChange }: Props): JSX.Element {
   const activeServerId = useServers((state) => state.activeId);
   const activeServerIsLocal = useServers((state) =>
     state.servers.find((server) => server.id === state.activeId)?.isDefault === true
@@ -252,7 +255,12 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
       </aside>
       <main className="settings-panel">
         {section === 'general' ? (
-          <GeneralSettings theme={theme} onThemeChange={onThemeChange} />
+          <GeneralSettings
+            theme={theme}
+            onThemeChange={onThemeChange}
+            textSize={textSize}
+            onTextSizeChange={onTextSizeChange}
+          />
         ) : section === 'agents' ? (
           <AgentSettings
             native={native}
@@ -304,17 +312,46 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
   );
 }
 
-function GeneralSettings({ theme, onThemeChange }: Props): JSX.Element {
+function GeneralSettings({ theme, onThemeChange, textSize, onTextSizeChange }: Props): JSX.Element {
   return (
     <section className="settings-page">
       <span className="settings-kicker">Sessions app</span>
       <h1>General</h1>
       <p>Choose how the operations inbox looks and behaves on this Mac.</p>
       <div className="settings-card">
+        <h2>View</h2>
+        <p>Scale the complete interface, including navigation, conversations, settings, and controls.</p>
+        <div className="view-size-choice" role="radiogroup" aria-label="Interface size">
+          {(['S', 'M', 'L'] as const).map((size) => (
+            <button
+              type="button"
+              role="radio"
+              aria-checked={textSize === size}
+              className={textSize === size ? 'is-active' : ''}
+              key={size}
+              onClick={() => onTextSizeChange(size)}
+            >
+              <span className={`view-size-glyph is-${size.toLowerCase()}`} aria-hidden>Aa</span>
+              <span>{sizeLabel(size)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="settings-card">
         <h2>Appearance</h2>
-        <div className="theme-choice">
-          <button type="button" className={theme === 'light' ? 'is-active' : ''} onClick={() => onThemeChange('light')}><span className="theme-preview is-light" />Light</button>
-          <button type="button" className={theme === 'dark' ? 'is-active' : ''} onClick={() => onThemeChange('dark')}><span className="theme-preview is-dark" />Dark</button>
+        <div className="theme-switch-row">
+          <button type="button" className={theme === 'light' ? 'is-active' : ''} onClick={() => onThemeChange('light')}>Light</button>
+          <button
+            type="button"
+            className="theme-switch"
+            role="switch"
+            aria-label="Use dark appearance"
+            aria-checked={theme === 'dark'}
+            onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+          >
+            <span />
+          </button>
+          <button type="button" className={theme === 'dark' ? 'is-active' : ''} onClick={() => onThemeChange('dark')}>Dark</button>
         </div>
       </div>
       <div className="settings-card">

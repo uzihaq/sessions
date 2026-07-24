@@ -12,7 +12,7 @@ import {
   type RecapProvider,
   type RecapSettings
 } from '../api/sessionsd';
-import { type TextSize, nextSize, sizeLabel, writeTextSize } from '../lib/textSize';
+import { type TextSize, nextSize, sizeLabel } from '../lib/textSize';
 import { useServers } from '../lib/servers';
 import {
   NEW_SESSION_DIMENSIONS,
@@ -164,7 +164,6 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
 
   const cycleSize = (): void => {
     const next = nextSize(textSize);
-    writeTextSize(next);
     onTextSizeChange(next);
   };
 
@@ -383,10 +382,10 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
             type="button"
             className="settings-menu-row settings-menu-clickable"
             onClick={cycleSize}
-            title="Cycle text size: Small → Medium → Large"
+            title="Cycle interface size: Compact → Comfortable → Large"
           >
             <span className="settings-menu-icon">Aa</span>
-            <span className="settings-menu-label">Text size</span>
+            <span className="settings-menu-label">View size</span>
             <span className="settings-menu-value">{sizeLabel(textSize)}</span>
           </button>
           <div className="settings-menu-divider" />

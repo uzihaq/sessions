@@ -26,7 +26,7 @@ import { formatServerEndpoint } from './lib/serverEndpoint';
 import { readTabOrder, writeTabOrder, applyOrder, moveBefore } from './lib/tabOrder';
 import { useTabLabel } from './lib/tabLabels';
 import { getNativeConnectionSettings, getNativeRuntimeStatus, isTauri, notify, syncTrayServers } from './lib/tauriBridge';
-import { readTextSize } from './lib/textSize';
+import { readTextSize, writeTextSize, type TextSize } from './lib/textSize';
 import { preloadUsage } from './lib/usageCache';
 import { preloadDaily } from './lib/dailyCache';
 import type { SessionTool } from './types';
@@ -225,6 +225,10 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
 
   const isMobile = useIsMobile();
   const [textSize, setTextSize] = useState(readTextSize());
+  const changeTextSize = useCallback((size: TextSize): void => {
+    writeTextSize(size);
+    setTextSize(size);
+  }, []);
   // Grid is too cramped for a compact viewport. Fleet, search, and usage are
   // useful on phones and narrow Mac windows, so the mobile nav keeps them.
   const [layoutMode, setLayoutMode] = useState<LayoutMode>(readStoredLayout);
@@ -440,7 +444,7 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
               />
               {!isMobile ? <div className="session-layout-switch"><button type="button" className={effectiveLayout === 'tabs' ? 'is-active' : ''} onClick={() => setLayoutMode('tabs')}>Tabs</button><button type="button" className={effectiveLayout === 'grid' ? 'is-active' : ''} onClick={() => setLayoutMode('grid')}>Grid</button></div> : null}
               <ConnectionStatus status={effectiveLayout === 'tabs' && activeId ? fromTerminalStatus(activeStatus.terminalStatus) : null} />
-              <SettingsMenu textSize={textSize} onTextSizeChange={setTextSize} onNewSession={() => setDialogOpen('new')} onOpenConnections={() => setLayoutMode('settings')} />
+              <SettingsMenu textSize={textSize} onTextSizeChange={changeTextSize} onNewSession={() => setDialogOpen('new')} onOpenConnections={() => setLayoutMode('settings')} />
             </header>
           ) : null}
 
@@ -461,7 +465,7 @@ function ConnectedApp({ nativeClientOnly = false }: { nativeClientOnly?: boolean
         ) : effectiveLayout === 'usage' ? (
           <UsageDashboard />
         ) : effectiveLayout === 'settings' || effectiveLayout === 'connections' ? (
-          <SettingsView theme={theme} onThemeChange={setTheme} />
+          <SettingsView theme={theme} onThemeChange={setTheme} textSize={textSize} onTextSizeChange={changeTextSize} />
         ) : effectiveLayout === 'grid' ? (
           liveSessions.length > 0 ? (
             <GridView

@@ -2998,9 +2998,26 @@ button:active:not(:disabled),
 .operations-shell {
   --product-rail-w: 174px;
   --session-nav-w: 344px;
+  --interface-scale: 1.1;
+  --interface-scale-inverse: .909091;
   flex-direction: row;
+  width: calc(100vw * var(--interface-scale-inverse));
+  height: calc(100dvh * var(--interface-scale-inverse));
+  zoom: var(--interface-scale);
   background: var(--bg-base);
   color: var(--fg);
+}
+.operations-shell.text-size-s {
+  --interface-scale: 1;
+  --interface-scale-inverse: 1;
+}
+.operations-shell.text-size-m {
+  --interface-scale: 1.1;
+  --interface-scale-inverse: .909091;
+}
+.operations-shell.text-size-l {
+  --interface-scale: 1.2;
+  --interface-scale-inverse: .833334;
 }
 .operations-shell[data-theme="light"] {
   --bg-base: #f7f8fa;
@@ -3449,11 +3466,52 @@ button:active:not(:disabled),
 .settings-card h2,
 .settings-coming-card h2 { margin: 0 0 14px; font-size: 14px; }
 .settings-card > p { color: var(--fg-dim); font-size: 12px; line-height: 1.55; }
-.theme-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.theme-choice button { display: grid; grid-template-columns: 70px 1fr; align-items: center; gap: 12px; min-height: 70px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-base); color: var(--fg-dim); text-align: left; cursor: pointer; }
-.theme-choice button.is-active { border-color: var(--accent); color: var(--accent); }
-.theme-preview { display: block; height: 50px; border: 1px solid #dfe3e8; border-radius: 6px; background: #f7f8fa; box-shadow: inset 14px 0 #fff; }
-.theme-preview.is-dark { border-color: #2a2a2a; background: #0a0a0a; box-shadow: inset 14px 0 #171717; }
+.view-size-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.view-size-choice button {
+  display: flex;
+  min-height: 58px;
+  padding: 9px 10px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-base);
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+.view-size-choice button:hover { border-color: var(--border-strong); color: var(--fg); }
+.view-size-choice button.is-active { border-color: var(--accent); background: var(--accent-bg-soft); color: var(--accent); }
+.view-size-glyph { display: grid; width: 31px; height: 31px; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-elev-2); color: var(--fg); font-weight: 700; }
+.view-size-glyph.is-s { font-size: 10px; }
+.view-size-glyph.is-m { font-size: 13px; }
+.view-size-glyph.is-l { font-size: 16px; }
+.theme-switch-row { display: flex; min-height: 54px; align-items: center; justify-content: center; gap: 14px; }
+.theme-switch-row > button:not(.theme-switch) { min-width: 54px; padding: 8px; border: 0; background: transparent; color: var(--fg-faint); font-size: 13px; cursor: pointer; }
+.theme-switch-row > button:not(.theme-switch).is-active { color: var(--fg); font-weight: 700; }
+.theme-switch {
+  position: relative;
+  width: 54px;
+  height: 29px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--bg-elev-3);
+  cursor: pointer;
+}
+.theme-switch span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  background: var(--fg);
+  box-shadow: var(--shadow-1);
+  transition: transform 140ms ease;
+}
+.theme-switch[aria-checked="true"] { border-color: var(--accent-border-soft); background: var(--accent-bg-medium); }
+.theme-switch[aria-checked="true"] span { transform: translateX(25px); background: var(--accent); }
 .settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 60px; border-top: 1px solid var(--border); }
 .settings-toggle:first-of-type { border-top: 0; }
 .settings-toggle > span { display: flex; flex-direction: column; gap: 3px; }
@@ -3643,7 +3701,7 @@ button:active:not(:disabled),
   .settings-sections { display: grid; grid-template-columns: repeat(2, 1fr); }
   .settings-sections header { grid-column: 1 / -1; }
   .settings-page { width: calc(100% - 28px); padding: 28px 0; }
-  .theme-choice { grid-template-columns: 1fr; }
+  .view-size-choice { grid-template-columns: 1fr; }
   .recent-workspaces { grid-template-columns: 1fr; }
 }
 /* Hidden keystroke capture — focusable, off-screen-ish so it doesn't
@@ -5087,11 +5145,10 @@ details[open] > summary > .sessions-command-disclosure {
 .sessions-file-verb { background: var(--accent-stripe); }
 .sessions-file-verb.is-write { background: rgba(34, 197, 94, 0.85); }
 
-/* ── Text size ──
- * Three-step scale on .app-shell: text-size-s / -m (default) / -l. The
- * picker in SettingsMenu cycles through them. Today's largest is what
- * yesterday's default was; the user explicitly said the previous
- * default was too big even for the biggest setting. */
+/* ── Interface size ──
+ * The operations shell above scales as one surface. These rules keep
+ * conversation copy proportionate inside Compact / Comfortable / Large
+ * instead of leaving the primary reading surface visually unchanged. */
 .text-size-s .sessions-message,
 .text-size-s .sessions-message-body,
 .text-size-s .md-content { font-size: 13px; line-height: 1.55; }

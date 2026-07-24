@@ -1,8 +1,7 @@
-// Three-step text size for the Sessions + Reflowed views. Stored in
-// localStorage; each step maps to a class on .app-shell. CSS rules
-// in globals.css read those classes to set body / heading / code
-// sizes. Default is "M" — the user explicitly said today's mobile
-// default (16px) was too big even for the largest setting.
+// Three-step interface size. Stored locally per device; each step maps
+// to a class on .app-shell. The operations UI scales as one surface so
+// navigation, settings, conversations, and controls keep their visual
+// proportions instead of changing only transcript copy.
 
 export type TextSize = 'S' | 'M' | 'L';
 
@@ -27,5 +26,5 @@ export function nextSize(s: TextSize): TextSize {
 }
 
 export function sizeLabel(s: TextSize): string {
-  return s === 'S' ? 'Small' : s === 'M' ? 'Medium' : 'Large';
+  return s === 'S' ? 'Compact' : s === 'M' ? 'Comfortable' : 'Large';
 }
