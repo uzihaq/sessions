@@ -105,6 +105,11 @@ func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	current, ok := manager.Get(info.ID)
+	if !ok {
+		t.Fatal("created session missing")
+	}
+	current.SetIdleResult(state.IdleReasonNeedsInput, "Approve the filesystem request?", "Implementation is ready for review.", time.Now().UnixMilli())
 	server := httptest.NewServer(daemonapi.New(config, manager, manager.Push()))
 	defer server.Close()
 
@@ -124,7 +129,11 @@ func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 		t.Fatalf("decode status: %v\n%s", err, stdout.String())
 	}
 	t.Logf("status_json=%s", strings.TrimSpace(stdout.String()))
-	wantKeys := []string{"age_ms", "created_at", "cwd", "description", "description_source", "git", "id", "kind", "last_activity_at", "last_verdict", "name", "state", "tool"}
+	wantKeys := []string{
+		"age_ms", "created_at", "cwd", "description", "description_source", "git", "id",
+		"idle_detail", "idle_reason", "idle_since_ms", "kind", "last_activity_at", "last_summary",
+		"last_verdict", "name", "runner_protocol", "state", "tool",
+	}
 	gotKeys := make([]string, 0, len(output))
 	for key := range output {
 		gotKeys = append(gotKeys, key)
@@ -133,8 +142,11 @@ func TestStatusJSONFieldTableAgainstRealScratchSession(t *testing.T) {
 	if !reflect.DeepEqual(gotKeys, wantKeys) {
 		t.Fatalf("status keys = %v, want %v\n%s", gotKeys, wantKeys, stdout.String())
 	}
-	if output["id"] != info.ID || output["name"] != "status scratch" || output["kind"] != "session" || output["state"] != "idle" || output["cwd"] != repo {
+	if output["id"] != info.ID || output["name"] != "status scratch" || output["kind"] != "session" || output["state"] != "needs-you" || output["cwd"] != repo {
 		t.Fatalf("status identity/state = %#v", output)
+	}
+	if output["idle_reason"] != state.IdleReasonNeedsInput || output["idle_detail"] != "Approve the filesystem request?" || output["last_summary"] != "Implementation is ready for review." {
+		t.Fatalf("status idle summary = %#v", output)
 	}
 	if output["description"] != "Prove the status description contract" || output["description_source"] != "explicit" {
 		t.Fatalf("status description = %#v", output)

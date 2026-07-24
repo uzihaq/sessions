@@ -112,7 +112,7 @@ func (a *app) cmdRun(args []string) error {
 		if err != nil {
 			return err
 		}
-		return a.writeLaneWaitCompletion(completedID, manifest, output)
+		return a.writeLaneWaitCompletion(completedID, manifest, output, false)
 	}
 	_, err = a.stdout.Write([]byte(id + "\n"))
 	return err

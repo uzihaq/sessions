@@ -28,6 +28,7 @@ const SUPPORT_BUG_URL: &str =
     "https://github.com/Somewhere-Tech/sessions/issues/new?template=bug_report.yml";
 const SUPPORT_SECURITY_URL: &str =
     "https://github.com/Somewhere-Tech/sessions/security/advisories/new";
+const API_PROTOCOL_VERSION: u16 = 1;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +51,7 @@ struct TraySession {
     working: bool,
     exited: bool,
     exit_code: Option<i32>,
+    idle_reason: Option<String>,
     last_user_message_at: Option<i64>,
 }
 
@@ -171,6 +173,28 @@ struct PairingClaimResponse {
 struct SessionsHealthResponse {
     ok: bool,
     name: String,
+    compatibility: Option<SessionsCompatibility>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionsCompatibility {
+    api: SessionsApiCompatibility,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionsApiCompatibility {
+    minimum_client: u16,
+    maximum_client: u16,
+}
+
+impl SessionsHealthResponse {
+    fn accepts_this_client(&self) -> bool {
+        self.compatibility.as_ref().map_or(true, |compatibility| {
+            API_PROTOCOL_VERSION >= compatibility.api.minimum_client
+                && API_PROTOCOL_VERSION <= compatibility.api.maximum_client
+        })
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -712,7 +736,7 @@ fn tailscale_executable() -> Option<PathBuf> {
     find_executable("tailscale").or_else(|| {
         #[cfg(target_os = "macos")]
         {
-        let app_binary = PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale");
+            let app_binary = PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale");
             return app_binary.is_file().then_some(app_binary);
         }
         #[cfg(target_os = "windows")]
@@ -892,7 +916,8 @@ fn discover_tailnet_peers() -> Result<Vec<NativeTailnetPeer>, String> {
                     return None;
                 }
                 let health = response.json::<SessionsHealthResponse>().ok()?;
-                (health.ok && health.name == "sessionsd").then_some(candidate)
+                (health.ok && health.name == "sessionsd" && health.accepts_this_client())
+                    .then_some(candidate)
             })
         })
         .collect();
@@ -920,9 +945,7 @@ fn local_device_name() -> String {
     #[cfg(target_os = "windows")]
     if let Some(name) = env::var_os("COMPUTERNAME") {
         let value = name.to_string_lossy().trim().to_string();
-        if !value.is_empty()
-            && value.chars().count() <= 80
-            && !value.chars().any(char::is_control)
+        if !value.is_empty() && value.chars().count() <= 80 && !value.chars().any(char::is_control)
         {
             return value;
         }
@@ -1378,7 +1401,11 @@ fn tray_snapshot(response: SessionsResponse) -> TraySnapshot {
             snapshot.attention += 1;
         } else if session.working {
             snapshot.working += 1;
-        } else if session.last_user_message_at.is_some() {
+        } else if matches!(
+            session.idle_reason.as_deref(),
+            Some("needs-input" | "failed")
+        ) || (session.idle_reason.is_none() && session.last_user_message_at.is_some())
+        {
             snapshot.attention += 1;
         } else {
             snapshot.idle += 1;
@@ -1733,24 +1760,28 @@ mod tests {
                     working: true,
                     exited: false,
                     exit_code: None,
+                    idle_reason: None,
                     last_user_message_at: Some(1),
                 },
                 TraySession {
                     working: false,
                     exited: false,
                     exit_code: None,
+                    idle_reason: Some("completed".to_string()),
                     last_user_message_at: None,
                 },
                 TraySession {
                     working: false,
                     exited: false,
                     exit_code: None,
+                    idle_reason: Some("needs-input".to_string()),
                     last_user_message_at: Some(1),
                 },
                 TraySession {
                     working: false,
                     exited: true,
                     exit_code: Some(1),
+                    idle_reason: Some("failed".to_string()),
                     last_user_message_at: None,
                 },
             ],
@@ -1853,6 +1884,27 @@ mod tests {
                 parse_tailnet_endpoint(invalid).is_err(),
                 "unsafe tailnet endpoint was accepted: {invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn health_compatibility_accepts_legacy_and_current_but_rejects_explicit_skew() {
+        let legacy: SessionsHealthResponse =
+            serde_json::from_str(r#"{"ok":true,"name":"sessionsd"}"#).unwrap();
+        assert!(legacy.accepts_this_client());
+
+        let current: SessionsHealthResponse = serde_json::from_str(
+            r#"{"ok":true,"name":"sessionsd","compatibility":{"api":{"minimumClient":1,"maximumClient":1}}}"#,
+        )
+        .unwrap();
+        assert!(current.accepts_this_client());
+
+        for incompatible in [
+            r#"{"ok":true,"name":"sessionsd","compatibility":{"api":{"minimumClient":2,"maximumClient":3}}}"#,
+            r#"{"ok":true,"name":"sessionsd","compatibility":{"api":{"minimumClient":0,"maximumClient":0}}}"#,
+        ] {
+            let health: SessionsHealthResponse = serde_json::from_str(incompatible).unwrap();
+            assert!(!health.accepts_this_client());
         }
     }
 

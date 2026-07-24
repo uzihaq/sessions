@@ -48,6 +48,22 @@ func TestRejectsInvalidLengths(t *testing.T) {
 	}
 }
 
+func TestRunnerProtocolCompatibilityRangeKeepsLegacyWithoutAcceptingFutureFrames(t *testing.T) {
+	for _, version := range []int{MinimumCompatibleVersion, ProtocolVersion} {
+		if !IsCompatibleVersion(version) {
+			t.Fatalf("version %d should be compatible", version)
+		}
+	}
+	for _, version := range []int{-1, MaximumCompatibleVersion + 1} {
+		if IsCompatibleVersion(version) {
+			t.Fatalf("version %d should be incompatible", version)
+		}
+		if err := IncompatibleVersionError(version); err == nil {
+			t.Fatalf("version %d produced no instructional error", version)
+		}
+	}
+}
+
 type oneByteReader struct {
 	data []byte
 }

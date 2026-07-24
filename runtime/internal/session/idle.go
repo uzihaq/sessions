@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/somewhere-tech/sessions/runtime/internal/claudep"
+	"github.com/somewhere-tech/sessions/runtime/internal/codexapp"
 	"github.com/somewhere-tech/sessions/runtime/internal/ledger"
 	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
@@ -75,27 +77,114 @@ func (m *Manager) writeIdleSentinel(info state.SessionInfo) {
 	}
 }
 
-func (m *Manager) handleIdle(session *state.Session, duration time.Duration) {
-	info := session.Info()
-	if info.Exited {
-		return
-	}
-	m.observe(context.Background(), "idle", func(writer ledger.ObservationWriter) error {
-		return writer.RecordIdle(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
-	})
+func inspectIdle(session *state.Session) (IdleClassification, string) {
 	snapshot, _, err := session.Snapshot(context.Background(), 0)
 	if err != nil {
 		snapshot = ""
 	}
-	classification := ClassifySnapshot(snapshot)
-	summary := FinalAssistantSummary(session.ClaudeEventLog())
+	events := session.ClaudeEventLog()
+	classification, authoritative := structuredIdleClassification(session.Info().Kind, events)
+	if !authoritative {
+		classification = ClassifySnapshot(snapshot)
+	}
+	summary := FinalAssistantSummary(events)
 	if summary == "" {
 		summary = mirrorTailSummary(snapshot)
 	}
+	return classification, summary
+}
+
+func structuredIdleClassification(kind string, events []json.RawMessage) (IdleClassification, bool) {
+	for index := len(events) - 1; index >= 0; index-- {
+		var event struct {
+			Source  string `json:"source"`
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Status  string `json:"status"`
+			IsError bool   `json:"is_error"`
+			Result  string `json:"result"`
+			Error   any    `json:"error"`
+		}
+		if json.Unmarshal(events[index], &event) != nil {
+			continue
+		}
+		switch kind {
+		case state.KindCodexAppServer:
+			if event.Source != codexapp.HistorySource || event.Subtype != "turn_completed" {
+				continue
+			}
+			if strings.EqualFold(event.Status, "completed") {
+				return IdleClassification{Outcome: IdleDone}, true
+			}
+			return IdleClassification{
+				Outcome: IdleError,
+				Line:    structuredFailureDetail(event.Status, event.Error, ""),
+			}, true
+		case state.KindClaudeStructured:
+			if event.Source != claudep.HistorySource || event.Type != "result" {
+				continue
+			}
+			if !event.IsError && strings.EqualFold(event.Subtype, "success") {
+				return IdleClassification{Outcome: IdleDone}, true
+			}
+			return IdleClassification{
+				Outcome: IdleError,
+				Line:    structuredFailureDetail(event.Subtype, event.Error, event.Result),
+			}, true
+		}
+	}
+	return IdleClassification{}, false
+}
+
+func structuredFailureDetail(status string, raw any, result string) string {
+	if object, ok := raw.(map[string]any); ok {
+		if message, ok := object["message"].(string); ok {
+			if detail := conciseText(message, 180); detail != "" {
+				return detail
+			}
+		}
+	}
+	if message, ok := raw.(string); ok {
+		if detail := conciseText(message, 180); detail != "" {
+			return detail
+		}
+	}
+	if detail := conciseText(result, 180); detail != "" {
+		return detail
+	}
+	if detail := conciseText(status, 180); detail != "" {
+		return detail
+	}
+	return "provider turn failed"
+}
+
+func idleReason(outcome IdleOutcome) string {
+	switch outcome {
+	case IdleBlocked:
+		return state.IdleReasonNeedsInput
+	case IdleError:
+		return state.IdleReasonFailed
+	default:
+		return state.IdleReasonCompleted
+	}
+}
+
+func (m *Manager) handleIdle(session *state.Session, duration time.Duration) IdleClassification {
+	info := session.Info()
+	if info.Exited {
+		return IdleClassification{Outcome: IdleDone}
+	}
+	m.observe(context.Background(), "idle", func(writer ledger.ObservationWriter) error {
+		return writer.RecordIdle(context.Background(), ledger.Observation{Meta: ledger.Meta{LaneID: info.ID}})
+	})
+	classification, summary := inspectIdle(session)
+	session.SetIdleResult(idleReason(classification.Outcome), classification.Line, summary, time.Now().UnixMilli())
+	info = session.Info()
 	hookContext := idleHookContext{Summary: summary, Outcome: classification.Outcome, DurationMS: duration.Milliseconds()}
 	m.writeIdleSentinel(info)
 	m.runHook(info.OnIdle, info, hookContext, false)
 	m.runHook(m.hooks.OnIdle, info, hookContext, true)
+	return classification
 }
 
 func (m *Manager) runHook(script string, info state.SessionInfo, hook idleHookContext, timeout bool) {

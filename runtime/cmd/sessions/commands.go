@@ -527,6 +527,7 @@ func (a *app) cmdWait(args []string) error {
 	}
 	idArg := args[0]
 	args = args[1:]
+	includeSummary := removeFirst(&args, "--summary")
 	idle := 2 * time.Second
 	timeout := 30 * time.Second
 	var err error
@@ -541,6 +542,9 @@ func (a *app) cmdWait(args []string) error {
 		if err != nil {
 			return err
 		}
+	}
+	if len(args) != 0 {
+		return fail(1, "usage: sessions wait <id> [--idle 2s] [--timeout 30s] [--summary]")
 	}
 	id, err := a.resolveSessionID(idArg)
 	if err != nil {
@@ -597,11 +601,39 @@ func (a *app) cmdWait(args []string) error {
 		if idleFor >= idle {
 			if a.wantJSON {
 				return writeJSON(a.stdout, struct {
-					OK      bool   `json:"ok"`
-					Reason  string `json:"reason"`
-					IdleMS  int64  `json:"idleMs"`
-					Working bool   `json:"working"`
-				}{true, "idle", idleFor.Milliseconds(), current.Working}, false)
+					OK         bool   `json:"ok"`
+					Session    string `json:"session,omitempty"`
+					Reason     string `json:"reason"`
+					IdleReason string `json:"idleReason,omitempty"`
+					Summary    string `json:"summary,omitempty"`
+					IdleMS     int64  `json:"idleMs"`
+					Working    bool   `json:"working"`
+				}{
+					true, func() string {
+						if includeSummary {
+							return current.ID
+						}
+						return ""
+					}(), "idle", current.IdleReason,
+					func() string {
+						if includeSummary {
+							return current.LastSummary
+						}
+						return ""
+					}(),
+					idleFor.Milliseconds(), current.Working,
+				}, false)
+			}
+			if includeSummary {
+				summary := current.LastSummary
+				if summary == "" {
+					summary = current.IdleDetail
+				}
+				if summary == "" {
+					summary = current.IdleReason
+				}
+				_, err := fmt.Fprintf(a.stdout, "%s — %s\n", current.ID, summary)
+				return err
 			}
 			_, err := fmt.Fprintf(a.stdout, "idle for %dms\n", idleFor.Milliseconds())
 			return err

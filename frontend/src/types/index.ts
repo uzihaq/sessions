@@ -28,12 +28,18 @@ export interface SessionInfo {
   rows: number;
   createdAt: number;
   pid: number;
+  runnerProtocol?: number;
+  runnerVersion?: string;
   tool: SessionTool;
   working: boolean;
   lastDataAt: number;
   // When the user last sent a real structured message (ms epoch) — null
   // for shell sessions or before the first provider message.
   lastUserMessageAt: number | null;
+  idleReason?: 'never-started' | 'completed' | 'needs-input' | 'failed';
+  idleDetail?: string;
+  idleSince?: number | null;
+  lastSummary?: string;
   exited: boolean;
   exitCode: number | null;
   exitSignal: string | null;

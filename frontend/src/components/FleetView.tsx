@@ -422,20 +422,20 @@ function machineVersionState(
     return {
       tone: 'older',
       title: 'Update recommended',
-      detail: `This machine runs ${machineVersion}; this Mac runs ${localVersion}.`
+      detail: `This machine runs ${machineVersion}; this computer runs ${localVersion}. Their API ranges are compatible, so it can update when convenient.`
     };
   }
   if (comparison === 1) {
     return {
       tone: 'newer',
-      title: 'Newer than this Mac',
-      detail: `This machine runs ${machineVersion}; this Mac runs ${localVersion}.`
+      title: 'Newer than this computer',
+      detail: `This machine runs ${machineVersion}; this computer runs ${localVersion}. Their API ranges are compatible.`
     };
   }
   return {
     tone: 'different',
     title: 'Different Sessions build',
-    detail: `This machine runs ${machineVersion}; this Mac runs ${localVersion}.`
+    detail: `This machine runs ${machineVersion}; this computer runs ${localVersion}. Their API ranges are compatible.`
   };
 }
 
@@ -506,7 +506,19 @@ function FleetSessionRow({
   disabled: boolean;
   onOpen: () => void;
 }): JSX.Element {
-  const state = session.exited ? 'exited' : session.working ? 'working' : 'idle';
+  const failed = (session.exited && ((session.exitCode ?? 0) !== 0 || Boolean(session.exitSignal)))
+    || session.idleReason === 'failed'
+    || session.provenanceStatus === 'lost'
+    || session.provenanceStatus === 'invalid';
+  const state = failed
+    ? 'failed'
+    : session.working
+    ? 'working'
+    : session.idleReason === 'needs-input'
+    ? 'needs-you'
+    : session.exited || session.idleReason === 'completed'
+    ? 'finished'
+    : 'idle';
   const label = shortLabel(session);
   const cwd = session.cwd.replace(/^\/(Users|home)\/[^/]+/, '~');
 
@@ -516,7 +528,7 @@ function FleetSessionRow({
       className="fleet-session-row"
       disabled={disabled}
       onClick={onOpen}
-      aria-label={session.exited ? `${label}, retained history` : `Open ${label}, ${state}`}
+      aria-label={session.exited ? `${label}, retained history, ${state}` : `Open ${label}, ${state}`}
     >
       <span className="fleet-session-icon" aria-hidden>
         <ParserIcon icon={TOOL_ICONS[session.tool]} size={18} />
@@ -524,6 +536,7 @@ function FleetSessionRow({
       <span className="fleet-session-main">
         <span className="fleet-session-name">{label}</span>
         <span className="fleet-session-cwd">{cwd}</span>
+        {session.lastSummary ? <span className="fleet-session-summary">{session.lastSummary}</span> : null}
         {session.profile ? <span className="fleet-session-profile">{session.tool === 'claude-code' ? 'Claude' : 'Codex'} · {session.profile}</span> : null}
         {session.tags && Object.keys(session.tags).length > 0 ? (
           <span className="fleet-session-tags">

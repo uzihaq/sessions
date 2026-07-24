@@ -307,7 +307,7 @@ func (a *app) cmdWaitDispatch(args []string) error {
 	if hasWaitCondition(args) {
 		return a.cmdWait(args)
 	}
-	ids, any, timeout, parseErr := parseLaneWaitArgs(args)
+	ids, any, summary, timeout, parseErr := parseLaneWaitArgs(args)
 	if parseErr != nil {
 		return a.cmdWait(args)
 	}
@@ -332,7 +332,7 @@ func (a *app) cmdWaitDispatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	return a.writeLaneWaitCompletion(completedID, manifest, false)
+	return a.writeLaneWaitCompletion(completedID, manifest, false, summary)
 }
 
 func (a *app) waitForLaneExit(ids []string, timeout time.Duration) (string, laneManifest, error) {
@@ -360,12 +360,16 @@ func (a *app) waitForLaneExit(ids []string, timeout time.Duration) (string, lane
 	return result.Session, manifest, nil
 }
 
-func (a *app) writeLaneWaitCompletion(id string, manifest laneManifest, outputOnly bool) error {
+func (a *app) writeLaneWaitCompletion(id string, manifest laneManifest, outputOnly, includeSummary bool) error {
 	if a.wantJSON {
 		output := struct {
-			ID string `json:"id"`
+			ID      string `json:"id"`
+			Summary string `json:"summary,omitempty"`
 			laneManifest
-		}{ID: id, laneManifest: manifest}
+		}{ID: id, Summary: compactSummary(manifest.LastOutputTail), laneManifest: manifest}
+		if !includeSummary {
+			output.Summary = ""
+		}
 		if err := writeJSON(a.stdout, output, false); err != nil {
 			return err
 		}
@@ -375,6 +379,9 @@ func (a *app) writeLaneWaitCompletion(id string, manifest laneManifest, outputOn
 		}
 	} else {
 		fmt.Fprintf(a.stdout, "%s exited %d after %s\n", id, manifest.ExitCode, formatLaneDuration(manifest.DurationMS))
+		if includeSummary {
+			fmt.Fprintf(a.stdout, "summary: %s\n", compactSummary(manifest.LastOutputTail))
+		}
 	}
 	if manifest.ExitCode != 0 {
 		return status(manifest.ExitCode)
@@ -403,46 +410,52 @@ func hasWaitCondition(args []string) bool {
 	return false
 }
 
-func parseLaneWaitArgs(args []string) ([]string, bool, time.Duration, error) {
+func parseLaneWaitArgs(args []string) ([]string, bool, bool, time.Duration, error) {
 	ids := make([]string, 0, 2)
 	any := false
+	summary := false
 	timeout := defaultLaneWaitTimeout
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
 		case "--any":
 			if any {
-				return nil, false, 0, errors.New("duplicate --any")
+				return nil, false, false, 0, errors.New("duplicate --any")
 			}
 			any = true
+		case "--summary":
+			if summary {
+				return nil, false, false, 0, errors.New("duplicate --summary")
+			}
+			summary = true
 		case "--timeout":
 			if index+1 >= len(args) {
-				return nil, false, 0, errors.New("missing timeout")
+				return nil, false, false, 0, errors.New("missing timeout")
 			}
 			index++
 			parsed, err := parseDuration(args[index], 0)
 			if err != nil || parsed <= 0 {
-				return nil, false, 0, errors.New("invalid timeout")
+				return nil, false, false, 0, errors.New("invalid timeout")
 			}
 			timeout = parsed
 		case "--idle":
 			if index+1 >= len(args) {
-				return nil, false, 0, errors.New("missing idle duration")
+				return nil, false, false, 0, errors.New("missing idle duration")
 			}
 			index++
 			if parsed, err := parseDuration(args[index], 0); err != nil || parsed < 0 {
-				return nil, false, 0, errors.New("invalid idle duration")
+				return nil, false, false, 0, errors.New("invalid idle duration")
 			}
 		default:
 			if strings.HasPrefix(args[index], "-") || args[index] == "" {
-				return nil, false, 0, errors.New("not a lane wait")
+				return nil, false, false, 0, errors.New("not a lane wait")
 			}
 			ids = append(ids, args[index])
 		}
 	}
 	if len(ids) == 0 {
-		return nil, false, 0, errors.New("no lanes")
+		return nil, false, false, 0, errors.New("no lanes")
 	}
-	return ids, any, timeout, nil
+	return ids, any, summary, timeout, nil
 }
 
 type laneExitCondition struct {

@@ -91,10 +91,16 @@ fields. Optional fields are omitted when their value is `undefined`.
 | `rows` | number | current PTY rows |
 | `createdAt` | number | Unix epoch milliseconds reported by the runner |
 | `pid` | number | PTY child PID |
+| `runnerProtocol` | number | attached runner wire version; 0 is the legacy missing-version path |
+| `runnerVersion` | string, optional | Sessions runtime release reported by the runner |
 | `tool` | `"claude-code" \| "codex" \| "terminal"` | classification derived from `cmd` |
 | `working` | boolean | current activity classification |
 | `lastDataAt` | number | Unix epoch milliseconds of latest PTY output |
 | `lastUserMessageAt` | number or null | latest real structured user-message time |
+| `idleReason` | `"never-started" \| "completed" \| "needs-input" \| "failed"`, optional | operator-facing reason the live session is not working |
+| `idleDetail` | string, optional | useful prompt or error line from idle classification |
+| `idleSince` | number, optional | Unix epoch milliseconds when the current idle outcome began |
+| `lastSummary` | string, optional | last useful structured assistant or terminal-tail summary |
 | `exited` | boolean | whether an EXIT frame was received |
 | `exitCode` | number or null | PTY exit code |
 | `exitSignal` | string or null | PTY exit signal as a string |
@@ -130,6 +136,10 @@ No auth. Returns 200:
   "version": "0.2.3",
   "listen": { "host": "127.0.0.1", "port": 8787 },
   "system": { "os": "darwin", "arch": "arm64" },
+  "compatibility": {
+    "api": { "current": 1, "minimumClient": 1, "maximumClient": 1 },
+    "runner": { "current": 1, "minimum": 0, "maximum": 1 }
+  },
   "discovering": false,
   "sessionsLoaded": 0
 }
@@ -137,8 +147,13 @@ No auth. Returns 200:
 
 `host`, `port`, `system`, `discovering`, and the count vary. `system.os` uses
 Go's stable platform names (`darwin`, `windows`, `linux`, and so on) so native
-clients can choose a machine icon without guessing from a hostname. The count
-includes exited sessions still in their 30-second grace period.
+clients can choose a machine icon without guessing from a hostname.
+`compatibility.api` is the authoritative client acceptance range;
+`compatibility.runner` describes the living runners this daemon can adopt.
+Clients preserve their legacy behavior when an older daemon omits the additive
+object, but must stop before normal use when their protocol is outside an
+advertised range. The count includes exited sessions still in their 30-second
+grace period. The deep-health response carries the same compatibility object.
 
 ### `GET /api/health/deep`
 

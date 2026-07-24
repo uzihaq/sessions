@@ -206,7 +206,7 @@ func TestLaneWaitAnyUsesSharedCompositionAndWinningExitCode(t *testing.T) {
 	defer server.Close()
 	var stdout, stderr bytes.Buffer
 	code := run([]string{
-		"--host", server.URL, "wait", first, second, "--any", "--timeout", "2s", "--json",
+		"--host", server.URL, "wait", first, second, "--any", "--summary", "--timeout", "2s", "--json",
 	}, strings.NewReader(""), &stdout, &stderr)
 	if code != 6 || stderr.Len() != 0 {
 		t.Fatalf("wait --any exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -214,11 +214,12 @@ func TestLaneWaitAnyUsesSharedCompositionAndWinningExitCode(t *testing.T) {
 	var output struct {
 		ID       string `json:"id"`
 		ExitCode int    `json:"exit_code"`
+		Summary  string `json:"summary"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.ID != second || output.ExitCode != 6 {
+	if output.ID != second || output.ExitCode != 6 || output.Summary != "second" {
 		t.Fatalf("wait --any output = %#v", output)
 	}
 }

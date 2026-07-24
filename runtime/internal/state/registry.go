@@ -324,8 +324,14 @@ func (r *Registry) register(ctx context.Context, runner proto.Runner, metadata S
 	if info.ID == "" {
 		return nil, errors.New("runner returned an empty session id")
 	}
+	if !proto.IsCompatibleVersion(info.ProtocolVersion) {
+		return nil, proto.IncompatibleVersionError(info.ProtocolVersion)
+	}
 	if info.ProtocolVersion != proto.ProtocolVersion {
-		log.Printf("[protocol] runner %s reports v%d, daemon expects v%d; attaching anyway", info.ID, info.ProtocolVersion, proto.ProtocolVersion)
+		log.Printf(
+			"[protocol] runner %s reports compatible v%d, daemon current is v%d",
+			info.ID, info.ProtocolVersion, proto.ProtocolVersion,
+		)
 	}
 	session, err := newSession(ctx, info, runner, metadata)
 	if err != nil {

@@ -239,7 +239,7 @@ func (r *codexAppRunner) serveClient(conn net.Conn) {
 	h := hello{
 		ID: r.cfg.id, Cmd: r.cfg.cmd, Args: r.cfg.args, Cwd: r.cfg.cwd,
 		Cols: r.cfg.cols, Rows: r.cfg.rows, CreatedAt: r.createdAt,
-		PID: os.Getpid(), ProtocolVersion: proto.ProtocolVersion,
+		PID: os.Getpid(), ProtocolVersion: proto.ProtocolVersion, RuntimeVersion: version,
 		ConversationID: r.conversationID, RemoteEndpoint: r.remoteEndpoint,
 	}
 	r.mu.Unlock()

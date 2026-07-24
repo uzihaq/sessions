@@ -86,7 +86,11 @@ versioned on GitHub Releases. The app checks that manifest quietly on launch
 and every six hours, shows an in-app badge, and sends at most one native
 notification per available version. Download and installation remain explicit.
 The settings menu tells the user that only the UI restarts—the launchd daemon
-and its runners continue independently.
+and its runners continue independently. It also reports how many agents are
+currently working before installation. A working agent retains its immutable
+runner; the reopened app refreshes only the managed daemon, which re-adopts the
+baseline, and later sessions use the newly staged runner. No open-session record
+is treated as disposable update state.
 
 The bundled CLI exposes the same explicit choice as `sessions update` and a
 non-mutating `sessions update --check`. This is a second implementation of the
@@ -150,8 +154,10 @@ The shared React client now has native-oriented product surfaces:
   discovery and explicit host-approval flow as Connections; saved daemon
   identity prevents duplicate entries when the endpoint changes. Fleet shows
   each daemon's reported version and advises about older, newer, or
-  non-comparable builds without requiring version equality. The compatibility
-  boundary remains the daemon protocol, not the marketing release number.
+  non-comparable builds without requiring version equality. Health now carries
+  explicit API-client and runner-protocol ranges; discovery rejects only an
+  explicit out-of-range API. The compatibility boundary remains the daemon
+  protocol, not the marketing release number.
   Nearby-Wi-Fi Bonjour/mDNS discovery is deliberately labeled Coming soon
   until Sessions can advertise the service and handle macOS Local Network
   permission without surprising the user.
@@ -180,6 +186,11 @@ artifact is an explicitly unsigned preview until the public release process has
 a Windows code-signing identity and Tauri updater signing secret. A Windows
 preview may trigger SmartScreen and is not represented as a public stable
 release.
+
+Cross-machine software update is deliberately not part of the first paired
+client. A later action may send an authenticated update request, but the host
+must display the signed target version and approve it locally by default.
+Pairing grants session-control access, not silent package-install authority.
 
 ## Release sequence
 

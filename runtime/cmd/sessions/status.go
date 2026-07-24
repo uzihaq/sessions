@@ -40,6 +40,12 @@ type statusOutput struct {
 	LastActivityAt    string                   `json:"last_activity_at"`
 	CreatedAt         string                   `json:"created_at"`
 	AgeMS             int64                    `json:"age_ms"`
+	IdleReason        string                   `json:"idle_reason,omitempty"`
+	IdleDetail        string                   `json:"idle_detail,omitempty"`
+	IdleSinceMS       *int64                   `json:"idle_since_ms,omitempty"`
+	LastSummary       string                   `json:"last_summary,omitempty"`
+	RunnerProtocol    int                      `json:"runner_protocol"`
+	RunnerVersion     string                   `json:"runner_version,omitempty"`
 }
 
 func (a *app) cmdStatus(args []string) error {
@@ -85,6 +91,17 @@ func (a *app) cmdStatus(args []string) error {
 		state = "exited"
 	} else if current.Working {
 		state = "working"
+	} else {
+		switch current.IdleReason {
+		case "completed":
+			state = "finished"
+		case "needs-input":
+			state = "needs-you"
+		case "failed":
+			state = "failed"
+		case "never-started":
+			state = "not-started"
+		}
 	}
 	output := statusOutput{
 		ID: id, Name: current.Name, Description: current.Description,
@@ -95,6 +112,9 @@ func (a *app) cmdStatus(args []string) error {
 		LastActivityAt: lastActivityTime.Format(time.RFC3339Nano),
 		CreatedAt:      formatStatusTime(createdAt),
 		AgeMS:          max(now.UnixMilli()-createdAt, 0),
+		IdleReason:     current.IdleReason, IdleDetail: current.IdleDetail,
+		IdleSinceMS: current.IdleSince, LastSummary: current.LastSummary,
+		RunnerProtocol: current.RunnerProtocol, RunnerVersion: current.RunnerVersion,
 	}
 	if current.Exited {
 		output.ExitCode = current.ExitCode
@@ -229,6 +249,28 @@ func (a *app) writeStatusCard(output statusOutput, lastActivityAt int64) error {
 	}
 	if output.ExitCode != nil {
 		if _, err := fmt.Fprintf(a.stdout, "  exit     %d\n", *output.ExitCode); err != nil {
+			return err
+		}
+	}
+	if output.RunnerVersion != "" {
+		if _, err := fmt.Fprintf(a.stdout, "  runner   %s (protocol %d)\n", output.RunnerVersion, output.RunnerProtocol); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintf(a.stdout, "  runner   protocol %d\n", output.RunnerProtocol); err != nil {
+		return err
+	}
+	if output.IdleReason != "" {
+		if _, err := fmt.Fprintf(a.stdout, "  reason   %s\n", output.IdleReason); err != nil {
+			return err
+		}
+	}
+	if output.IdleDetail != "" {
+		if _, err := fmt.Fprintf(a.stdout, "  waiting  %s\n", output.IdleDetail); err != nil {
+			return err
+		}
+	}
+	if output.LastSummary != "" {
+		if _, err := fmt.Fprintf(a.stdout, "  summary  %s\n", output.LastSummary); err != nil {
 			return err
 		}
 	}

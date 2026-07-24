@@ -20,6 +20,7 @@ type RunnerInfo struct {
 	SocketPath      string   `json:"sockPath"`
 	CurrentSeq      uint32   `json:"currentSeq,omitempty"`
 	ProtocolVersion int      `json:"protocolVersion,omitempty"`
+	RuntimeVersion  string   `json:"runtimeVersion,omitempty"`
 	ConversationID  string   `json:"conversationId,omitempty"`
 	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
 	ClaudeSessionID string   `json:"claudeSessionId,omitempty"`

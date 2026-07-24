@@ -281,15 +281,15 @@ Global flags --json, --host, and --port must appear before the command.
 
 ```text
 Usage:
-  sessions wait <id> [<id>... --any] [--idle D] [--timeout D] [condition]
+  sessions wait <id> [<id>... --any] [--idle D] [--timeout D] [--summary] [condition]
 
 wait for session idle or lane exit
 
-Wait for a session to become idle or a lane to exit. Lane waits propagate the lane exit code. Conditions include --until commit, --until-file-contains FILE STRING, and --until-idle-stable D.
+Wait for a session to become idle or a lane to exit. --summary reports which target changed and its last useful assistant/output summary. Lane waits propagate the lane exit code. Conditions include --until commit, --until-file-contains FILE STRING, and --until-idle-stable D.
 
 Examples:
-  sessions wait 0123abcd --timeout 2m
-  sessions wait lane-a lane-b --any
+  sessions wait 0123abcd --timeout 2m --summary
+  sessions wait lane-a lane-b --any --summary
   sessions wait 0123abcd --until commit --timeout 10m
 
 Global flags --json, --host, and --port must appear before the command.

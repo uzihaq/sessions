@@ -125,14 +125,15 @@ func TestSessionTablesAddProfileColumnOnlyWhenNeeded(t *testing.T) {
 		if profiled {
 			profileFields = `,"profile":"work","config_dir":"/profiles/claude/work"`
 		}
-		_, _ = response.Write([]byte(`{"sessions":[{"id":"22000000-0000-4000-8000-000000000001","name":"agent","description":"","cmd":"claude","cwd":"/tmp","createdAt":1,"pid":1,"tool":"claude-code"` + profileFields + `}]}`))
+		_, _ = response.Write([]byte(`{"sessions":[{"id":"22000000-0000-4000-8000-000000000001","name":"agent","description":"","cmd":"claude","cwd":"/tmp","createdAt":1,"pid":1,"tool":"claude-code","idleReason":"completed","lastSummary":"Implemented the requested fleet view."` + profileFields + `}]}`))
 	}))
 	defer server.Close()
 	t.Setenv("HOME", t.TempDir())
 	for _, command := range []string{"list", "ls"} {
 		var stdout, stderr bytes.Buffer
 		if code := run([]string{"--host", server.URL, command}, strings.NewReader(""), &stdout, &stderr); code != 0 ||
-			!strings.Contains(stdout.String(), "PROFILE") || !strings.Contains(stdout.String(), "work") {
+			!strings.Contains(stdout.String(), "PROFILE") || !strings.Contains(stdout.String(), "SUMMARY") ||
+			!strings.Contains(stdout.String(), "Implemented the requested fleet view.") || !strings.Contains(stdout.String(), "work") {
 			t.Fatalf("%s profile table exit=%d stdout=%q stderr=%q", command, code, stdout.String(), stderr.String())
 		}
 	}

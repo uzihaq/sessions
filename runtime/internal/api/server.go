@@ -20,6 +20,7 @@ import (
 
 	"github.com/somewhere-tech/sessions/runtime/internal/backup"
 	"github.com/somewhere-tech/sessions/runtime/internal/integrations"
+	"github.com/somewhere-tech/sessions/runtime/internal/proto"
 	"github.com/somewhere-tech/sessions/runtime/internal/recap"
 	sessionruntime "github.com/somewhere-tech/sessions/runtime/internal/session"
 	"github.com/somewhere-tech/sessions/runtime/internal/smartsearch"
@@ -33,6 +34,9 @@ const (
 	maxJSONBody          = 2 * 1024 * 1024
 	creatorSessionHeader = "X-Sessions-Creator-Session"
 	creatorOwnerHeader   = "X-Sessions-Owner-ID"
+	apiProtocolVersion   = 1
+	minimumAPIClient     = 1
+	maximumAPIClient     = apiProtocolVersion
 )
 
 // Version is stamped into sessionsd at build time and reported by both health
@@ -149,9 +153,17 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if path == "/api/health" && request.Method == http.MethodGet {
 		s.sendJSON(response, http.StatusOK, map[string]any{
 			"ok": true, "name": "sessionsd", "version": Version,
-			"listen":         map[string]any{"host": s.config.Host, "port": s.config.Port},
-			"lan":            s.lan.state(),
-			"system":         map[string]any{"os": goruntime.GOOS, "arch": goruntime.GOARCH},
+			"listen": map[string]any{"host": s.config.Host, "port": s.config.Port},
+			"lan":    s.lan.state(),
+			"system": map[string]any{"os": goruntime.GOOS, "arch": goruntime.GOARCH},
+			"compatibility": map[string]any{
+				"api": map[string]any{
+					"current": apiProtocolVersion, "minimumClient": minimumAPIClient, "maximumClient": maximumAPIClient,
+				},
+				"runner": map[string]any{
+					"current": proto.ProtocolVersion, "minimum": proto.MinimumCompatibleVersion, "maximum": proto.MaximumCompatibleVersion,
+				},
+			},
 			"discovering":    s.registry.IsDiscovering(),
 			"sessionsLoaded": len(s.registry.List(true)),
 		}, corsOrigin)
@@ -160,6 +172,14 @@ func (s *Server) ServeHTTP(response http.ResponseWriter, request *http.Request) 
 	if path == "/api/health/deep" && request.Method == http.MethodGet {
 		s.sendJSON(response, http.StatusOK, map[string]any{
 			"ok": true, "name": "sessionsd", "version": Version,
+			"compatibility": map[string]any{
+				"api": map[string]any{
+					"current": apiProtocolVersion, "minimumClient": minimumAPIClient, "maximumClient": maximumAPIClient,
+				},
+				"runner": map[string]any{
+					"current": proto.ProtocolVersion, "minimum": proto.MinimumCompatibleVersion, "maximum": proto.MaximumCompatibleVersion,
+				},
+			},
 			"discovering":    s.registry.IsDiscovering(),
 			"sessionsLoaded": len(s.registry.List(true)),
 			"uptimeSec":      int64(math.Round(s.registry.Uptime().Seconds())),

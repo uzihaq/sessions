@@ -38,13 +38,19 @@ function projectName(session: SessionInfo): string {
 
 function isFailed(session: SessionInfo): boolean {
   return (session.exited && ((session.exitCode ?? 0) !== 0 || !!session.exitSignal))
+    || (!session.exited && session.idleReason === 'failed')
     || session.provenanceStatus === 'lost'
     || session.provenanceStatus === 'invalid';
 }
 
-function isFinished(session: SessionInfo): boolean { return session.exited && !isFailed(session); }
+function isFinished(session: SessionInfo): boolean {
+  return (session.exited && !isFailed(session))
+    || (!session.exited && !session.working && session.idleReason === 'completed');
+}
 function needsYou(session: SessionInfo): boolean {
-  return !session.exited && !session.working && session.lastUserMessageAt !== null;
+  if (session.exited || session.working) return false;
+  if (session.idleReason) return session.idleReason === 'needs-input';
+  return session.lastUserMessageAt !== null;
 }
 
 interface Props {
@@ -114,7 +120,7 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
     if (date === 'week' && age > 7 * 86_400_000) return false;
     const needle = query.trim().toLowerCase();
     if (needle) {
-      const haystack = `${getTabLabel(session.id) ?? sessionLabel(session)} ${session.cwd} ${Object.values(session.tags ?? {}).join(' ')}`.toLowerCase();
+      const haystack = `${getTabLabel(session.id) ?? sessionLabel(session)} ${session.cwd} ${session.lastSummary ?? ''} ${Object.values(session.tags ?? {}).join(' ')}`.toLowerCase();
       if (!haystack.includes(needle)) return false;
     }
     return true;
@@ -161,6 +167,7 @@ export function SessionNavigator({ sessions, activeId, machine, onOpen, onNew }:
           <span className={`session-nav-status is-${status}`} aria-hidden />
           <span className="session-nav-copy">
             <span className="session-nav-title">{getTabLabel(session.id) ?? sessionLabel(session)}</span>
+            {session.lastSummary ? <span className="session-nav-summary">{session.lastSummary}</span> : null}
             <span className="session-nav-meta">
               {providerName ? <ProviderBadge provider={providerName} compact /> : <span className="provider-badge is-shell is-compact">⌘ Shell</span>}
               <span>{machine}</span><span>{relativeTime(lastActivity(session))}</span>

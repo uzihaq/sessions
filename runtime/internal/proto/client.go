@@ -38,8 +38,8 @@ type replayRequest struct {
 }
 
 // DialRunner connects and requires the server-first HELLO frame before
-// returning. A protocol-version mismatch is intentionally tolerated by the
-// caller, matching the TypeScript daemon's interoperability rule.
+// returning. Missing/legacy protocol zero remains compatible, while an
+// explicitly unsupported version fails before any replay or control frame.
 func DialRunner(ctx context.Context, socketPath string) (*SocketRunner, error) {
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "unix", socketPath)
@@ -71,6 +71,10 @@ func DialRunner(ctx context.Context, socketPath string) (*SocketRunner, error) {
 	if info.ID == "" {
 		_ = conn.Close()
 		return nil, errors.New("runner HELLO has empty id")
+	}
+	if !IsCompatibleVersion(info.ProtocolVersion) {
+		_ = conn.Close()
+		return nil, IncompatibleVersionError(info.ProtocolVersion)
 	}
 	info.SocketPath = socketPath
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {

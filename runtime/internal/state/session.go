@@ -72,7 +72,9 @@ func newSession(ctx context.Context, info proto.RunnerInfo, runner proto.Runner,
 			Cmd: info.Cmd, Args: append([]string{}, info.Args...),
 			Cwd: info.Cwd, Profile: metadata.Profile, ConfigDir: metadata.ConfigDir,
 			Cols: info.Cols, Rows: info.Rows, CreatedAt: info.CreatedAt,
-			PID: info.PID, Tool: tool, LastDataAt: now, OnIdle: metadata.OnIdle,
+			PID: info.PID, RunnerProtocol: info.ProtocolVersion, RunnerVersion: info.RuntimeVersion,
+			Tool: tool, LastDataAt: now, OnIdle: metadata.OnIdle,
+			IdleReason: IdleReasonNeverStarted, IdleSince: &now,
 			Model: model, Effort: effort, Fast: fast,
 			ConversationID: info.ConversationID, RemoteEndpoint: info.RemoteEndpoint,
 			ClaudeSessionID: info.ClaudeSessionID,
@@ -142,6 +144,12 @@ func (s *Session) applyEvent(event proto.Event) bool {
 		s.info.ExitCode = exit.Code
 		s.info.ExitSignal = exit.Signal
 		s.info.ExitedAt = &now
+		s.info.IdleSince = &now
+		if (exit.Code != nil && *exit.Code != 0) || event.Kind == proto.EventRunnerLost {
+			s.info.IdleReason = IdleReasonFailed
+		} else {
+			s.info.IdleReason = IdleReasonCompleted
+		}
 		s.exit = exit
 		terminal = true
 	}
@@ -367,8 +375,30 @@ func (s *Session) SetWorking(working bool) (previous bool, exited bool) {
 	exited = s.info.Exited
 	if !exited {
 		s.info.Working = working
+		if working {
+			s.info.IdleReason = ""
+			s.info.IdleDetail = ""
+			s.info.IdleSince = nil
+		}
 	}
 	return previous, exited
+}
+
+// SetIdleResult publishes the last useful outcome as additive session state.
+// LastSummary deliberately survives the next working transition so operators
+// can still see the most recently completed result while a follow-up runs.
+func (s *Session) SetIdleResult(reason, detail, summary string, at int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.info.Exited {
+		return
+	}
+	s.info.IdleReason = reason
+	s.info.IdleDetail = detail
+	s.info.IdleSince = &at
+	if summary != "" {
+		s.info.LastSummary = summary
+	}
 }
 
 // RecordClaudeEvent adds one watcher-derived structured event to the same log

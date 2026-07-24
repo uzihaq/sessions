@@ -28,6 +28,7 @@ import { copyText } from '../lib/copyText';
 import { ConnectionsView } from './ConnectionsView';
 import type { ThemeMode } from './ProductSidebar';
 import { SomewhereCard } from './SomewhereCard';
+import { useSessions } from '../store/sessions';
 
 type Section = 'general' | 'agents' | 'accounts' | 'network' | 'cloud' | 'notifications' | 'support';
 
@@ -38,6 +39,16 @@ interface Props {
 
 export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
   const activeServerId = useServers((state) => state.activeId);
+  const activeServerIsLocal = useServers((state) =>
+    state.servers.find((server) => server.id === state.activeId)?.isDefault === true
+  );
+  const sessions = useSessions((state) => state.sessions);
+  const workingAgents = activeServerIsLocal
+    ? sessions.filter((session) => !session.exited && session.working).length
+    : null;
+  const liveRunners = activeServerIsLocal
+    ? sessions.filter((session) => !session.exited).length
+    : null;
   const native = isTauri();
   const [section, setSection] = useState<Section>('general');
   const [aiProvider, setAIProvider] = useState<AIProvider>('codex');
@@ -280,6 +291,8 @@ export function SettingsView({ theme, onThemeChange }: Props): JSX.Element {
             updateProgress={updateProgress}
             updateBusy={updateBusy}
             updateMessage={updateMessage}
+            workingAgents={workingAgents}
+            liveRunners={liveRunners}
             onCheck={checkForUpdate}
             onInstall={installUpdate}
           />
@@ -408,6 +421,8 @@ interface NotificationSettingsProps {
   updateProgress: NativeUpdateProgress | null;
   updateBusy: boolean;
   updateMessage: string | null;
+  workingAgents: number | null;
+  liveRunners: number | null;
   onCheck: () => Promise<void>;
   onInstall: () => Promise<void>;
 }
@@ -421,9 +436,24 @@ function NotificationSettings(props: NotificationSettingsProps): JSX.Element {
       <div className="settings-card">
         <h2>Sessions updates</h2>
         <div className="settings-static-row">
-          <span><strong>{props.updateInfo ? `Sessions ${props.updateInfo.version} is ready` : 'Signed release channel'}</strong><small>Updating restarts only the app window. The background service and running sessions continue.</small></span>
+          <span>
+            <strong>{props.updateInfo ? `Sessions ${props.updateInfo.version} is ready` : 'Signed release channel'}</strong>
+            <small>
+              {props.workingAgents === null
+                ? 'This updates the client. Agents and open sessions on every host continue independently.'
+                : props.workingAgents > 0
+                ? `${props.workingAgents} ${props.workingAgents === 1 ? 'agent is' : 'agents are'} working. They continue on their current runners; new sessions use the updated runner after the service refresh.`
+                : `No agents are working. Update now without losing ${props.liveRunners === 1 ? 'your open session' : 'any open sessions'}.`}
+            </small>
+          </span>
           {props.updateInfo ? (
-            <button type="button" className="btn btn-primary" disabled={!props.native || props.updateBusy} onClick={() => void props.onInstall()}>Install update</button>
+            <button type="button" className="btn btn-primary" disabled={!props.native || props.updateBusy} onClick={() => void props.onInstall()}>
+              {props.workingAgents === null
+                ? 'Update client safely'
+                : props.workingAgents > 0
+                ? `Update safely · ${props.workingAgents} continue`
+                : 'Update now'}
+            </button>
           ) : (
             <button type="button" className="btn btn-ghost" disabled={!props.native || props.updateBusy} onClick={() => void props.onCheck()}>{props.updateBusy ? 'Checking…' : 'Check now'}</button>
           )}

@@ -977,6 +977,15 @@ func (m *Manager) manage(session *state.Session) *runtimeSession {
 	for _, event := range attachment.Replay.Events {
 		runtime.recentBytes += len(event.Data)
 	}
+	if !session.Info().Working && (len(attachment.Replay.Events) > 0 || len(attachment.ClaudeEvents) > 0) {
+		classification, summary := inspectIdle(session)
+		session.SetIdleResult(
+			idleReason(classification.Outcome),
+			classification.Line,
+			summary,
+			session.Info().LastDataAt,
+		)
+	}
 	m.runtimes[info.ID] = runtime
 	m.mu.Unlock()
 	m.observe(context.Background(), "attached", func(writer ledger.ObservationWriter) error {
@@ -1185,8 +1194,10 @@ func (r *runtimeSession) setWorking(next bool) {
 			duration = 0
 		}
 	}
-	r.manager.handleIdle(r.session, duration)
-	if !suppressWaiting {
+	classification := r.manager.handleIdle(r.session, duration)
+	if !suppressWaiting && classification.Outcome == IdleDone {
+		r.notifyDone()
+	} else if !suppressWaiting {
 		r.scheduleWaiting()
 	}
 }

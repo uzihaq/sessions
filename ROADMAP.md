@@ -110,10 +110,29 @@ and starts the existing named request/host approval flow. The current computer
 is visually primary; unreachable machines and the unprovisioned Somewhere VM
 recede clearly. Each machine reports its Sessions version, and Fleet warns
 when another machine is older, newer, or non-comparable without requiring
-identical releases. A later daemon contract should advertise an explicit
-minimum/maximum compatible API range before Fleet ever hard-blocks a version.
+identical releases. The daemon now advertises explicit current/minimum/maximum
+API and runner-protocol ranges. Native discovery and the shared client reject
+only an explicitly incompatible API range; a legacy daemon which predates the
+advertisement retains the existing compatibility path. Daemons accept living
+runner protocol 0 or 1 and reject unknown future frame semantics before replay.
 Nearby-Wi-Fi Bonjour/mDNS discovery remains **Coming soon** and will retain the
 same candidate-then-health-verification rule.
+
+Updates preserve the same layered lifetime boundary. The app explains whether
+agents are currently working before the explicit install action. Running agents
+continue on their immutable current runners; after relaunch, the managed daemon
+adopts them and new sessions use the newly staged runner. Open session records
+are not discarded. A future cross-machine update action must be an authenticated
+request which the destination user approves locally; an ordinary paired-device
+token will not silently gain software-install authority.
+
+Session status now carries the last useful result plus a reason for the current
+non-working state: `never-started`, `completed`, `needs-input`, or `failed`.
+Those facts drive the Sessions tree, Home, Fleet, `sessions status`, and the
+SUMMARY column in `sessions ls`/`sessions list`. `sessions wait --summary` and
+multi-lane `sessions wait ... --any --summary` provide the agent-native
+wait-for-change handoff: the caller learns which target changed and what it last
+reported instead of receiving only “idle.”
 
 The macOS release and Mini update gates are complete. Windows is now a parallel
 paired-client target rather than waiting behind Android. Its first release

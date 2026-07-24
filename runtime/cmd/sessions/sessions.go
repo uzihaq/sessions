@@ -125,7 +125,7 @@ func (a *app) cmdSessions(args []string) error {
 	if showProfile {
 		header = append(header, "PROFILE")
 	}
-	header = append(header, "CWD", "STATE", "AGE", "OWNER")
+	header = append(header, "CWD", "STATE", "SUMMARY", "AGE", "OWNER")
 	rows := [][]string{header}
 	for _, record := range records {
 		value := record.value
@@ -135,7 +135,14 @@ func (a *app) cmdSessions(args []string) error {
 		if showProfile {
 			row = append(row, compactProfile(value.Profile))
 		}
-		row = append(row, strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value), a.ageOf(value.CreatedAt), ownershipLabel(value))
+		row = append(
+			row,
+			strings.Replace(value.Cwd, a.home, "~", 1),
+			sessionState(value),
+			compactSummary(value.LastSummary),
+			a.ageOf(value.CreatedAt),
+			ownershipLabel(value),
+		)
 		rows = append(rows, row)
 	}
 	return writePaddedRows(a.stdout, rows)
@@ -307,6 +314,19 @@ func compactDescription(description string) string {
 	return description
 }
 
+func compactSummary(summary string) string {
+	summary = strings.Join(strings.Fields(summary), " ")
+	if summary == "" {
+		return "-"
+	}
+	const maximum = 64
+	runes := []rune(summary)
+	if len(runes) > maximum {
+		return string(runes[:maximum-1]) + "…"
+	}
+	return summary
+}
+
 func sessionState(value session) string {
 	if value.Exited {
 		code := "∅"
@@ -323,6 +343,16 @@ func sessionState(value session) string {
 	}
 	if value.Working {
 		return "working"
+	}
+	switch value.IdleReason {
+	case "needs-input":
+		return "needs-you"
+	case "failed":
+		return "failed"
+	case "completed":
+		return "finished"
+	case "never-started":
+		return "not-started"
 	}
 	return "idle"
 }

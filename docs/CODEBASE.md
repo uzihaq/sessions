@@ -62,7 +62,9 @@ builds the manager/child tree from normalized `SessionInfo` provenance fields.
 each daemon version, and keeps older daemons compatible with a conservative
 client-side fallback. It compares release versions only to render advisory
 older/newer/different-build notices; a different version is not itself an API
-failure. Its native `Find machines` panel calls the same verified tailnet
+failure. An advertised `compatibility.api` range is authoritative: native
+discovery and `frontend/src/api/sessionsd.ts` reject the endpoint only when the
+client protocol is explicitly outside it. Its native `Find machines` panel calls the same verified tailnet
 discovery and host-approved claim commands used by Connections, sharing the
 durable requester ID through `frontend/src/lib/tailnetClient.ts`. The current
 computer is visually primary, an unreachable machine fades as a complete
@@ -323,7 +325,10 @@ by this package rather than by API clients.
 `proto` defines the framed runner protocol and the daemon-side socket client
 (`runtime/internal/proto/proto.go`, `runtime/internal/proto/client.go`). Version
 1 requires server-first HELLO, bounds frame size, and distinguishes replay from
-live traffic; semantic runner capabilities are exposed through
+live traffic. The daemon accepts protocol 0 for immutable legacy runners whose
+HELLO omitted the field, accepts protocol 1, and rejects an unknown future
+version before replay or control frames. HELLO also reports the runner's
+runtime release when known; semantic runner capabilities are exposed through
 `runtime/internal/proto/runner.go`. Structured provider events use the protocol's
 extension frame instead of masquerading as terminal output.
 
@@ -406,7 +411,9 @@ expiry timers remove plans even when no later lookup occurs.
 notifications (`runtime/internal/session/manager.go`,
 `runtime/internal/session/idle.go`). Structured lifecycle events are
 authoritative when present; PTY output classification is the fallback
-(`runtime/internal/session/classifier.go`). Creation and user-kill intent are
+(`runtime/internal/session/classifier.go`). A transition to non-working records
+an operator-facing reason/detail/time and last useful summary, which powers GUI
+health, CLI status/list output, and summary-returning waits. Creation and user-kill intent are
 recorded before the corresponding process action. Its daily activity projection
 selects sessions and lanes active in a local day, carries hierarchy/tags/outcome,
 and uses only final structured assistant summaries for optional recap input
@@ -418,7 +425,9 @@ and uses only final structured assistant summaries for optional recap input
 attached session's replay/event state (`runtime/internal/state/config.go`,
 `runtime/internal/state/registry.go`, `runtime/internal/state/session.go`).
 Runner artifacts have defined suffixes in `runtime/internal/state/paths.go`,
-and the in-memory replay plus persisted event log are bounded. Additive daemon
+and the in-memory replay plus persisted event log are bounded. Attached state
+also exposes runner protocol/release and the additive idle outcome without
+changing runner ownership. Additive daemon
 settings persist notification, LAN, recap, smart-feature provider choices, and
 typed Claude launch defaults
 without coupling them to runner state (`runtime/internal/state/settings.go`). This is

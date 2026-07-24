@@ -70,7 +70,7 @@ func TestHealthShapeAndStaticUI(t *testing.T) {
 	}
 	var body map[string]any
 	decodeBody(t, health, &body)
-	for _, key := range []string{"ok", "name", "version", "listen", "lan", "system", "discovering", "sessionsLoaded"} {
+	for _, key := range []string{"ok", "name", "version", "listen", "lan", "system", "compatibility", "discovering", "sessionsLoaded"} {
 		if _, exists := body[key]; !exists {
 			t.Errorf("health missing key %q: %#v", key, body)
 		}
@@ -86,6 +86,15 @@ func TestHealthShapeAndStaticUI(t *testing.T) {
 	system := body["system"].(map[string]any)
 	if system["os"] == "" || system["arch"] == "" {
 		t.Fatalf("unexpected system health shape: %#v", system)
+	}
+	compatibility := body["compatibility"].(map[string]any)
+	apiCompatibility := compatibility["api"].(map[string]any)
+	runnerCompatibility := compatibility["runner"].(map[string]any)
+	if apiCompatibility["minimumClient"] != float64(1) || apiCompatibility["maximumClient"] != float64(1) {
+		t.Fatalf("unexpected API compatibility: %#v", apiCompatibility)
+	}
+	if runnerCompatibility["minimum"] != float64(0) || runnerCompatibility["maximum"] != float64(1) {
+		t.Fatalf("unexpected runner compatibility: %#v", runnerCompatibility)
 	}
 
 	deep := serve(t, daemon.handler, http.MethodGet, "/api/health/deep", nil, "198.51.100.10:4321", nil)

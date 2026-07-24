@@ -154,7 +154,7 @@ func TestWorkingToIdleWaitsForSustainedThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	launcher.Runner(created.ID).AddOutput(strings.Repeat("completed work ", 50) + "\nWaiting for the next prompt\n")
+	launcher.Runner(created.ID).AddOutput(strings.Repeat("completed work ", 50) + "\nThis command needs filesystem access. Continue? [y/N]\n")
 	select {
 	case early := <-received:
 		t.Fatalf("waiting push fired before the sustained threshold: %#v", early)
@@ -163,7 +163,7 @@ func TestWorkingToIdleWaitsForSustainedThreshold(t *testing.T) {
 	select {
 	case push := <-received:
 		payload := decryptPushPayload(t, push.body, subscription)
-		if payload.Title != "🟡 waiting edge — waiting" {
+		if payload.Title != "🟡 waiting edge — needs you" {
 			t.Fatalf("waiting notification = %#v", payload)
 		}
 	case <-time.After(2 * time.Second):

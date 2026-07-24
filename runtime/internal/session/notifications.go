@@ -51,8 +51,15 @@ func (r *runtimeSession) markStructuredDone() {
 	r.cancelWaitingLocked()
 	r.mu.Unlock()
 
+	r.notifyDone()
+}
+
+func (r *runtimeSession) notifyDone() {
 	info := r.session.Info()
-	body := FinalAssistantSummary(r.session.ClaudeEventLog())
+	body := info.LastSummary
+	if body == "" {
+		body = FinalAssistantSummary(r.session.ClaudeEventLog())
+	}
 	if body == "" {
 		body = "finished"
 	}
@@ -108,7 +115,10 @@ func (r *runtimeSession) fireWaiting(generation uint64) {
 	if info.Exited || info.Working {
 		return
 	}
-	body := FinalAssistantSummary(r.session.ClaudeEventLog())
+	body := info.LastSummary
+	if body == "" {
+		body = FinalAssistantSummary(r.session.ClaudeEventLog())
+	}
 	if body == "" {
 		if snapshot, _, err := r.session.Snapshot(r.manager.ctx, 0); err == nil {
 			body = mirrorTailSummary(snapshot)
@@ -117,10 +127,22 @@ func (r *runtimeSession) fireWaiting(generation uint64) {
 	if body == "" {
 		body = "waiting for input"
 	}
+	title := "🟡 " + sessionDisplayLabel(info) + " — waiting"
+	if info.IdleReason == state.IdleReasonNeedsInput {
+		title = "🟡 " + sessionDisplayLabel(info) + " — needs you"
+		if info.IdleDetail != "" {
+			body = info.IdleDetail
+		}
+	} else if info.IdleReason == state.IdleReasonFailed {
+		title = "🔴 " + sessionDisplayLabel(info) + " — failed"
+	}
 	r.manager.queueSessionNotification(info.ID, state.NotifyWaiting, PushPayload{
-		Title: "🟡 " + sessionDisplayLabel(info) + " — waiting",
+		Title: title,
 		Body:  body,
-		Data:  map[string]any{"sessionId": info.ID, "notification": state.NotifyWaiting},
+		Data: map[string]any{
+			"sessionId": info.ID, "notification": state.NotifyWaiting,
+			"idleReason": info.IdleReason, "summary": info.LastSummary,
+		},
 	})
 }
 

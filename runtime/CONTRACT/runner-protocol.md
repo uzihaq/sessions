@@ -71,7 +71,8 @@ Sent immediately on every accepted socket connection:
   "createdAt":1750000000123,
   "pid":43210,
   "currentSeq":42,
-  "protocolVersion":1
+  "protocolVersion":1,
+  "runtimeVersion":"0.2.3"
 }
 ```
 
@@ -81,11 +82,15 @@ Fields and types are exact:
 - `args`: string array; this is the configured/original argument array
 - `cols`, `rows`, `createdAt`, `pid`, and `currentSeq`: numbers
 - `protocolVersion`: optional number for compatibility; current runners send 1
+- `runtimeVersion`: optional Sessions release string; legacy runners omit it
 
-Current protocol version is 1. The daemon treats a missing version as 0. A
-version mismatch is logged but **never rejects attachment**. `createdAt` is the
-current runner process's start time from its metadata object, so it resets on a
-runner respawn. `cols`/`rows` are the live PTY object's current values;
+Current protocol version is 1. The daemon treats a missing version as 0 and
+accepts versions 0 through 1. It rejects an explicitly unsupported version
+immediately after HELLO, before replay, input, resize, snapshot, or kill frames.
+This preserves immutable pre-versioned runners without guessing that unknown
+future frame semantics are safe. `createdAt` is the current runner process's
+start time from its metadata object, so it resets on a runner respawn.
+`cols`/`rows` are the live PTY object's current values;
 `currentSeq` is the in-memory log's latest sequence after disk restoration and
 any non-persisted restore notices.
 
@@ -193,7 +198,7 @@ delayed cleanup path; KILL does not directly close the socket or send an ack.
 For both a newly created runner and startup discovery, sessionsd:
 
 1. connects to the Unix socket and waits up to two seconds for HELLO;
-2. logs but tolerates `protocolVersion` mismatch;
+2. accepts protocol versions 0 through 1 and rejects values outside that range;
 3. creates a local 4 MiB EventLog and 5,000-row xterm mirror sized from HELLO;
 4. installs OUTPUT/EXIT/disconnect listeners;
 5. sends REPLAY_REQ with `afterSeq=0`;

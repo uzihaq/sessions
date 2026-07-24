@@ -32,10 +32,16 @@ type session struct {
 	Rows              int               `json:"rows"`
 	CreatedAt         int64             `json:"createdAt"`
 	PID               int               `json:"pid"`
+	RunnerProtocol    int               `json:"runnerProtocol"`
+	RunnerVersion     string            `json:"runnerVersion,omitempty"`
 	Tool              string            `json:"tool"`
 	Working           bool              `json:"working"`
 	LastDataAt        int64             `json:"lastDataAt"`
 	LastUserMessageAt *int64            `json:"lastUserMessageAt"`
+	IdleReason        string            `json:"idleReason,omitempty"`
+	IdleDetail        string            `json:"idleDetail,omitempty"`
+	IdleSince         *int64            `json:"idleSince,omitempty"`
+	LastSummary       string            `json:"lastSummary,omitempty"`
 	Exited            bool              `json:"exited"`
 	ExitCode          *int              `json:"exitCode"`
 	ExitSignal        *string           `json:"exitSignal"`
@@ -215,7 +221,7 @@ func (a *app) cmdLS(args []string) error {
 	if showProfile {
 		header = append(header, "PROFILE")
 	}
-	header = append(header, "CWD", "STATE", "AGE", "LAST-USER", "PID")
+	header = append(header, "CWD", "STATE", "SUMMARY", "AGE", "LAST-USER", "PID")
 	rows := [][]string{header}
 	for _, record := range records {
 		value := record.value
@@ -228,7 +234,7 @@ func (a *app) cmdLS(args []string) error {
 			row = append(row, compactProfile(value.Profile))
 		}
 		row = append(row, strings.Replace(value.Cwd, a.home, "~", 1), sessionState(value),
-			a.ageOf(value.CreatedAt), lastUser, strconv.Itoa(value.PID))
+			compactSummary(value.LastSummary), a.ageOf(value.CreatedAt), lastUser, strconv.Itoa(value.PID))
 		rows = append(rows, row)
 	}
 	return writePaddedRows(a.stdout, rows)

@@ -34,6 +34,7 @@ import {
   type NativeUpdateInfo,
   type NativeUpdateProgress
 } from '../lib/tauriBridge';
+import { useSessions } from '../store/sessions';
 
 interface Props {
   textSize: TextSize;
@@ -92,6 +93,13 @@ async function getPushRegistration(): Promise<ServiceWorkerRegistration> {
 // Settings popover anchored to a header button.
 export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenConnections }: Props): JSX.Element {
   const activeServerId = useServers((state) => state.activeId);
+  const activeServerIsLocal = useServers((state) =>
+    state.servers.find((server) => server.id === state.activeId)?.isDefault === true
+  );
+  const sessions = useSessions((state) => state.sessions);
+  const workingAgents = activeServerIsLocal
+    ? sessions.filter((session) => !session.exited && session.working).length
+    : null;
   const [open, setOpen] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(readPushEnabled);
   const [pushBusy, setPushBusy] = useState(false);
@@ -556,7 +564,9 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
                   >
                     <span className="settings-menu-icon">↥</span>
                     <span className="settings-menu-label">Install Sessions {updateInfo.version}</span>
-                    <span className="settings-menu-value">Restart app</span>
+                    <span className="settings-menu-value">
+                      {workingAgents === null ? 'Agents keep running' : workingAgents > 0 ? `${workingAgents} continue` : 'No agents running'}
+                    </span>
                   </button>
                 ) : (
                   <button
@@ -572,6 +582,15 @@ export function SettingsMenu({ textSize, onTextSizeChange, onNewSession, onOpenC
                 )}
                 {updateMessage ? (
                   <div className="settings-menu-status" role="status">{updateMessage}</div>
+                ) : null}
+                {updateInfo ? (
+                  <div className="settings-menu-status">
+                    {workingAgents === null
+                      ? 'Safe to install: this updates the client. Agents and open sessions on every host keep running.'
+                      : workingAgents > 0
+                      ? 'Safe to install: working agents keep their current runner. New sessions use the updated runner after relaunch.'
+                      : 'No agents are working. The app can update now without losing open sessions.'}
+                  </div>
                 ) : null}
                 {updateBusy && updateProgress?.totalBytes ? (
                   <progress

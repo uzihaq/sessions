@@ -245,3 +245,41 @@ unsigned, short-retention NSIS preview for private testing, but a public
 download requires Authenticode plus the existing signed-updater discipline.
 SmartScreen reputation is a distribution concern to solve, not a warning to
 teach users to ignore.
+
+# 2026-07-23 — Version compatibility is a protocol fact, not release-number equality
+
+Machines, daemons, apps, and already-running runners legitimately update at
+different times. A marketing version comparison can advise, but cannot decide
+whether bytes are safe to exchange. The daemon therefore advertises explicit
+API-client and runner-protocol ranges in health. Native discovery and the React
+client reject an explicit out-of-range API before pairing or normal use. A
+missing range remains the legacy compatibility path so the new client does not
+strand an otherwise compatible older daemon.
+
+Runner processes are immutable session owners. The current daemon accepts
+legacy protocol 0 (a HELLO without `protocolVersion`) and protocol 1, while an
+unknown future protocol is rejected before replay or control frames. Updating
+Sessions never rewrites a working runner: it stages a new version for future
+sessions and re-adopts existing processes. This is why a fleet may safely show
+different runner versions without requiring them to synchronize.
+
+A paired computer may eventually request an update, but its device bearer
+credential does not silently become software-install authority. The destination
+must show the signed version and require local approval unless a separate,
+explicitly configured administrative policy is designed later.
+
+# 2026-07-23 — Idle is a transport observation; operators need an outcome
+
+“No bytes recently” cannot tell a fleet operator whether an agent finished,
+failed, never began, or is blocked on approval. Sessions now persists an
+additive idle reason (`never-started`, `completed`, `needs-input`, or `failed`),
+the classifier's useful prompt/error detail, the time it became idle, and the
+last useful result summary. Structured provider lifecycle remains authoritative;
+the existing terminal classifier is the fallback.
+
+The same facts appear in Home, the session navigator, Fleet, `sessions status`,
+and list SUMMARY columns. `sessions wait --summary` is the agent-native push
+edge: a single session, or the first completed lane under `--any`, returns its
+identity and useful result rather than merely saying “idle.” This avoids a
+second transcript scrape and makes approval stalls visible without polling raw
+terminal output.

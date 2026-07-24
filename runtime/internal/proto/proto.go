@@ -15,8 +15,24 @@ const (
 	// length prefix.
 	MaxFrameLen = 4 * 1024 * 1024
 
-	ProtocolVersion = 1
+	// ProtocolVersion is the current daemon/runner wire revision. Version zero
+	// means the legacy HELLO omitted protocolVersion; it remains supported while
+	// immutable pre-1 runners are still alive.
+	ProtocolVersion          = 1
+	MinimumCompatibleVersion = 0
+	MaximumCompatibleVersion = ProtocolVersion
 )
+
+func IsCompatibleVersion(version int) bool {
+	return version >= MinimumCompatibleVersion && version <= MaximumCompatibleVersion
+}
+
+func IncompatibleVersionError(version int) error {
+	return fmt.Errorf(
+		"runner protocol v%d is incompatible with this daemon (supported v%d-v%d); update Sessions on the host, but do not stop the runner",
+		version, MinimumCompatibleVersion, MaximumCompatibleVersion,
+	)
+}
 
 // Type is the byte following a frame's length prefix.
 type Type byte

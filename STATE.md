@@ -100,6 +100,20 @@ semantic search (local embeddings, only if FTS insufficient) · session sharing
 (pairing foundation exists) · diff viewer (parked) · iOS · always-on VM. Monetization: Sessions and its runtime FREE,
 paid = somewhere platform; Sessions is top-of-funnel. **Prompt queuing = REJECTED. PWA = SKIPPED.**
 
+**SOURCE-ONLY AFTER 0.2.3:** protocol compatibility and actionable status are
+explicit rather than inferred. `/api/health` publishes the accepted API-client
+and runner ranges; current daemons retain protocol-0 legacy runners and
+protocol-1 runners, but fail before replay on an unknown future runner
+protocol. Windows/native discovery and the React client reject only an
+explicitly incompatible API range. Session state now records runner version,
+runner protocol, idle reason/detail/time, and last useful summary. The GUI,
+`sessions status`, list SUMMARY columns, and `sessions wait --summary` consume
+the same facts. Settings explains whether agents are working before an update:
+current runners continue immutably, the relaunched app refreshes the daemon,
+and only later-created sessions use the staged runner. Remote update remains a
+future request-plus-local-approval flow, not authority granted to every paired
+device.
+
 **Cloud direction locked 2026-07-22:** a Somewhere login will eventually expose backup inventory/download,
 opt-in hosted transcript search, and account-wide fleet status. The always-on tier is one private Fly Machine per
 user running a specialized worker, not public `sessionsd`: no public worker ingress, no Tailscale dependency, no

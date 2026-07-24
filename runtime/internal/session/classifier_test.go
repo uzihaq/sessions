@@ -3,6 +3,8 @@ package session
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/somewhere-tech/sessions/runtime/internal/state"
 )
 
 func TestClassifyIdleReasonHeritageSnapshots(t *testing.T) {
@@ -33,6 +35,47 @@ func TestFinalAssistantSummary(t *testing.T) {
 	}
 	if got := FinalAssistantSummary(events); got != "Shipped lovable notifications." {
 		t.Fatalf("FinalAssistantSummary() = %q", got)
+	}
+}
+
+func TestStructuredIdleClassificationUsesProviderOutcome(t *testing.T) {
+	tests := []struct {
+		name   string
+		kind   string
+		event  string
+		want   IdleOutcome
+		detail string
+	}{
+		{
+			name: "codex completed", kind: state.KindCodexAppServer,
+			event: `{"source":"codex-app-server","type":"codex","subtype":"turn_completed","status":"completed"}`,
+			want:  IdleDone,
+		},
+		{
+			name: "codex failed", kind: state.KindCodexAppServer,
+			event:  `{"source":"codex-app-server","type":"codex","subtype":"turn_completed","status":"failed","error":{"message":"Sandbox setup failed"}}`,
+			want:   IdleError,
+			detail: "Sandbox setup failed",
+		},
+		{
+			name: "claude completed", kind: state.KindClaudeStructured,
+			event: `{"source":"claude-p-stream-json","type":"result","subtype":"success","is_error":false}`,
+			want:  IdleDone,
+		},
+		{
+			name: "claude failed", kind: state.KindClaudeStructured,
+			event:  `{"source":"claude-p-stream-json","type":"result","subtype":"error_during_execution","is_error":true,"result":"Claude command failed"}`,
+			want:   IdleError,
+			detail: "Claude command failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := structuredIdleClassification(test.kind, []json.RawMessage{json.RawMessage(test.event)})
+			if !ok || got.Outcome != test.want || got.Line != test.detail {
+				t.Fatalf("structuredIdleClassification() = %#v, %v; want %q, %q", got, ok, test.want, test.detail)
+			}
+		})
 	}
 }
 

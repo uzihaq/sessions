@@ -162,9 +162,9 @@ async function tabIds(query) {
   await current.page.waitForFunction(
     () => document.querySelectorAll('[role="tab"][data-tab-id]').length > 0
   );
-  const ids = await current.page.$$eval(
-    '[role="tab"][data-tab-id]',
-    (nodes) => nodes.map((node) => node.getAttribute('data-tab-id'))
+  const ids = await current.page.evaluate(() =>
+    [...document.querySelectorAll('[role="tab"][data-tab-id]')]
+      .map((node) => node.getAttribute('data-tab-id'))
   );
   assert.deepEqual(current.pageErrors, []);
   await current.page.close();
@@ -173,9 +173,9 @@ async function tabIds(query) {
 
 async function navigatorIds(query) {
   const current = await openCase(query, '.session-nav-row[data-session-id]');
-  const ids = await current.page.$$eval(
-    '.session-nav-row[data-session-id]',
-    (nodes) => nodes.map((node) => node.getAttribute('data-session-id'))
+  const ids = await current.page.evaluate(() =>
+    [...document.querySelectorAll('.session-nav-row[data-session-id]')]
+      .map((node) => node.getAttribute('data-session-id'))
   );
   assert.deepEqual(current.pageErrors, []);
   await current.page.close();
@@ -184,13 +184,21 @@ async function navigatorIds(query) {
 
 async function assertFinishedSessionIsReadOnly() {
   const current = await openCase('', '.session-nav-row[data-session-id="finished-parent"]');
-  await current.page.click('.session-nav-row[data-session-id="finished-parent"]');
+  await current.page.evaluate(() => {
+    const row = document.querySelector('.session-nav-row[data-session-id="finished-parent"]');
+    if (!(row instanceof HTMLElement)) throw new Error('finished parent row is missing');
+    row.click();
+  });
   await current.page.waitForSelector('.session-view-host:not(.is-hidden) .session-history-body');
-  const state = await current.page.$eval('.session-view-host:not(.is-hidden)', (node) => ({
-    history: Boolean(node.querySelector('.session-history-body')),
-    terminal: Boolean(node.querySelector('.terminal-host')),
-    copy: node.textContent
-  }));
+  const state = await current.page.evaluate(() => {
+    const node = document.querySelector('.session-view-host:not(.is-hidden)');
+    if (!node) throw new Error('active finished session is missing');
+    return {
+      history: Boolean(node.querySelector('.session-history-body')),
+      terminal: Boolean(node.querySelector('.terminal-host')),
+      copy: node.textContent
+    };
+  });
   assert.equal(state.history, true);
   assert.equal(state.terminal, false);
   assert.match(state.copy ?? '', /viewing does not resume or send anything/i);
@@ -218,7 +226,12 @@ try {
   assert.ok(scoped.sessionRequests > scopedBefore);
 
   const single = await openCase('?session=codex-1&mode=single', '.single-mode');
-  const singleLabel = await single.page.$eval('.single-mode-label', (node) => node.textContent?.trim());
+  await single.page.waitForFunction(
+    () => document.querySelector('.single-mode-label')?.textContent?.trim() === 'codex'
+  );
+  const singleLabel = await single.page.evaluate(
+    () => document.querySelector('.single-mode-label')?.textContent?.trim()
+  );
   assert.equal(singleLabel, 'codex');
   assert.deepEqual(single.pageErrors, []);
   await single.page.close();

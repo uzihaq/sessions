@@ -37,10 +37,16 @@ type SessionInfo struct {
 	Rows              int               `json:"rows"`
 	CreatedAt         int64             `json:"createdAt"`
 	PID               int               `json:"pid"`
+	RunnerProtocol    int               `json:"runnerProtocol"`
+	RunnerVersion     string            `json:"runnerVersion,omitempty"`
 	Tool              SessionTool       `json:"tool"`
 	Working           bool              `json:"working"`
 	LastDataAt        int64             `json:"lastDataAt"`
 	LastUserMessageAt *int64            `json:"lastUserMessageAt"`
+	IdleReason        string            `json:"idleReason,omitempty"`
+	IdleDetail        string            `json:"idleDetail,omitempty"`
+	IdleSince         *int64            `json:"idleSince,omitempty"`
+	LastSummary       string            `json:"lastSummary,omitempty"`
 	Exited            bool              `json:"exited"`
 	ExitCode          *int              `json:"exitCode"`
 	ExitSignal        *string           `json:"exitSignal"`
@@ -62,6 +68,13 @@ type SessionInfo struct {
 	RootCreatorID     string            `json:"root_creator_id,omitempty"`
 	ProvenanceStatus  string            `json:"provenance_status,omitempty"`
 }
+
+const (
+	IdleReasonNeverStarted = "never-started"
+	IdleReasonCompleted    = "completed"
+	IdleReasonNeedsInput   = "needs-input"
+	IdleReasonFailed       = "failed"
+)
 
 type CreateSessionRequest struct {
 	Cmd         string                `json:"cmd,omitempty"`

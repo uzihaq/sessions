@@ -89,9 +89,25 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
     : (viewMode === 'details' ? 'details' : 'terminal');
   const parent = session?.parentSessionId ? allSessions.find((item) => item.id === session.parentSessionId) : null;
   const children = allSessions.filter((item) => item.parentSessionId === sessionId);
+  const failedSession = (session?.exited && (((session.exitCode ?? 0) !== 0) || Boolean(session.exitSignal)))
+    || session?.idleReason === 'failed'
+    || session?.provenanceStatus === 'lost'
+    || session?.provenanceStatus === 'invalid';
   const runningChildren = children.filter((item) => item.working && !item.exited).length;
-  const needsChildren = children.filter((item) => !item.exited && !item.working && item.lastUserMessageAt !== null).length;
-  const finishedChildren = children.filter((item) => item.exited).length;
+  const needsChildren = children.filter((item) =>
+    !item.exited && !item.working
+    && (item.idleReason ? item.idleReason === 'needs-input' : item.lastUserMessageAt !== null)
+  ).length;
+  const finishedChildren = children.filter((item) =>
+    (item.exited && (item.exitCode ?? 0) === 0 && !item.exitSignal)
+    || (!item.working && item.idleReason === 'completed')
+  ).length;
+  const failedChildren = children.filter((item) =>
+    (item.exited && ((item.exitCode ?? 0) !== 0 || Boolean(item.exitSignal)))
+    || item.idleReason === 'failed'
+    || item.provenanceStatus === 'lost'
+    || item.provenanceStatus === 'invalid'
+  ).length;
   const provider = normalizeProvider(session?.tool);
 
   // Sticky "have we ever needed xterm for this session?" Once true,
@@ -116,6 +132,26 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
     events: term.claudeEvents,
     daemonWorking: session?.working ?? false
   });
+  const statusLabel = sidebar.isWorking
+    ? 'Running'
+    : failedSession
+    ? 'Failed'
+    : session?.idleReason === 'needs-input'
+    ? 'Needs you'
+    : session?.exited || session?.idleReason === 'completed'
+    ? 'Finished'
+    : session?.idleReason === 'never-started'
+    ? 'Not started'
+    : 'Idle';
+  const statusTone = sidebar.isWorking
+    ? ' is-running'
+    : failedSession
+    ? ' is-failed'
+    : session?.idleReason === 'needs-input'
+    ? ' is-needs-you'
+    : session?.exited || session?.idleReason === 'completed'
+    ? ' is-finished'
+    : '';
 
   useEffect(() => {
     writeStoredView(viewMode);
@@ -215,14 +251,14 @@ function SessionViewInner({ sessionId, onStatusChange, isActive = false, onDeleg
       <header className="session-active-header">
         <div className="session-active-copy">
           {parent ? <span className="session-parent-breadcrumb">{sessionLabel(parent)} <span>/</span> child session</span> : <span className="session-parent-breadcrumb">Manager session</span>}
-          <div className="session-active-title-row"><h1>{customLabel ?? (session ? sessionLabel(session) : 'Session')}</h1><span className={`session-live-pill${sidebar.isWorking ? ' is-running' : ''}`}>{sidebar.isWorking ? 'Running' : session?.exited ? 'Finished' : 'Idle'}</span></div>
+          <div className="session-active-title-row"><h1>{customLabel ?? (session ? sessionLabel(session) : 'Session')}</h1><span className={`session-live-pill${statusTone}`}>{statusLabel}</span></div>
           <div className="session-active-meta">
             {provider ? <ProviderBadge provider={provider} compact /> : <span className="provider-badge is-shell is-compact">⌘ Shell</span>}
             <span>{session?.profile || 'Default profile'}</span><span>{getActiveServer().name}</span><span title={session?.cwd}>{session?.cwd || 'Workspace unavailable'}</span>
           </div>
         </div>
         <div className="session-active-actions">
-          {children.length > 0 ? <span className="child-health">{runningChildren} running · {needsChildren} needs you · {finishedChildren} finished</span> : null}
+          {children.length > 0 ? <span className="child-health">{runningChildren} running · {needsChildren} needs you · {failedChildren} failed · {finishedChildren} finished</span> : null}
           {supportsConversation ? <button type="button" className="btn btn-ghost session-delegate" onClick={() => onDelegate?.(sessionId)}>↳ Delegate</button> : null}
         </div>
       </header>

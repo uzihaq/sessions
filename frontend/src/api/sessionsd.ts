@@ -195,14 +195,36 @@ export interface ServerHealth {
   listen: { host: string; port: number };
   lan: { enabled: boolean; url: string | null };
   system?: { os: string; arch: string };
+  compatibility?: {
+    api: { current: number; minimumClient: number; maximumClient: number };
+    runner: { current: number; minimum: number; maximum: number };
+  };
   discovering: boolean;
   sessionsLoaded: number;
+}
+
+export const API_PROTOCOL_VERSION = 1;
+
+function validateServerHealth(health: ServerHealth): ServerHealth {
+  if (!health.ok || health.name !== 'sessionsd') {
+    throw new Error('unexpected health response');
+  }
+  const range = health.compatibility?.api;
+  if (
+    range
+    && (API_PROTOCOL_VERSION < range.minimumClient || API_PROTOCOL_VERSION > range.maximumClient)
+  ) {
+    throw new Error(
+      `This client uses Sessions API ${API_PROTOCOL_VERSION}, but the machine accepts ${range.minimumClient}–${range.maximumClient}. Update Sessions on this device or the host.`
+    );
+  }
+  return health;
 }
 
 export async function fetchActiveServerHealth(signal?: AbortSignal): Promise<ServerHealth> {
   const server = getActiveServer();
   const r = await serverFetch(server, `${httpBaseForServer(server)}/api/health`, { signal }, false);
-  return json<ServerHealth>(r);
+  return validateServerHealth(await json<ServerHealth>(r));
 }
 
 export interface LANState {
@@ -237,11 +259,7 @@ export async function fetchServerHealth(
     { signal },
     false
   );
-  const health = await json<ServerHealth>(r);
-  if (!health.ok || health.name !== 'sessionsd') {
-    throw new Error('unexpected health response');
-  }
-  return health;
+  return validateServerHealth(await json<ServerHealth>(r));
 }
 
 export async function listServerSessions(

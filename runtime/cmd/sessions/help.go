@@ -96,10 +96,10 @@ var commandTable = []commandSpec{
 		examples: []string{"sessions ask 0123abcd 'Summarize the failing test.'", "sessions --json ask 0123abcd --wait-timeout 2m 'Report status.'"}, run: (*app).cmdAsk,
 	},
 	{
-		name: "wait", usage: "wait <id> [<id>... --any] [--idle D] [--timeout D] [condition]",
+		name: "wait", usage: "wait <id> [<id>... --any] [--idle D] [--timeout D] [--summary] [condition]",
 		summary: "wait for session idle or lane exit", group: dailyCommandGroup, localJSON: true,
-		longHelp: "Wait for a session to become idle or a lane to exit. Lane waits propagate the lane exit code. Conditions include --until commit, --until-file-contains FILE STRING, and --until-idle-stable D.",
-		examples: []string{"sessions wait 0123abcd --timeout 2m", "sessions wait lane-a lane-b --any", "sessions wait 0123abcd --until commit --timeout 10m"}, run: (*app).cmdWaitDispatch,
+		longHelp: "Wait for a session to become idle or a lane to exit. --summary reports which target changed and its last useful assistant/output summary. Lane waits propagate the lane exit code. Conditions include --until commit, --until-file-contains FILE STRING, and --until-idle-stable D.",
+		examples: []string{"sessions wait 0123abcd --timeout 2m --summary", "sessions wait lane-a lane-b --any --summary", "sessions wait 0123abcd --until commit --timeout 10m"}, run: (*app).cmdWaitDispatch,
 	},
 	{
 		name: "last", usage: "last <id> [--role user|assistant] [-n N]",

@@ -62,6 +62,7 @@ type hello struct {
 	PID             int      `json:"pid"`
 	CurrentSeq      uint32   `json:"currentSeq"`
 	ProtocolVersion int      `json:"protocolVersion"`
+	RuntimeVersion  string   `json:"runtimeVersion,omitempty"`
 	ConversationID  string   `json:"conversationId,omitempty"`
 	RemoteEndpoint  string   `json:"remoteEndpoint,omitempty"`
 	ClaudeSessionID string   `json:"claudeSessionId,omitempty"`
@@ -507,7 +508,7 @@ func (r *runner) helloLocked() hello {
 		ID: r.cfg.id, Cmd: r.cfg.cmd, Args: r.cfg.args, Cwd: r.cfg.cwd,
 		Cols: r.cols, Rows: r.rows, CreatedAt: r.createdAt,
 		PID: r.cmd.Process.Pid, CurrentSeq: r.log.CurrentSeq(),
-		ProtocolVersion: proto.ProtocolVersion,
+		ProtocolVersion: proto.ProtocolVersion, RuntimeVersion: version,
 	}
 }
 
